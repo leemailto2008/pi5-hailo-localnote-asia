@@ -154,15 +154,29 @@ def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
     return fixes
 
 
+_SHIELD = "\ue000"  # Unicode 私用區字元，逐字稿不會出現
+
+
 def apply_fixes(text: str, fixes: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
-    """逐筆做精確字串替換；原文找不到的項目略過。回傳 (新文字, 實際套用的紀錄)。"""
+    """逐筆做精確字串替換；原文找不到的項目略過。回傳 (新文字, 實際套用的紀錄)。
+
+    補字的修改（from 是 to 的一部分，例如「第138」→「第138個議題」）不能碰原本已經正確的地方，
+    否則「第138個議題」會變成「第138個議題個議題」(11-10 實錄逐字稿)。先把已正確的 to 暫時遮住再替換。
+    """
     applied: List[Dict[str, Any]] = []
     for fix in fixes:
-        count = text.count(fix["from"])
+        src, dst = fix["from"], fix["to"]
+        shield = src in dst and dst in text
+        if shield and _SHIELD in text:
+            logger.warning("[polish] skip fix %r: text already contains the shield character", src)
+            continue
+        work = text.replace(dst, _SHIELD) if shield else text
+        count = work.count(src)
         if count == 0:
             continue
-        text = text.replace(fix["from"], fix["to"])
-        applied.append({"from": fix["from"], "to": fix["to"], "count": count})
+        work = work.replace(src, dst)
+        text = work.replace(_SHIELD, dst) if shield else work
+        applied.append({"from": src, "to": dst, "count": count})
     return text, applied
 
 

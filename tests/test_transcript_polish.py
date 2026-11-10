@@ -198,3 +198,18 @@ def test_polish_rewrite_output_is_taiwan_traditional(monkeypatch):
     monkeypatch.setattr(tp, "achat_complete", fake_achat)
     res = _run(tp.polish_transcript("一" * 100, "rewrite"))
     assert res["polished"] == "全員" + "二" * 80
+
+
+def test_apply_fixes_insertion_leaves_already_correct_text_alone():
+    # 補字修改：原本已經正確的「第138個議題」不能再被補一次，變成「第138個議題個議題」。
+    text = "第138個議題是預算，第138已經面試"
+    new_text, applied = tp.apply_fixes(text, [{"from": "第138", "to": "第138個議題"}])
+    assert new_text == "第138個議題是預算，第138個議題已經面試"
+    assert applied == [{"from": "第138", "to": "第138個議題", "count": 1}]
+
+
+def test_apply_fixes_insertion_skips_when_everything_is_already_correct():
+    text = "第138個議題是預算"
+    new_text, applied = tp.apply_fixes(text, [{"from": "第138", "to": "第138個議題"}])
+    assert new_text == text
+    assert applied == []
