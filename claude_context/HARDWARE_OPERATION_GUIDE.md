@@ -29,7 +29,7 @@ curl -s -m 5 http://192.168.50.228:8000/api/status
 - 若 `job` 為 `m_<timestamp>`（距離現在 15 分鐘內）且不在 `/dev/shm/ln_e2e_jobs.txt` 內，代表有真人在網頁上操作，**嚴禁打斷**。
 
 ### 使用 `deploy_on_pi.sh` 自動備份、部署與健康檢查回滾
-[tools/ci/deploy_on_pi.sh](file:///f:/13_prj_raspi5_localnote/tools/ci/deploy_on_pi.sh) 內建 4 階段安全機制：
+[tools/ci/deploy_on_pi.sh](file:///f:/14_prj_raspi5_localnote_asia/tools/ci/deploy_on_pi.sh) 內建 4 階段安全機制：
 1. **忙碌守衛 (Busy Check)：** 若忙碌則以 `exit 75` 安全退出。
 2. **語法檢查 (`py_compile`)：** 預先檢查 `code_dispatcher/*.py` 與 `hailo_whisper/*.py`。
 3. **自動備份與同步：**
@@ -89,14 +89,14 @@ ssh -i C:\Users\Andrew\.ssh\id_rsa_pi5 pi@192.168.50.228 "cd ~/pi5-hailo-localno
 
 ## 5. Git 雙遠端同步規範 (Git Dual-Remote Push via Desktop Commander)
 
-- **工作目錄：** `F:\13_prj_raspi5_localnote`（已加入 Desktop Commander `allowedDirectories` 白名單）。
+- **工作目錄：** `F:\14_prj_raspi5_localnote_asia`（已加入 Desktop Commander `allowedDirectories` 白名單）。
 - **每累積 3～5 個已驗證的 Commit 自動推送：**
   透過 **Desktop Commander MCP (`start_process`)** 在 Windows PowerShell 執行：
   ```powershell
   $env:GIT_TERMINAL_PROMPT="0"
   $env:GCM_INTERACTIVE="never"
-  git -C F:\13_prj_raspi5_localnote push gitlab main
-  git -C F:\13_prj_raspi5_localnote push origin main
+  git -C F:\14_prj_raspi5_localnote_asia push gitlab main
+  git -C F:\14_prj_raspi5_localnote_asia push origin main
   ```
 - **處理殘留 `.git/*.lock` 檔案：**
   若遇 `.git/index.lock` 或 `.git/HEAD.lock`，直接用 `Move-Item` 改名移開（例如 `stale-index-lock`），**切勿發起刪除權限彈窗阻塞自動化迴圈**。

@@ -1,7 +1,7 @@
 # 🤖 Pi 5 Local Note - Claude Code Instructions & Project Memory (CLAUDE.md)
 # 樹莓派 5 邊緣雙語口譯、語音筆記與藍牙網關專案記憶檔案
 
-> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（`F:\13_prj_raspi5_localnote`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
+> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（`F:\14_prj_raspi5_localnote_asia`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
 > 📌 **跨 AI 接棒與完整上下文目錄 (`claude_context/`)：** 當接手 Antigravity 的工作或進行自主閉環工程時，請同步參閱 `claude_context/` 目錄下的 6 份核心文件（`CLAUDE.md`、`PROJECT_STATE.md`、`HARDWARE_OPERATION_GUIDE.md`、`API_AND_TEST_REFERENCE.md`、`ACTIVE_BACKLOG_AND_NEXT_STEPS.md`、`AI_HANDSHAKE_PROTOCOL.md`）。
 
 ---
@@ -45,7 +45,7 @@
 - **累積 3～5 個 commit 就自動 push（2026-10-30 使用者指定）：**
   - 本機累積 3～5 個已驗證的 commit 時，不必再問，自己找空檔推上 GitHub (origin) 與 GitLab (gitlab)。
   - 空檔：沒有在錄音、也沒有在跑會用到電腦的測試時。
-  - 2026-11-03 起用 Desktop Commander MCP 在 F:\13_prj_raspi5_localnote 直接跑 `git push origin main`、`git push gitlab main`（先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
+  - 2026-11-03 起用 Desktop Commander MCP 在 F:\14_prj_raspi5_localnote_asia 直接跑 `git push origin main`、`git push gitlab main`（先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
   - 推完回報推了哪些 commit、兩邊是否都成功。
 - **No Placeholders:** 嚴禁留下 `// TODO` 或未完成區塊，程式碼產出必須完整且可執行 (Production-ready)。
 - **Error Handling:** 顯式錯誤處理 (Explicit Error Handling)，嚴禁使用 bare `try: ... except: pass`。
@@ -58,11 +58,11 @@
 本專案配置有 GitHub 與 GitLab 雙遠端倉庫，任何程式碼更新必須保持雙端同步：
 
 - **GitLab (主倉庫 / Remote: gitlab):**
-  - URL: `http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote.git`
+  - URL: `http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote-asia.git`
   - 授權身分: `andrew.lee`
   - 推送指令: `git push gitlab main`
 - **GitHub (Remote: origin):**
-  - URL: `https://alntu2@github.com/leemailto2008/pi5-hailo-localnote.git`
+  - URL: `https://alntu2@github.com/leemailto2008/pi5-hailo-localnote-asia.git`
   - 授權身分: `alntu2` (Windows Credential Manager / PAT)
   - 推送指令: `git push origin main`
 - **歷史相容倉庫 (Legacy Remotes):**

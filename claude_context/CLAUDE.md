@@ -1,7 +1,7 @@
 # CLAUDE.md - Pi 5 LocalNote 跨 AI 接棒與自主閉環工程指引 (Claude Takeover & Autonomous Loop Guide)
 
 歡迎接手 **Pi 5 Hailo LocalNote（樹莓派 5 邊緣雙語口譯、語音筆記與藍牙網關專案）**！
-本目錄（`F:\13_prj_raspi5_localnote\claude_context`）為 **Antigravity ↔ Claude 跨 AI 記憶中樞**。當 Antigravity 遇到 Token Limit 或排程切換時，你只需讀取本目錄即可獲得 100% 完整架構記憶、硬體避坑指南與測試進度，立即無縫接手「自測 → 找問題 → 修改 → 驗證 → 部署 → 雙推」閉環工程，把系統改到最佳。
+本目錄（`F:\14_prj_raspi5_localnote_asia\claude_context`）為 **Antigravity ↔ Claude 跨 AI 記憶中樞**。當 Antigravity 遇到 Token Limit 或排程切換時，你只需讀取本目錄即可獲得 100% 完整架構記憶、硬體避坑指南與測試進度，立即無縫接手「自測 → 找問題 → 修改 → 驗證 → 部署 → 雙推」閉環工程，把系統改到最佳。
 
 ---
 
@@ -14,7 +14,7 @@
 - **自主閉環工程 (Autonomous Loop Engineering):**
   - 持續執行「自測 → 找問題 → 修改 → 離線單測 → Pi 部署與 E2E 驗證 → 雙端 Git Push」，直到所有長度會議指標 100% 收斂至最佳。
   - **無人值守防卡死原則：** 使用者不在時，**嚴禁發送任何需要使用者點擊確認的權限請求**（如檔案刪除權限、GUI 彈窗）。
-  - **Git 操作規範：** 一律使用 **Desktop Commander MCP** 在 Windows 本機 (`F:\13_prj_raspi5_localnote`) 執行 `git add`、`git commit`、`git push gitlab main` 與 `git push origin main`（先設定 `GIT_TERMINAL_PROMPT=0` 與 `GCM_INTERACTIVE=never`）。若遇 `.git/*.lock` 且無刪除權限，用 `mv .git/index.lock .git/stale-index-lock` 移開，切勿阻塞等待授權。
+  - **Git 操作規範：** 一律使用 **Desktop Commander MCP** 在 Windows 本機 (`F:\14_prj_raspi5_localnote_asia`) 執行 `git add`、`git commit`、`git push gitlab main` 與 `git push origin main`（先設定 `GIT_TERMINAL_PROMPT=0` 與 `GCM_INTERACTIVE=never`）。若遇 `.git/*.lock` 且無刪除權限，用 `mv .git/index.lock .git/stale-index-lock` 移開，切勿阻塞等待授權。
 - **回報節奏 (Progress Reporting Cadence，2026-11-09 使用者指定)：**
   - 任務超過 3 分鐘須主動回報進度；回報間隔介於 **15 分鐘** 至 **4 小時** 之間。
   - 沒有新進度不單獨回報，併入下一次；距上次回報已滿 **4 小時**，即使無進度也回報一次。
@@ -37,11 +37,11 @@
 ## 3. 本目錄核心文件索引 (Context Map)
 
 接手時請依序參閱以下文件：
-1. 📄 [PROJECT_STATE.md](file:///f:/13_prj_raspi5_localnote/claude_context/PROJECT_STATE.md) — 系統架構、雙樹莓派環境 (`raspi543` / `raspi678`) 與 **8 大關鍵硬體/演算法避坑記憶**。
-2. 📄 [HARDWARE_OPERATION_GUIDE.md](file:///f:/13_prj_raspi5_localnote/claude_context/HARDWARE_OPERATION_GUIDE.md) — SSH 連線、安全部署腳本 (`deploy_on_pi.sh`)、Hailo-10H NPU 與藍牙耳麥運維指令。
-3. 📄 [API_AND_TEST_REFERENCE.md](file:///f:/13_prj_raspi5_localnote/claude_context/API_AND_TEST_REFERENCE.md) — FastAPI 端點、離線 Pytest、線上 E2E 測試套件 (`run_suite.py`) 與 `thresholds.json` 評分標準。
-4. 📄 [ACTIVE_BACKLOG_AND_NEXT_STEPS.md](file:///f:/13_prj_raspi5_localnote/claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md) — 最新 Commit 狀態、已完成修復軌跡與**待接手優化任務佇列**。
-5. 📄 [AI_HANDSHAKE_PROTOCOL.md](file:///f:/13_prj_raspi5_localnote/claude_context/AI_HANDSHAKE_PROTOCOL.md) — Antigravity ↔ Claude 雙向接棒記錄與狀態同步協定。
+1. 📄 [PROJECT_STATE.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/PROJECT_STATE.md) — 系統架構、雙樹莓派環境 (`raspi543` / `raspi678`) 與 **8 大關鍵硬體/演算法避坑記憶**。
+2. 📄 [HARDWARE_OPERATION_GUIDE.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/HARDWARE_OPERATION_GUIDE.md) — SSH 連線、安全部署腳本 (`deploy_on_pi.sh`)、Hailo-10H NPU 與藍牙耳麥運維指令。
+3. 📄 [API_AND_TEST_REFERENCE.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/API_AND_TEST_REFERENCE.md) — FastAPI 端點、離線 Pytest、線上 E2E 測試套件 (`run_suite.py`) 與 `thresholds.json` 評分標準。
+4. 📄 [ACTIVE_BACKLOG_AND_NEXT_STEPS.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md) — 最新 Commit 狀態、已完成修復軌跡與**待接手優化任務佇列**。
+5. 📄 [AI_HANDSHAKE_PROTOCOL.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/AI_HANDSHAKE_PROTOCOL.md) — Antigravity ↔ Claude 雙向接棒記錄與狀態同步協定。
 
 ---
 
@@ -50,7 +50,7 @@
 當你收到指示接手本專案時，請直接執行以下 4 步：
 
 ### Step 1: 檢查 Git 狀態與最新 Commit
-使用 Desktop Commander 在 `F:\13_prj_raspi5_localnote` 執行：
+使用 Desktop Commander 在 `F:\14_prj_raspi5_localnote_asia` 執行：
 ```powershell
 git status -s
 git log -n 5 --oneline
@@ -71,6 +71,6 @@ git log -n 5 --oneline
 ssh -i C:\Users\Andrew\.ssh\id_rsa_pi5 pi@192.168.50.228 "curl -s http://127.0.0.1/health && echo '' && curl -s http://127.0.0.1/api/status"
 ```
 
-### Step 4: 依據 [ACTIVE_BACKLOG_AND_NEXT_STEPS.md](file:///f:/13_prj_raspi5_localnote/claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md) 展開閉環自測與優化
+### Step 4: 依據 [ACTIVE_BACKLOG_AND_NEXT_STEPS.md](file:///f:/14_prj_raspi5_localnote_asia/claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md) 展開閉環自測與優化
 挑選下一個測試或優化項目 → 驗證通過後每累積 3～5 個 commit 自動雙推 `gitlab` 與 `origin`，並將最新進展更新回 `ACTIVE_BACKLOG_AND_NEXT_STEPS.md`！
 

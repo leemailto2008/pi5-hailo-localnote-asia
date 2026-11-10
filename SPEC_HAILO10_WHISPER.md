@@ -1,7 +1,7 @@
 # 🎙️ SPEC: Hailo-10H NPU Whisper 語音轉錄引擎部署與架構整合規格書
 
 - **專案名稱 (Project):** Pi 5 Local Note - Hailo-10H Whisper NPU Acceleration
-- **模組路徑 (Module Path):** `f:\13_prj_raspi5_localnote\hailo_whisper\`
+- **模組路徑 (Module Path):** `f:\14_prj_raspi5_localnote_asia\hailo_whisper\`
 - **建立日期 (Created Date):** 2026-10-19
 - **作者 (Author):** Senior Staff Software Engineer & System Architect
 

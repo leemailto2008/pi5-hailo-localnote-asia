@@ -27,19 +27,19 @@
 
 | 測試檔案 | 測試範圍 |
 |---|---|
-| [tests/test_summary_utils.py](file:///f:/13_prj_raspi5_localnote/tests/test_summary_utils.py) | 中英紀要解析、標題正規化 (`## 要` → 摘要)、待辦表格抽取、負責人驗證、結尾 Recap 合併與去重 |
-| [tests/test_whisper_engine.py](file:///f:/13_prj_raspi5_localnote/tests/test_whisper_engine.py) | STT 同音錯字修正（如「決意施→決議是」「電源-in器→電源供應器」「吳副理」「報名/名額」等） |
-| [tests/test_stt_segment_clean.py](file:///f:/13_prj_raspi5_localnote/tests/test_stt_segment_clean.py) | 分段逐字稿幻覺過濾、重複贅詞（目前/已經/我們/然後）清理 |
-| [tests/test_audio_splice.py](file:///f:/13_prj_raspi5_localnote/tests/test_audio_splice.py) | `ZeroSplicer` 封包丟失零值空洞偵測與無縫剪接 |
-| [tests/test_audio_declick.py](file:///f:/13_prj_raspi5_localnote/tests/test_audio_declick.py) | 藍牙邊界瞬態暴音 (Click) 偵測與平滑修復 |
-| [tests/test_scoring.py](file:///f:/13_prj_raspi5_localnote/tests/test_scoring.py) | E2E 評分演算法（CER、Fact Recall、Recap Recall、Topic Coverage、中英雙語標題相容） |
-| [tests/test_fixtures.py](file:///f:/13_prj_raspi5_localnote/tests/test_fixtures.py) | `tools/e2e/fixtures/meeting_*min.json` 結構與時間軸一致性驗證 |
-| [tests/test_llm_stream.py](file:///f:/13_prj_raspi5_localnote/tests/test_llm_stream.py) | `llm_backend.py` 串流輸出、`hailo-ollama` 字串跳脫與 CPU Fallback |
-| [tests/test_npu_share.py](file:///f:/13_prj_raspi5_localnote/tests/test_npu_share.py) | Hailo NPU 鎖定、STT Worker 暫停與釋放（需 Linux POSIX `select`） |
-| [tests/test_stt_worker.py](file:///f:/13_prj_raspi5_localnote/tests/test_stt_worker.py) | STT 子行程通訊與崩潰自動重啟（需 Linux POSIX `select`） |
-| [tests/test_bt_link_stats.py](file:///f:/13_prj_raspi5_localnote/tests/test_bt_link_stats.py) | 藍牙鏈路品質統計（需 Linux `fcntl`） |
-| [tests/test_last_meeting.py](file:///f:/13_prj_raspi5_localnote/tests/test_last_meeting.py) | 會議記錄持久化與讀取 |
-| [tests/test_mic_detection.py](file:///f:/13_prj_raspi5_localnote/tests/test_mic_detection.py) | 音訊輸入源自動偵測與優先序 |
+| [tests/test_summary_utils.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_summary_utils.py) | 中英紀要解析、標題正規化 (`## 要` → 摘要)、待辦表格抽取、負責人驗證、結尾 Recap 合併與去重 |
+| [tests/test_whisper_engine.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_whisper_engine.py) | STT 同音錯字修正（如「決意施→決議是」「電源-in器→電源供應器」「吳副理」「報名/名額」等） |
+| [tests/test_stt_segment_clean.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_stt_segment_clean.py) | 分段逐字稿幻覺過濾、重複贅詞（目前/已經/我們/然後）清理 |
+| [tests/test_audio_splice.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_audio_splice.py) | `ZeroSplicer` 封包丟失零值空洞偵測與無縫剪接 |
+| [tests/test_audio_declick.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_audio_declick.py) | 藍牙邊界瞬態暴音 (Click) 偵測與平滑修復 |
+| [tests/test_scoring.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_scoring.py) | E2E 評分演算法（CER、Fact Recall、Recap Recall、Topic Coverage、中英雙語標題相容） |
+| [tests/test_fixtures.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_fixtures.py) | `tools/e2e/fixtures/meeting_*min.json` 結構與時間軸一致性驗證 |
+| [tests/test_llm_stream.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_llm_stream.py) | `llm_backend.py` 串流輸出、`hailo-ollama` 字串跳脫與 CPU Fallback |
+| [tests/test_npu_share.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_npu_share.py) | Hailo NPU 鎖定、STT Worker 暫停與釋放（需 Linux POSIX `select`） |
+| [tests/test_stt_worker.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_stt_worker.py) | STT 子行程通訊與崩潰自動重啟（需 Linux POSIX `select`） |
+| [tests/test_bt_link_stats.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_bt_link_stats.py) | 藍牙鏈路品質統計（需 Linux `fcntl`） |
+| [tests/test_last_meeting.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_last_meeting.py) | 會議記錄持久化與讀取 |
+| [tests/test_mic_detection.py](file:///f:/14_prj_raspi5_localnote_asia/tests/test_mic_detection.py) | 音訊輸入源自動偵測與優先序 |
 
 **執行指令：**
 - **Linux / `claude-code-vm` / Raspberry Pi（全套 530+ 項測試）：**

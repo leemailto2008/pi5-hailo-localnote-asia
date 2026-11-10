@@ -1,6 +1,6 @@
 # PROJECT_STATE.md - 專案即時狀態、架構與硬體實測記憶 (Project & Hardware State)
 
-本文件彙整 `F:\13_prj_raspi5_localnote` 專案之硬體環境、資料流架構與實機驗證過的 **8 大關鍵技術決策与避坑記憶**。所有項目皆經樹莓派 5 實機量測證實。
+本文件彙整 `F:\14_prj_raspi5_localnote_asia` 專案之硬體環境、資料流架構與實機驗證過的 **8 大關鍵技術決策与避坑記憶**。所有項目皆經樹莓派 5 實機量測證實。
 
 ---
 
@@ -105,16 +105,16 @@ flowchart LR
 
 | 路徑 | 職責說明 |
 |---|---|
-| [code_dispatcher/main.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/main.py) | FastAPI 路由、錄音控制、SSE 串流與靜態檔案服務 |
-| [code_dispatcher/voice_pipeline.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/voice_pipeline.py) | 錄音主流程、藍牙就緒檢查、分段 STT 與後處理調度 |
-| [code_dispatcher/summary_utils.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/summary_utils.py) | STT 錯字清理、中英紀要解析、去重、Recap 決議/待辦合併核心邏輯 |
-| [code_dispatcher/meeting_minutes.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/meeting_minutes.py) | 長短會議分段摘要 Prompt 與 LLM 呼叫封裝 |
-| [code_dispatcher/llm_backend.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/llm_backend.py) | Hailo-Ollama (`:11435`) 與 CPU Ollama (`:11434`) 統一抽象層 |
-| [code_dispatcher/stt_worker.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/stt_worker.py) | 獨立子行程 Hailo Whisper STT Worker |
-| [code_dispatcher/npu_share.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/npu_share.py) | Hailo NPU 資源鎖與 STT/LLM 交握控制 |
-| [code_dispatcher/audio_splice.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/audio_splice.py) | `ZeroSplicer` 數位零值空洞偵測與平滑拼接 |
-| [code_dispatcher/audio_declick.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/audio_declick.py) | 藍牙封包邊界瞬態暴音 (Click) 抑制 |
-| [code_dispatcher/ui.html](file:///f:/13_prj_raspi5_localnote/code_dispatcher/ui.html) | **唯一前端原始檔**（部署時自動複製為 `ui_client.html` 與 `static/index.html`） |
-| [hailo_whisper/whisper_engine.py](file:///f:/13_prj_raspi5_localnote/hailo_whisper/whisper_engine.py) | Hailo-10H Whisper 編解碼推論與後處理 |
-| [tools/e2e/scoring.py](file:///f:/13_prj_raspi5_localnote/tools/e2e/scoring.py) | E2E 品質評分純函式（CER、事實召回、紀要結構與覆蓋率） |
+| [code_dispatcher/main.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/main.py) | FastAPI 路由、錄音控制、SSE 串流與靜態檔案服務 |
+| [code_dispatcher/voice_pipeline.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/voice_pipeline.py) | 錄音主流程、藍牙就緒檢查、分段 STT 與後處理調度 |
+| [code_dispatcher/summary_utils.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/summary_utils.py) | STT 錯字清理、中英紀要解析、去重、Recap 決議/待辦合併核心邏輯 |
+| [code_dispatcher/meeting_minutes.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/meeting_minutes.py) | 長短會議分段摘要 Prompt 與 LLM 呼叫封裝 |
+| [code_dispatcher/llm_backend.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/llm_backend.py) | Hailo-Ollama (`:11435`) 與 CPU Ollama (`:11434`) 統一抽象層 |
+| [code_dispatcher/stt_worker.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/stt_worker.py) | 獨立子行程 Hailo Whisper STT Worker |
+| [code_dispatcher/npu_share.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/npu_share.py) | Hailo NPU 資源鎖與 STT/LLM 交握控制 |
+| [code_dispatcher/audio_splice.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/audio_splice.py) | `ZeroSplicer` 數位零值空洞偵測與平滑拼接 |
+| [code_dispatcher/audio_declick.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/audio_declick.py) | 藍牙封包邊界瞬態暴音 (Click) 抑制 |
+| [code_dispatcher/ui.html](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/ui.html) | **唯一前端原始檔**（部署時自動複製為 `ui_client.html` 與 `static/index.html`） |
+| [hailo_whisper/whisper_engine.py](file:///f:/14_prj_raspi5_localnote_asia/hailo_whisper/whisper_engine.py) | Hailo-10H Whisper 編解碼推論與後處理 |
+| [tools/e2e/scoring.py](file:///f:/14_prj_raspi5_localnote_asia/tools/e2e/scoring.py) | E2E 品質評分純函式（CER、事實召回、紀要結構與覆蓋率） |
 

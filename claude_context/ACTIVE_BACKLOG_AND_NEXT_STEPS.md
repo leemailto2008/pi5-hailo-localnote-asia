@@ -101,10 +101,10 @@
 
 ## 5. 本輪更新（2026-11-09 20:30–20:40 定時循環，台北時間）
 
-- **#14 真實重現與部署：** 3 分鐘 digital E2E（`8302fa8`，報告 `/home/pi/ln_e2e/reports/d1_quick_20261109_8302fa8/`，見 `e2e_3min.json`）的待辦列「客戶訂單臺中蓮華精力希望3月17日拿到5」恰為 20 字，切點落在「500」中間。離線重放（`F:\13_prj_raspi5_localnote\.cc_scratch\replay_14_cut.py`，輸出 `replay_14_cut_out.txt`）：舊 `[:20]` → `…拿到5`；新 `_cut_item` → `…拿到`；不含數字的截斷結果不變。本機 pytest（`C:\Python313`，忽略 3 個 Linux 專屬模組）502 passed。
+- **#14 真實重現與部署：** 3 分鐘 digital E2E（`8302fa8`，報告 `/home/pi/ln_e2e/reports/d1_quick_20261109_8302fa8/`，見 `e2e_3min.json`）的待辦列「客戶訂單臺中蓮華精力希望3月17日拿到5」恰為 20 字，切點落在「500」中間。離線重放（`F:\14_prj_raspi5_localnote_asia\.cc_scratch\replay_14_cut.py`，輸出 `replay_14_cut_out.txt`）：舊 `[:20]` → `…拿到5`；新 `_cut_item` → `…拿到`；不含數字的截斷結果不變。本機 pytest（`C:\Python313`，忽略 3 個 Linux 專屬模組）502 passed。
 - **部署：** `039e612` 以 `tools/ci/deploy_on_pi.sh` 部署到 raspi678，20:32 OK，備份 `/home/pi/code_dispatcher/.deploy_backup/20261109_203222/`；`summary_utils.py` md5 與來源一致。`/health` 仍為 `degraded`（redis，同 #8），部署日誌無 Traceback。
 - **部署後 1 分鐘 digital E2E（null-sink）：** PASS，報告 `/home/pi/ln_e2e/deploy_039e612/e2e_reports/20261109_203240/`。CER 0.1737（8302fa8 同長度為 0.1864）；逐字稿事實召回 0.9091（0.8182）；總結事實 1.0；紀要召回 1.0；議題覆蓋 0.5（8302fa8 同長度為 1.0）；STT NPU 12/12。
-- **部署方式注意（#16）：** `tools/ci/deploy_on_pi.sh` 在 git HEAD 內為 CRLF，直接 `bash` 執行報 `set: pipefail: invalid option name`，腳本 exit 2，未執行任何步驟，Pi 未變更。本輪改用 LF 副本（由 `git archive` 取 HEAD 內容並去除 CR，`F:\13_prj_raspi5_localnote\.cc_scratch\deploy_on_pi_lf.sh`），上傳到 `/home/pi/ln_e2e/deploy_039e612/tools/ci/` 後 `bash -n` 通過才部署。
+- **部署方式注意（#16）：** `tools/ci/deploy_on_pi.sh` 在 git HEAD 內為 CRLF，直接 `bash` 執行報 `set: pipefail: invalid option name`，腳本 exit 2，未執行任何步驟，Pi 未變更。本輪改用 LF 副本（由 `git archive` 取 HEAD 內容並去除 CR，`F:\14_prj_raspi5_localnote_asia\.cc_scratch\deploy_on_pi_lf.sh`），上傳到 `/home/pi/ln_e2e/deploy_039e612/tools/ci/` 後 `bash -n` 通過才部署。
 - **Pi 狀態：** 20:2x–20:3x 檢查 `/api/status` 為 `done`（最後 job `m_1794214462`，16:38；部署與 E2E 期間無錄音或處理中）；`/api/bt/status` connected=false，`trusted_devices` 仍只有控制器，#6 仍阻塞。
 - **git：** `main` 領先 `origin/main` 與 `gitlab/main` 各 2 個 commit（`c17a4d0`、`039e612`），尚未推送（未達 3–5 個門檻）。`tools/git_sync.cmd` 仍為 M，未併入。`.cc_scratch/` 為未追蹤暫存（含 `deploy_039e612.tar`、`e2e_3min_8302fa8.json`、重放腳本），勿 commit。
 - **#4 子項判讀（推測，待驗證）：** `工安→公安`、`星光→新光`、`決議是→依是` 較像 STT 同音誤認，通用修正困難，除非能找到可泛化的規則，否則列為已知限制；不以詞表處理。
@@ -150,7 +150,7 @@
 
 | # | 項目 | 狀態 | 備註 / 下一步 |
 |---|---|---|---|
-| 20 | 桌面 app 未連接 `F:\13_prj_raspi5_localnote` 資料夾 | 等待你決定 | 本輪 `device_bash` 無法使用，依規定不請求資料夾授權，改用 Desktop Commander（讀檔、pytest、git、scp 皆正常）。若要 `device_bash` 的 `$HOME/mnt` 路徑可用，請在 app 內「Add folder」連接該資料夾 |
+| 20 | 桌面 app 未連接 `F:\14_prj_raspi5_localnote_asia` 資料夾 | 等待你決定 | 本輪 `device_bash` 無法使用，依規定不請求資料夾授權，改用 Desktop Commander（讀檔、pytest、git、scp 皆正常）。若要 `device_bash` 的 `$HOME/mnt` 路徑可用，請在 app 內「Add folder」連接該資料夾 |
 | 21 | E2E 報告未留存 LLM 原始輸出 | ✅ 完成（23:33，`23ca266`） | #19 因此只能用合成輸入重現。已實作：`JobStatus.summary_raw` 存 LLM 原文（後處理前），`e2e.py` 寫入 `e2e_<label>.json`；1 分 E2E PASS（見 §8）。分段路徑未覆蓋，見 #25 |
 | 22 | `0f26dd5`、`23ca266`、`6ba0509` 推送 | ✅ 已推送（01:43）：三個 commit 同步到 gitlab＋origin（兩端 main = `6ba0509`） | 見 §10。GIT_TERMINAL_PROMPT=0、GCM_INTERACTIVE=never；推送時 PowerShell 會把 stderr 顯示為錯誤，exit code 0 即成功 |
 | 23 | 根目錄 `CLAUDE.md`、`.claude/settings.json` 為未追蹤檔 | 等待你決定 | 本輪 `git status` 首次看到，未併入 commit。確認要納入版本控制或加入 `.gitignore` |
@@ -393,7 +393,7 @@
 
 - **唯讀觀察（12:24）：** Pi `/api/status` 為 `done`，最後 job `m_1794281413` 為 11:30 的 1 分 E2E（已結束）。`/health` 仍 `degraded`（redis，同 #8）。`/api/bt/status` connected=true，耳麥 RichChipAN 為預設 sink、電量 100%。git：`main` 領先 gitlab 與 origin 各 1 個 commit（`1e00751`），`.git` 無 lock，未達推送門檻。
 - **Pi 數位 E2E 啟動（#38／#41）：** 12:25:34 以 `run_suite.py --minutes 60` 背景啟動（`CI_COMMIT_SHORT_SHA=1e00751`，PID 2669349，log `/home/pi/ln_e2e/run_60min_1e00751.log`）。啟動前 Pi 為 `done`，最後非 E2E job 為 10:48 的互動測試（超過 15 分鐘）。12:30 `/api/status` 為 `recording`（E2E 自己開的工作，進度 7%，預估 3403 s 後完成）。本輪結束時仍在執行，工作鎖持有中，未 push、未部署。
-- **#37 完成（離線分析，未在 Pi 上計算）：** 以 scp 把 `e2e_45min.json`（7606f00，10:19 報告）複製到 `F:\13_prj_raspi5_localnote\.cc_scratch\r37\`，用 `tools/e2e/scoring.py` 的 `norm`、`levenshtein` 與 difflib 近似拆解。本機無 opencc，所以本機 CER 為 0.2779，harness 為 0.2674，差 0.0105，推測來自繁簡與臺／台正規化。結果如下（近似，非最小編輯距離）：
+- **#37 完成（離線分析，未在 Pi 上計算）：** 以 scp 把 `e2e_45min.json`（7606f00，10:19 報告）複製到 `F:\14_prj_raspi5_localnote_asia\.cc_scratch\r37\`，用 `tools/e2e/scoring.py` 的 `norm`、`levenshtein` 與 difflib 近似拆解。本機無 opencc，所以本機 CER 為 0.2779，harness 為 0.2674，差 0.0105，推測來自繁簡與臺／台正規化。結果如下（近似，非最小編輯距離）：
   - 錯誤型態：替換 1569（63%）、刪除 750（30%）、插入 176（7%）。刪除減插入為 574，與「參考字數減逐字稿字數」8937 − 8363 = 574 吻合，可作為拆解的檢核。
   - 分段：把參考文字十等分，近似 CER 落在 0.244–0.315，沒有隨時間單調上升。最高為第 7 段（0.315），第 1 段 0.248，第 10 段 0.290。#37 原本的「隨時間上升」假設在 45 分中不成立。
   - 替換清單前列幾乎都是數字格式：fixture 用中文數字（十二、四週），逐字稿用阿拉伯數字（12、4週），如「十二→12」27 次、「八→8」26 次、「四→4」24 次。把兩邊數字都轉為阿拉伯數字後，本機 CER 由 0.2779 降為 0.1711。也就是說，CER 有相當大的部分來自格式不一致，而不是 ASR 聽錯（見 #42）。
@@ -474,3 +474,15 @@
 | 45 | 誤建一次性排程 `trig_01XZgTpBTgR2tNS8Aa7dm9o9`（內容 `placeholder`） | 等待你決定（人工刪除） | 刪除與停用皆被權限拒絕，請到排程清單刪除。已記錄，不再嘗試 |
 
 下一輪建議（依時段）：先 SSH 一次確認 678 是否已上線（不重試超過一次）。若仍離線，本輪只更新文件。上線後依 §4 規則確認 /api/status 為 `done` 再做 #43 (a)(b) 唯讀分析。#42、#36、#40 等你決定。目前無未推送 commit。
+
+## 遷移記錄（2026-11-10）
+
+- 新工作資料夾：`F:\14_prj_raspi5_localnote_asia`，取代舊的 `F:\13_prj_raspi5_localnote`。
+- 舊資料夾唯讀保留，不寫入。完整備份：`F:\13_prj_raspi5_localnote_backup_20261110`（583 檔，與原資料夾一致）。
+- Git 採全新歷史：根 commit `cb5adc1` 取自舊 repo 的 `1e00751` 快照；`9e702c9` 合併了 GitLab 上的 `Initial commit`，README 採新 repo 版本。舊 hash 只存在舊 repo。
+- 遠端：`gitlab` = `andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote-asia`；`origin` = `leemailto2008/pi5-hailo-localnote-asia`（GitHub）。舊 legacy 遠端未加入新 repo。
+- 未搬入（留在備份）：`LogoFiles/`、`.claude/settings.json`、`_ui_screenshots/`、`_patch_*.py`、`_commit_*.txt`、`.cc_scratch/`，以及舊的未提交 `tools/git_sync.cmd` 修改。
+- `tools/_archive/` 收納約 60 個一次性 `pi_*.sh` 除錯腳本。
+- `.agents/`（Antigravity 規則）已複製到新資料夾，位於 `.gitignore` 內，不進版控。
+- 每小時定時循環 `trig_01XfezGs1zV3uroLZy1NZm4D` 的提示詞已改指向新資料夾。
+- 待辦：刪除 `F:\_failed_tar_copy_v2_delete_me` 與 `F:\_old_clone_git_v2_delete_me`（需使用者授權）。

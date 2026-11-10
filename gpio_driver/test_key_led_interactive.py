@@ -1,4 +1,4 @@
-# f:\13_prj_raspi5_localnote\gpio_driver\test_key_led_interactive.py
+# f:\14_prj_raspi5_localnote_asia\gpio_driver\test_key_led_interactive.py
 """
 Interactive Diagnostic & Hardware Verification for 5-Key & 5-LED on Raspberry Pi 5.
 Runs LED sequence test, then continuously logs all button press and release events.

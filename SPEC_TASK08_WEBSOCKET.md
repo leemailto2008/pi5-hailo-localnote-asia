@@ -2,7 +2,7 @@
 # (Real-Time Bidirectional WebSocket Status Push)
 
 > **版本 (Version):** 1.0.0  
-> **關聯任務 (Task Reference):** [todo_tasks.md](file:///f:/13_prj_raspi5_localnote/todo_tasks.md) Task 08  
+> **關聯任務 (Task Reference):** [todo_tasks.md](file:///f:/14_prj_raspi5_localnote_asia/todo_tasks.md) Task 08  
 > **模組路徑 (Module Path):** `code_dispatcher/ws_manager.py`, `code_dispatcher/main.py`, `code_dispatcher/meeting_minutes.py`, `code_dispatcher/static/index.html`  
 > **建立日期 (Date):** 2026-10-13  
 > **架構師 (Architect):** Senior Staff Software Engineer & Architect  

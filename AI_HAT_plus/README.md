@@ -67,7 +67,7 @@ print(f"轉錄耗時: {result['duration_sec']:.2f} 秒 (RTF: {result['rtf']:.3f}
 
 ```bash
 # 進入本套件目錄
-cd f:\13_prj_raspi5_localnote\AI_HAT_plus
+cd f:\14_prj_raspi5_localnote_asia\AI_HAT_plus
 
 # 初始化獨立 Git 倉庫
 git init
@@ -75,8 +75,8 @@ git add .
 git commit -m "feat: initial commit for pi5-hailo-localnote"
 
 # 關聯遠端倉庫 (以 pi5-hailo-localnote 為例)
-git remote add origin https://alntu2@github.com/leemailto2008/pi5-hailo-localnote.git
-git remote add gitlab http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote.git
+git remote add origin https://alntu2@github.com/leemailto2008/pi5-hailo-localnote-asia.git
+git remote add gitlab http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote-asia.git
 
 # 雙推至新倉庫
 git push -u origin main && git push -u gitlab main

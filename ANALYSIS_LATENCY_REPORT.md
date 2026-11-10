@@ -45,7 +45,7 @@
 ---
 
 ### ⚪ 發現三：前端 UX「一次性阻塞反饋」放大了體感延遲 (Perceived Latency)
-- 目前 [meeting_minutes.py](file:///f:/13_prj_raspi5_localnote/code_dispatcher/meeting_minutes.py) 的架構是：
+- 目前 [meeting_minutes.py](file:///f:/14_prj_raspi5_localnote_asia/code_dispatcher/meeting_minutes.py) 的架構是：
   **錄音 (3分) ➔ STT (41秒) ➔ LLM 整理 (75秒) ➔ 100% 完成時才一次把摘要與逐字稿呈現在畫面上**。
 - 這導致使用者在錄音結束後，畫面在「整理中」卡了將近 2 分鐘（116 秒）！
 - 其實 **在第 41 秒時，830 字的逐字稿與音訊波形就已經全部就緒了**，但使用者在此期間完全看不到中間產物，因而產生「系統非常慢、甚至不知道有沒有在跑」的主觀體驗。
