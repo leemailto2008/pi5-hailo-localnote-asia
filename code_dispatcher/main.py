@@ -1780,24 +1780,68 @@ class DemoPolishRequest(BaseModel):
     mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
 
 
-_polish_lock = asyncio.Lock()
+# 潤稿是背景工作：一小時的會議約 22 段，Hailo 每段 60–95 秒，同步回應一定超過前端逾時。
+# 狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）。
+_polish_job: Dict[str, Any] = {"state": "idle"}
+_polish_task: Optional["asyncio.Task[None]"] = None
+
+
+def _polish_snapshot() -> Dict[str, Any]:
+    snap = dict(_polish_job)
+    if "started" in snap:
+        snap["elapsed"] = round((snap.get("finished") or time.time()) - snap["started"], 1)
+    return snap
+
+
+async def _run_polish_job(text: str, mode: str) -> None:
+    from voice_streaming import is_any_recording_active
+    from transcript_polish import polish_transcript
+
+    def on_progress(done: int, total: int) -> None:
+        _polish_job.update(done=done, total=total)
+
+    try:
+        result = await polish_transcript(
+            text, mode, on_progress=on_progress, should_stop=is_any_recording_active
+        )
+    except Exception as e:  # 背景工作：未預期錯誤要寫進狀態，否則前端會永遠停在 running
+        logger.exception("[polish] job failed")
+        _polish_job.update(state="error", error=str(e), finished=time.time())
+        return
+    _polish_job.update(
+        state="stopped" if result.get("stopped") else "done", result=result, finished=time.time()
+    )
 
 
 @app.post("/api/polish", tags=["Demo UI"])
 async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
-    """LLM 潤稿 (待辦 #11)。錄音中回 409；同時只跑一個潤稿；單段 LLM 失敗保留原文。"""
+    """啟動 LLM 潤稿背景工作 (待辦 #11)，立即回傳狀態；進度與結果用 GET /api/polish 查詢。
+
+    錄音中回 409；同時只跑一個；錄音一開始就在段落之間停下 (state=stopped，其餘段落保留原文)。
+    """
+    global _polish_task
     from voice_streaming import is_any_recording_active
-    from transcript_polish import MODES, polish_transcript
+    from transcript_polish import MODES, split_chunks
     if is_any_recording_active():
         raise HTTPException(status_code=409, detail="錄音中不可潤稿，請錄音結束後再試")
     if req.mode not in MODES:
         raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
     if not (req.text or "").strip():
         raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
-    if _polish_lock.locked():
+    if _polish_job.get("state") == "running":
         raise HTTPException(status_code=409, detail="已有潤稿在進行中，請稍候")
-    async with _polish_lock:
-        return await polish_transcript(req.text, req.mode)
+    _polish_job.clear()
+    _polish_job.update(
+        state="running", mode=req.mode, done=0, total=len(split_chunks(req.text)), started=time.time()
+    )
+    _polish_task = asyncio.create_task(_run_polish_job(req.text, req.mode))
+    return _polish_snapshot()
+
+
+@app.get("/api/polish", tags=["Demo UI"])
+async def get_demo_polish() -> Dict[str, Any]:
+    """潤稿工作狀態：state = idle / running / done / stopped / error；done 與 stopped 帶 result。"""
+    return _polish_snapshot()
 
 
 @app.post("/api/tts", tags=["Demo UI"])

@@ -10,6 +10,8 @@ transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11)。
 處理方式：
   - 長逐字稿切成數段 (每段約 MAX_CHUNK_CHARS 字)，依序送 LLM，避免小模型上下文過長與 NPU 排隊過久。
   - 單段 LLM 失敗 → 保留該段原文；rewrite 輸出長度異常 → 保留原文；fix 輸出格式錯誤 → 該段不套用修改。
+  - fix 輸出被 num_predict 截斷（陣列沒收尾）時，仍採用已完整的 {...} 項目。
+  - 每段開始前可由 should_stop() 中止（錄音開始時讓出 CPU/NPU），剩下的段落保留原文。
   - 只透過 llm_backend.achat_complete 呼叫模型 (Hailo 優先，失敗退 CPU)。
 """
 
@@ -17,9 +19,10 @@ import difflib
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from llm_backend import LLMError, achat_complete
+from summary_utils import to_taiwan_traditional
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ MIN_FIX_SIMILARITY = 0.5  # 修改前後相似度下限：低於此值視為語�
 
 _CUT_CHARS = "。！？!?.；;，,"
 _ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
+_OBJECT_RE = re.compile(r"\{[^{}]*\}")
 
 FIX_SYSTEM = "你是逐字稿校對工具。只輸出 JSON，不輸出任何說明文字。"
 REWRITE_SYSTEM = "你是會議逐字稿整理工具。只輸出整理後的文字，不輸出任何說明或標題。"
@@ -107,18 +111,31 @@ def _fix_is_sane(src: str, dst: str) -> bool:
     return difflib.SequenceMatcher(None, src, dst).ratio() >= MIN_FIX_SIMILARITY
 
 
+def _load_items(raw: str) -> Optional[List[Any]]:
+    """先整段解析 JSON 陣列；失敗時（常見於 num_predict 截斷、沒有收尾的 ]）改逐一解析已完整的 {...}。"""
+    match = _ARRAY_RE.search(raw)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+        except ValueError:
+            data = None
+        if isinstance(data, list):
+            return data
+    items: List[Any] = []
+    for obj in _OBJECT_RE.findall(raw):
+        try:
+            items.append(json.loads(obj))
+        except ValueError:
+            logger.debug("[polish] skip malformed item: %s", obj[:80])
+    return items or None
+
+
 def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
     """從模型輸出取出修改清單。無法解析回傳 None；解析成功但個別項目不合規則略過該項。"""
     if not raw:
         return None
-    match = _ARRAY_RE.search(raw)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if not isinstance(data, list):
+    data = _load_items(raw)
+    if data is None:
         return None
 
     fixes: List[Dict[str, str]] = []
@@ -128,6 +145,9 @@ def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
         src, dst = item.get("from"), item.get("to")
         if not isinstance(src, str) or not isinstance(dst, str):
             continue
+        # 小模型常把繁體「改」成簡體（11-10 實錄逐字稿：Hailo qwen3:1.7b 17 筆修改有 12 筆只是繁轉簡）。
+        # 先轉成與 STT 相同的台灣繁體 (OpenCC s2twp)，只換字體的項目就變成 from == to 而被丟棄。
+        dst = to_taiwan_traditional(dst)
         if not _fix_is_sane(src, dst):
             continue
         fixes.append({"from": src, "to": dst})
@@ -178,15 +198,25 @@ async def _run_rewrite(chunk: str, stats: Dict[str, Any]) -> str:
         hailo_retries=1,
     )
     stats["backend"] = backend.label
-    out = (raw or "").strip()
+    out = to_taiwan_traditional((raw or "").strip())
     if not _rewrite_length_ok(chunk, out):
         stats["rejected_chunks"] += 1
         return chunk
     return out
 
 
-async def polish_transcript(text: str, mode: str) -> Dict[str, Any]:
-    """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。"""
+async def polish_transcript(
+    text: str,
+    mode: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。
+
+    on_progress(done, total)：每段處理完呼叫一次。
+    should_stop()：每段開始前檢查；回傳 True 就停下，剩下的段落保留原文，結果帶 stopped=True。
+    （錄音一開始就要讓出 CPU/NPU，見 CLAUDE.md 重點一。）
+    """
     if mode not in MODES:
         raise ValueError(f"unknown polish mode: {mode}")
     chunks = split_chunks(text)
@@ -195,11 +225,17 @@ async def polish_transcript(text: str, mode: str) -> Dict[str, Any]:
         "failed_chunks": 0,
         "rejected_chunks": 0,
         "parse_errors": 0,
+        "stopped": False,
         "backend": None,
     }
     parts: List[str] = []
     changes: List[Dict[str, Any]] = []
     for idx, chunk in enumerate(chunks, start=1):
+        if should_stop is not None and should_stop():
+            logger.info("[polish] stopped before chunk %d/%d", idx, len(chunks))
+            stats["stopped"] = True
+            parts.extend(chunks[idx - 1:])
+            break
         try:
             if mode == "fix":
                 new_chunk, applied = await _run_fix(chunk, stats)
@@ -211,4 +247,6 @@ async def polish_transcript(text: str, mode: str) -> Dict[str, Any]:
             stats["failed_chunks"] += 1
             new_chunk = chunk
         parts.append(new_chunk)
+        if on_progress is not None:
+            on_progress(idx, len(chunks))
     return {"mode": mode, "polished": "\n\n".join(parts), "changes": changes, **stats}

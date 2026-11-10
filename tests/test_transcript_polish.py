@@ -3,6 +3,7 @@ import asyncio
 
 import pytest
 
+import summary_utils
 import transcript_polish as tp
 from llm_backend import LLMError
 
@@ -134,3 +135,66 @@ def test_parse_fix_list_rejects_deletion_and_semantic_rewrite():
 def test_parse_fix_list_rejects_length_explosion_and_collapse():
     raw = '[{"from": "好", "to": "很好很好很好很好很好"}, {"from": "劉課長送預算表", "to": "預算書"}]'
     assert tp.parse_fix_list(raw) == []
+
+
+def test_parse_fix_list_salvages_items_from_truncated_output():
+    # num_predict 用完時陣列沒有收尾；已完整的項目仍要採用，未完成的那筆丟掉。
+    raw = '[\n  {"from": "李協里", "to": "李協理"},\n  {"from": "辛光材料", "to": "新光材料"},\n  {"from": "涼'
+    assert tp.parse_fix_list(raw) == [
+        {"from": "李協里", "to": "李協理"},
+        {"from": "辛光材料", "to": "新光材料"},
+    ]
+
+
+def test_polish_reports_progress_per_chunk(monkeypatch):
+    async def fake_achat(prompt, system=None, **kwargs):
+        return "[]", _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    seen = []
+    text = "\n".join(["甲" * 590, "乙" * 590, "丙" * 590])
+    res = _run(tp.polish_transcript(text, "fix", on_progress=lambda done, total: seen.append((done, total))))
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+    assert res["stopped"] is False
+
+
+def test_polish_stops_between_chunks_and_keeps_rest_original(monkeypatch):
+    calls = []
+
+    async def fake_achat(prompt, system=None, **kwargs):
+        calls.append(prompt)
+        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
+    # 第一段做完後「開始錄音」：第二段開始前就要停。
+    res = _run(tp.polish_transcript(text, "fix", should_stop=lambda: len(calls) >= 1))
+    assert len(calls) == 1
+    assert res["stopped"] is True
+    assert res["polished"] == "\n\n".join(["改善" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
+    assert res["changes"] == [{"from": "改報", "to": "改善", "count": 1}]
+
+
+class _FakeCC:
+    """測試用的簡轉台灣繁體：只換本檔用到的字。"""
+
+    def convert(self, text):
+        return text.translate(str.maketrans({"没": "沒", "伤": "傷", "协": "協", "员": "員"}))
+
+
+def test_parse_fix_list_drops_script_only_changes(monkeypatch):
+    # 模型把繁體「修」成簡體：轉回台灣繁體後與原文相同，必須丟棄；真正的修改仍保留且輸出為繁體。
+    monkeypatch.setattr(summary_utils, "_CC", _FakeCC())
+    raw = '[{"from": "沒有人受傷", "to": "没有人受伤"}, {"from": "李協里", "to": "李协理"}]'
+    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
+
+
+def test_polish_rewrite_output_is_taiwan_traditional(monkeypatch):
+    monkeypatch.setattr(summary_utils, "_CC", _FakeCC())
+
+    async def fake_achat(prompt, system=None, **kwargs):
+        return "全员" + "二" * 80, _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    res = _run(tp.polish_transcript("一" * 100, "rewrite"))
+    assert res["polished"] == "全員" + "二" * 80

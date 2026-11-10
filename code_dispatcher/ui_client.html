@@ -1943,13 +1943,15 @@ window.toggleWavePlay = toggleWavePlay;
 window.stopWavePlay = stopWavePlay;
 window.playSelectedRegion = playSelectedRegion;
 window.transcribeSelectedRegion = transcribeSelectedRegion;
-// ── 潤稿區 (LLM 潤稿，待辦 #11)：逐字稿有內容才顯示；錄音中後端回 409 ──
+// ── 潤稿區 (LLM 潤稿，待辦 #11)：逐字稿有內容才顯示。後端是背景工作：POST 啟動、GET 查進度。
+//    錄音中後端回 409；錄音一開始，後端會在段落之間停下 (state=stopped)。
+let polishBusy = false;
 function syncPolishBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
   el.polishBox.hidden = !has;
-  el.polishFixBtn.disabled = !has;
-  el.polishRewriteBtn.disabled = !has;
-  if (!has) {
+  el.polishFixBtn.disabled = !has || polishBusy;
+  el.polishRewriteBtn.disabled = !has || polishBusy;
+  if (!has && !polishBusy) {
     el.polishText.textContent = '';
     el.polishChanges.textContent = '';
     el.polishStatus.textContent = '';
@@ -1959,37 +1961,81 @@ if (el.transcript) {
   new MutationObserver(syncPolishBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
 }
 
+function renderPolishResult(job) {
+  if (job.state === 'error') {
+    el.polishStatus.textContent = '潤稿失敗：' + (job.error || '未知錯誤');
+    return;
+  }
+  if (job.state === 'idle' || !job.result) {
+    el.polishStatus.textContent = '潤稿工作已不存在（服務可能重啟），請再試一次';
+    return;
+  }
+  const res = job.result;
+  el.polishText.textContent = res.polished || '';
+  if (res.mode === 'fix') {
+    const lines = (res.changes || []).map(c => `${c.from} → ${c.to}（×${c.count}）`);
+    el.polishChanges.textContent = lines.length ? '修改：\n' + lines.join('\n') : '沒有偵測到需要修正的地方';
+  }
+  const notes = [];
+  if (job.state === 'stopped') notes.push(`錄音開始，已中止（完成 ${job.done}/${job.total} 段，其餘保留原文）`);
+  if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
+  if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
+  if (res.parse_errors) notes.push(`${res.parse_errors} 段輸出格式錯誤，已略過`);
+  const secs = job.elapsed ? `，${Math.round(job.elapsed)} 秒` : '';
+  el.polishStatus.textContent = `完成：${res.chunks} 段（${res.backend || '—'}${secs}）` + (notes.length ? `；${notes.join('；')}` : '');
+}
+
+// 輪詢到工作結束；連續 5 次查詢失敗（手機 Wi-Fi 斷線）才放棄。
+async function pollPolish() {
+  let failures = 0;
+  for (;;) {
+    let job;
+    try {
+      job = await api(API.polish);
+      failures = 0;
+    } catch (err) {
+      failures += 1;
+      if (failures >= 5) throw err;
+      await new Promise(r => setTimeout(r, 3000));
+      continue;
+    }
+    if (job.state !== 'running') return job;
+    el.polishStatus.textContent = `潤稿中：已完成 ${job.done}/${job.total} 段（${Math.round(job.elapsed || 0)} 秒）…`;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
 async function runPolish(mode, btn) {
   const src = (el.transcript.innerText || '').trim();
   if (!src) { toast('沒有逐字稿可潤稿'); return; }
-  const label = btn.textContent;
-  el.polishFixBtn.disabled = true;
-  el.polishRewriteBtn.disabled = true;
-  btn.textContent = '潤稿中…';
-  el.polishStatus.textContent = mode === 'fix' ? '逐段修正同音字與漏字，請稍候…' : '逐段重新潤稿（較慢），請稍候…';
+  const label = btn ? btn.textContent : '';
+  polishBusy = true;
+  syncPolishBox();
+  if (btn) btn.textContent = '潤稿中…';
   el.polishText.textContent = '';
   el.polishChanges.textContent = '';
   try {
-    const res = await api(API.polish, { text: src, mode }, 600000);
-    el.polishText.textContent = res.polished || '';
-    const lines = (res.changes || []).map(c => `${c.from} → ${c.to}（×${c.count}）`);
-    if (mode === 'fix') {
-      el.polishChanges.textContent = lines.length ? '修改：\n' + lines.join('\n') : '沒有偵測到需要修正的地方';
+    if (mode) {
+      el.polishStatus.textContent = mode === 'fix' ? '逐段修正同音字與漏字，請稍候…' : '逐段重新潤稿（較慢），請稍候…';
+      await api(API.polish, { text: src, mode });
     }
-    const notes = [];
-    if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
-    if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
-    if (res.parse_errors) notes.push(`${res.parse_errors} 段輸出格式錯誤，已略過`);
-    el.polishStatus.textContent = `完成：${res.chunks} 段（${res.backend || '—'}）` + (notes.length ? `；${notes.join('；')}` : '');
+    renderPolishResult(await pollPolish());
   } catch (err) {
     el.polishStatus.textContent = '潤稿失敗：' + (err.message || err);
   } finally {
-    btn.textContent = label;
+    if (btn) btn.textContent = label;
+    polishBusy = false;
     syncPolishBox();
   }
 }
 el.polishFixBtn.addEventListener('click', () => runPolish('fix', el.polishFixBtn));
 el.polishRewriteBtn.addEventListener('click', () => runPolish('rewrite', el.polishRewriteBtn));
+// 重新整理頁面時，若後端還在潤稿就接著顯示進度。
+if (!MOCK) {
+  api(API.polish).then(job => {
+    if (job && job.state === 'running') runPolish(null, null);
+  }).catch(err => console.warn('polish status check failed', err));
+}
 
 function handleTranscriptStream(data) {
   if (!data || !data.transcript) return;
