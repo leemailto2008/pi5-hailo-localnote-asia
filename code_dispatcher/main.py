@@ -1775,6 +1775,31 @@ async def post_demo_translate(req: DemoTranslateRequest) -> Dict[str, Any]:
     return {"text": "\n".join(out).strip()}
 
 
+class DemoPolishRequest(BaseModel):
+    text: str = Field(..., max_length=200000, description="完整逐字稿")
+    mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
+
+
+_polish_lock = asyncio.Lock()
+
+
+@app.post("/api/polish", tags=["Demo UI"])
+async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
+    """LLM 潤稿 (待辦 #11)。錄音中回 409；同時只跑一個潤稿；單段 LLM 失敗保留原文。"""
+    from voice_streaming import is_any_recording_active
+    from transcript_polish import MODES, polish_transcript
+    if is_any_recording_active():
+        raise HTTPException(status_code=409, detail="錄音中不可潤稿，請錄音結束後再試")
+    if req.mode not in MODES:
+        raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
+    if not (req.text or "").strip():
+        raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
+    if _polish_lock.locked():
+        raise HTTPException(status_code=409, detail="已有潤稿在進行中，請稍候")
+    async with _polish_lock:
+        return await polish_transcript(req.text, req.mode)
+
+
 @app.post("/api/tts", tags=["Demo UI"])
 async def post_demo_tts(req: DemoTTSRequest) -> Dict[str, Any]:
     """Synthesize text and play directly on Bluetooth headset."""

@@ -467,6 +467,19 @@ details[open] summary::after{content:"收起 ▴"}
             <summary>完整逐字稿</summary>
             <div class="transcript" id="transcript"></div>
           </details>
+
+          <details id="polishBox" hidden>
+            <summary>潤稿 Polish (LLM)</summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+              <div class="row">
+                <button class="btn" id="polishFixBtn" disabled>修同音字與漏字</button>
+                <button class="btn" id="polishRewriteBtn" disabled>整段重新潤稿</button>
+              </div>
+              <div id="polishStatus" style="font-size:13px;color:var(--muted)"></div>
+              <div class="transcript" id="polishText"></div>
+              <div id="polishChanges" style="font-size:13px;color:var(--muted);white-space:pre-wrap"></div>
+            </div>
+          </details>
         </div>
 
         <div class="card out minor">
@@ -581,7 +594,7 @@ const API = {
   btAuto: '/api/bt/trusted/auto_connect',
   btRemove: '/api/bt/remove',
   record: '/api/record', status: '/api/status',
-  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate',
+  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish',
   tts: '/api/tts', netSwitch: '/api/net/switch',
   cancelJob: '/api/record/cancel', transcribeRegion: '/api/transcribe/region',
   finishRecord: '/api/record/finish',
@@ -599,6 +612,8 @@ const el = {
   recBtn: $('recBtn'), recLabel: $('recLabel'), recSub: $('recSub'), dur: $('dur'), hint: $('hint'),
   progress: $('progress'), pTitle: $('pTitle'), pEta: $('pEta'), pBar: $('pBar'), pSteps: $('pSteps'), btnFinishEarly: $('btnFinishEarly'),
   minutes: $('minutes'), transcriptBox: $('transcriptBox'), transcript: $('transcript'),
+  polishBox: $('polishBox'), polishFixBtn: $('polishFixBtn'), polishRewriteBtn: $('polishRewriteBtn'),
+  polishStatus: $('polishStatus'), polishText: $('polishText'), polishChanges: $('polishChanges'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
   btnOpenBtMgr: $('btnOpenBtMgr'), btnConnectDefault: $('btnConnectDefault'), btnQuickDisconnect: $('btnQuickDisconnect'),
@@ -2028,6 +2043,54 @@ window.toggleWavePlay = toggleWavePlay;
 window.stopWavePlay = stopWavePlay;
 window.playSelectedRegion = playSelectedRegion;
 window.transcribeSelectedRegion = transcribeSelectedRegion;
+// ── 潤稿區 (LLM 潤稿，待辦 #11)：逐字稿有內容才顯示；錄音中後端回 409 ──
+function syncPolishBox() {
+  const has = !!(el.transcript && el.transcript.innerText.trim());
+  el.polishBox.hidden = !has;
+  el.polishFixBtn.disabled = !has;
+  el.polishRewriteBtn.disabled = !has;
+  if (!has) {
+    el.polishText.textContent = '';
+    el.polishChanges.textContent = '';
+    el.polishStatus.textContent = '';
+  }
+}
+if (el.transcript) {
+  new MutationObserver(syncPolishBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
+}
+
+async function runPolish(mode, btn) {
+  const src = (el.transcript.innerText || '').trim();
+  if (!src) { toast('沒有逐字稿可潤稿'); return; }
+  const label = btn.textContent;
+  el.polishFixBtn.disabled = true;
+  el.polishRewriteBtn.disabled = true;
+  btn.textContent = '潤稿中…';
+  el.polishStatus.textContent = mode === 'fix' ? '逐段修正同音字與漏字，請稍候…' : '逐段重新潤稿（較慢），請稍候…';
+  el.polishText.textContent = '';
+  el.polishChanges.textContent = '';
+  try {
+    const res = await api(API.polish, { text: src, mode }, 600000);
+    el.polishText.textContent = res.polished || '';
+    const lines = (res.changes || []).map(c => `${c.from} → ${c.to}（×${c.count}）`);
+    if (mode === 'fix') {
+      el.polishChanges.textContent = lines.length ? '修改：\n' + lines.join('\n') : '沒有偵測到需要修正的地方';
+    }
+    const notes = [];
+    if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
+    if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
+    if (res.parse_errors) notes.push(`${res.parse_errors} 段輸出格式錯誤，已略過`);
+    el.polishStatus.textContent = `完成：${res.chunks} 段（${res.backend || '—'}）` + (notes.length ? `；${notes.join('；')}` : '');
+  } catch (err) {
+    el.polishStatus.textContent = '潤稿失敗：' + (err.message || err);
+  } finally {
+    btn.textContent = label;
+    syncPolishBox();
+  }
+}
+el.polishFixBtn.addEventListener('click', () => runPolish('fix', el.polishFixBtn));
+el.polishRewriteBtn.addEventListener('click', () => runPolish('rewrite', el.polishRewriteBtn));
+
 function handleTranscriptStream(data) {
   if (!data || !data.transcript) return;
   // ⚡ STT 逐段即時噴出：秒開展開卡片，即時動態滾動！
