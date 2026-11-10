@@ -2165,6 +2165,10 @@ function syncRefineBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
   el.refineBox.hidden = !has;
   el.refineBtn.disabled = !has || refineBusy || !!refineUnavailable;
+  if (!has && !refineBusy) {
+    el.refineText.textContent = '';
+    el.refineStatus.textContent = refineUnavailable ? '這台裝置無法使用：' + refineUnavailable : '';
+  }
 }
 if (el.transcript) {
   new MutationObserver(syncRefineBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
@@ -2181,12 +2185,15 @@ function renderRefine(job) {
   }
   const r = job.result;
   el.refineText.textContent = r.transcript || '';
-  const parts = [`${r.speakers || 0} 位說話人`, `錄音 ${Math.round(r.audio_s || 0)} 秒`,
-                 `辨識 ${r.asr_s ?? '—'} 秒`, `分說話人 ${r.diarize_s ?? '—'} 秒`];
+  const parts = [];
+  if (r.speakers) parts.push(`${r.speakers} 位說話人`);
+  if (r.audio_s) parts.push(`錄音 ${Math.round(r.audio_s)} 秒`);
+  if (r.asr_s != null) parts.push(`辨識 ${r.asr_s} 秒`);
+  if (r.diarize_s != null) parts.push(`分說話人 ${r.diarize_s} 秒`);
   const head = job.state === 'stopped'
-    ? '錄音開始，已中止' + (r.phase === 'diarize' ? '（已辨識，未分說話人）' : '')
+    ? '錄音開始，已中止' + (r.phase === 'diarize' ? '（已辨識，未分說話人）' : '（尚未辨識完）')
     : '完成';
-  el.refineStatus.textContent = `${head}：${parts.join('，')}（${r.engine || ''}）`;
+  el.refineStatus.textContent = head + (parts.length ? `：${parts.join('，')}` : '') + (r.engine ? `（${r.engine}）` : '');
 }
 
 async function runRefine(start) {
@@ -2212,13 +2219,14 @@ async function runRefine(start) {
   }
 }
 el.refineBtn.addEventListener('click', () => runRefine(true));
-// 開頁時：查這台能不能用；工作還在跑就接著顯示，已完成就顯示結果。
+// 開頁時：查這台能不能用；工作還在跑就接著顯示；已完成且是目前這場會議才顯示結果（不顯示上一場的）。
 if (!MOCK) {
-  api(API.refine).then(job => {
+  Promise.all([api(API.refine), api(API.status)]).then(([job, st]) => {
     refineUnavailable = (job && job.unavailable) || null;
     if (refineUnavailable) el.refineStatus.textContent = '這台裝置無法使用：' + refineUnavailable;
+    const sameMeeting = !!(job && st && job.job && job.job === st.job);
     if (job && job.state === 'running') runRefine(false);
-    else if (job && (job.state === 'done' || job.state === 'stopped')) renderRefine(job);
+    else if (sameMeeting && (job.state === 'done' || job.state === 'stopped')) renderRefine(job);
     syncRefineBox();
   }).catch(err => console.warn('refine status check failed', err));
 }
