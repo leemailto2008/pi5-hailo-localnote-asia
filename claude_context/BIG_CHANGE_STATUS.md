@@ -56,7 +56,7 @@
    這是 SenseVoice 在真實藍牙音訊（CVSD 8 kHz、有掉包）上的表現，目前只有數位音訊的數據。
 2. 長會議：Pi 上用 python3 -m refine_transcript 跑 120／240 分鐘 WAV（.cc_scratch/sv/run_with_rss.py 量峰值記憶體），確認不會 OOM。
 3. 句子合併：VAD 切在句中，SenseVoice 每段加「。」（例：「不良率從5%。降到1%。」）。同一人、間隔很短的相鄰句，前句的「。」改「，」。先寫單測。
-4. rewrite 實測：實錄逐字稿 22 段跑 rewrite，記錄 fact_rejected_chunks、耗時。
+4. rewrite 實測（已完成 22:14，見量測紀錄）：實錄逐字稿 22 段跑 rewrite，記錄 fact_rejected_chunks、耗時。
 5. 待使用者決定（不要自行實作）：錄音結束自動跑高精度逐字稿；紀要改用高精度逐字稿。
 
 ## 量測紀錄
@@ -84,8 +84,8 @@
 
 - 2026-11-10 21:33 240 分鐘 refine CLI（Pi，run_240.sh，meeting_240min.wav，音訊 14383 s，rc=0）：ASR 652.9 s、分說話人 3258.0 s，wall 3919.6 s（RTF 0.272），峰值 RSS 4644 MB（8 GB 機器，未 OOM），2647 句，hyp 8 人（真值 4 人）。逐行歸屬 0.9228（2047 行，未歸屬 0）、句子級 0.9403（2647 句），計算 .cc_scratch/sv/acc_refine.py + tools/e2e/fixtures/meeting_240min.json。8 群中 4 群對應真值，其餘 4 群未對應（過度分群）；60 分鐘為 6 群、0.9547／0.9653。未調參，僅記錄。
 - 2026-11-10 21:33 句子合併離線重放（240 分鐘，.cc_scratch/sv/replay_merge_240.py）：句號 2683 → 2130（改 553 處），去標點後文字與舊版相同。
-- 2026-11-10 21:35 122051e 部署（備份 .deploy_backup/20261110_213534；py_compile、健康檢查通過）。POST /api/refine 冒煙（最後一場 m_1794309254，音訊 75.3 s）：完成，22.5 s，3 位說話人；同一說話人短停頓已見逗號（例：「好，我們開始今天的週會，今天有幾個議題要討論。」）。/health 回 status=degraded、redis_connected=false，只是觀察，尚未查是否為既有狀態。
-- 2026-11-10 21:37 #4 rewrite 實測啟動（Pi，/tmp/rewrite_real_check.py，實錄 22 段 12554 字，/api/polish mode=rewrite）：結果待填（/tmp/rewrite_real.json、/tmp/rewrite_real.log）。
+- 2026-11-10 21:35 122051e 部署（備份 .deploy_backup/20261110_213534；py_compile、健康檢查通過）。POST /api/refine 冒煙（最後一場 m_1794309254，音訊 75.3 s）：完成，22.5 s，3 位說話人；同一說話人短停頓已見逗號（例：「好，我們開始今天的週會，今天有幾個議題要討論。」）。/health 回 status=degraded、redis_connected=false（觀察）。本次部署只改 refine_transcript.py，與 redis 判定無關（推論，非已查證）；是否為既有狀態尚未查證。
+- 2026-11-10 21:37 #4 rewrite 實測啟動（Pi，/tmp/rewrite_real_check.py，實錄 22 段 12554 字，/api/polish mode=rewrite）：結果（22:14 完成）：state=done，wall 2291.4 s（服務內 elapsed 2290.8 s，約每段 104 s），fact_rejected_chunks 5、rejected_chunks 0、failed_chunks 0，backend Hailo-10H NPU qwen3:1.7b，輸入 12554 字、輸出 12578 字。原始結果 Pi 上 /tmp/rewrite_real.json、日誌 /tmp/rewrite_real.log；只記錄上述數值，未與人工參考文字比對品質。
 
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
