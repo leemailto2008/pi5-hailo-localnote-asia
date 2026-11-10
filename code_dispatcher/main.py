@@ -1780,37 +1780,13 @@ class DemoPolishRequest(BaseModel):
     mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
 
 
-# 潤稿是背景工作：一小時的會議約 22 段，Hailo 每段 60–95 秒，同步回應一定超過前端逾時。
-# 狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）。
-_polish_job: Dict[str, Any] = {"state": "idle"}
-_polish_task: Optional["asyncio.Task[None]"] = None
+# 潤稿、高精度逐字稿都是背景工作（single_job.SingleJob）：一小時的會議潤稿約 22 段，Hailo 每段 60–95 秒，
+# 同步回應一定超過前端逾時。狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）。
+from single_job import SingleJob  # noqa: E402
 
-
-def _polish_snapshot() -> Dict[str, Any]:
-    snap = dict(_polish_job)
-    if "started" in snap:
-        snap["elapsed"] = round((snap.get("finished") or time.time()) - snap["started"], 1)
-    return snap
-
-
-async def _run_polish_job(text: str, mode: str) -> None:
-    from voice_streaming import is_any_recording_active
-    from transcript_polish import polish_transcript
-
-    def on_progress(done: int, total: int) -> None:
-        _polish_job.update(done=done, total=total)
-
-    try:
-        result = await polish_transcript(
-            text, mode, on_progress=on_progress, should_stop=is_any_recording_active
-        )
-    except Exception as e:  # 背景工作：未預期錯誤要寫進狀態，否則前端會永遠停在 running
-        logger.exception("[polish] job failed")
-        _polish_job.update(state="error", error=str(e), finished=time.time())
-        return
-    _polish_job.update(
-        state="stopped" if result.get("stopped") else "done", result=result, finished=time.time()
-    )
+_polish_job = SingleJob("polish")
+_refine_job = SingleJob("refine")
+_JOB_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
 
 
 @app.post("/api/polish", tags=["Demo UI"])
@@ -1819,29 +1795,82 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
 
     錄音中回 409；同時只跑一個；錄音一開始就在段落之間停下 (state=stopped，其餘段落保留原文)。
     """
-    global _polish_task
     from voice_streaming import is_any_recording_active
-    from transcript_polish import MODES, split_chunks
+    from transcript_polish import MODES, polish_transcript, split_chunks
     if is_any_recording_active():
         raise HTTPException(status_code=409, detail="錄音中不可潤稿，請錄音結束後再試")
     if req.mode not in MODES:
         raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
     if not (req.text or "").strip():
         raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
-    if _polish_job.get("state") == "running":
+    if _polish_job.running:
         raise HTTPException(status_code=409, detail="已有潤稿在進行中，請稍候")
-    _polish_job.clear()
-    _polish_job.update(
-        state="running", mode=req.mode, done=0, total=len(split_chunks(req.text)), started=time.time()
-    )
-    _polish_task = asyncio.create_task(_run_polish_job(req.text, req.mode))
-    return _polish_snapshot()
+
+    async def runner(job: SingleJob) -> Dict[str, Any]:
+        return await polish_transcript(
+            req.text, req.mode,
+            on_progress=lambda done, total: job.update(done=done, total=total),
+            should_stop=is_any_recording_active,
+        )
+
+    return _polish_job.start(runner, mode=req.mode, done=0, total=len(split_chunks(req.text)))
 
 
 @app.get("/api/polish", tags=["Demo UI"])
 async def get_demo_polish() -> Dict[str, Any]:
     """潤稿工作狀態：state = idle / running / done / stopped / error；done 與 stopped 帶 result。"""
-    return _polish_snapshot()
+    return _polish_job.snapshot()
+
+
+class RefineRequest(BaseModel):
+    job: Optional[str] = Field(default=None, description="會議 job id；省略 = 目前這場會議")
+
+
+@app.post("/api/refine", tags=["Demo UI"])
+async def post_refine(req: RefineRequest) -> Dict[str, Any]:
+    """高精度逐字稿 (大改第 2、3 項)：錄音結束後用 SenseVoice 重新辨識整段錄音並分說話人 (CPU，背景工作)。
+
+    錄音中回 409；sherpa-onnx 或模型不在回 503；錄音檔不在 (例如服務重啟後 RAM 磁碟已清空) 回 404。
+    處理中一開始錄音就停下 (state=stopped)。進度與結果用 GET /api/refine 查詢。
+    """
+    from voice_streaming import is_any_recording_active
+    from meeting_minutes import minutes_manager
+    import refine_transcript
+    if is_any_recording_active():
+        raise HTTPException(status_code=409, detail="錄音中不可執行，請錄音結束後再試")
+    if _refine_job.running:
+        raise HTTPException(status_code=409, detail="高精度逐字稿正在處理中，請稍候")
+    reason = refine_transcript.check_available()
+    if reason:
+        raise HTTPException(status_code=503, detail=f"高精度逐字稿無法使用：{reason}")
+    job_id = req.job or (minutes_manager.status.job or "")
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="沒有可處理的會議")
+    path = os.path.join(AUDIO_CACHE_DIR, f"{job_id}.ogg")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="找不到這場會議的錄音檔（服務重啟後記憶體磁碟會清空）")
+
+    def on_progress(phase: str, frac: float) -> None:
+        # 進度權重依 Pi 實測耗時：辨識約佔 1/6，分說話人約 5/6。
+        overall = frac / 6 if phase == "asr" else (1 / 6 + frac * 5 / 6 if phase == "diarize" else 0.0)
+        _refine_job.update(phase=phase, progress=round(overall * 100))
+
+    async def runner(job: SingleJob) -> Dict[str, Any]:
+        try:
+            return await asyncio.to_thread(refine_transcript.refine, path, is_any_recording_active, on_progress)
+        except refine_transcript.RefineError as e:
+            raise RuntimeError(str(e)) from e
+
+    return _refine_job.start(runner, job=job_id, phase="load", progress=0)
+
+
+@app.get("/api/refine", tags=["Demo UI"])
+async def get_refine() -> Dict[str, Any]:
+    """高精度逐字稿工作狀態；unavailable 不為空表示這台沒有安裝 sherpa-onnx 或模型。"""
+    import refine_transcript
+    snap = _refine_job.snapshot()
+    snap["unavailable"] = refine_transcript.check_available()
+    return snap
 
 
 @app.post("/api/tts", tags=["Demo UI"])

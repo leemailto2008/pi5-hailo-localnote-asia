@@ -480,6 +480,17 @@ details[open] summary::after{content:"收起 ▴"}
               <div id="polishChanges" style="font-size:13px;color:var(--muted);white-space:pre-wrap"></div>
             </div>
           </details>
+
+          <details id="refineBox" hidden>
+            <summary>高精度逐字稿＋分說話人 (SenseVoice＋CAM++)</summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+              <div class="row">
+                <button class="btn" id="refineBtn" disabled>重新辨識並分說話人</button>
+              </div>
+              <div id="refineStatus" style="font-size:13px;color:var(--muted)"></div>
+              <div class="transcript" id="refineText" style="white-space:pre-wrap"></div>
+            </div>
+          </details>
         </div>
 
         <div class="card out minor">
@@ -594,7 +605,7 @@ const API = {
   btAuto: '/api/bt/trusted/auto_connect',
   btRemove: '/api/bt/remove',
   record: '/api/record', status: '/api/status',
-  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish',
+  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish', refine: '/api/refine',
   tts: '/api/tts', netSwitch: '/api/net/switch',
   cancelJob: '/api/record/cancel', transcribeRegion: '/api/transcribe/region',
   finishRecord: '/api/record/finish',
@@ -614,6 +625,7 @@ const el = {
   minutes: $('minutes'), transcriptBox: $('transcriptBox'), transcript: $('transcript'),
   polishBox: $('polishBox'), polishFixBtn: $('polishFixBtn'), polishRewriteBtn: $('polishRewriteBtn'),
   polishStatus: $('polishStatus'), polishText: $('polishText'), polishChanges: $('polishChanges'),
+  refineBox: $('refineBox'), refineBtn: $('refineBtn'), refineStatus: $('refineStatus'), refineText: $('refineText'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
   btnOpenBtMgr: $('btnOpenBtMgr'), btnConnectDefault: $('btnConnectDefault'), btnQuickDisconnect: $('btnQuickDisconnect'),
@@ -2086,13 +2098,13 @@ function renderPolishResult(job) {
   el.polishStatus.textContent = `完成：${res.chunks} 段（${res.backend || '—'}${secs}）` + (notes.length ? `；${notes.join('；')}` : '');
 }
 
-// 輪詢到工作結束；連續 5 次查詢失敗（手機 Wi-Fi 斷線）才放棄。
-async function pollPolish() {
+// 背景工作輪詢到結束；連續 5 次查詢失敗（手機 Wi-Fi 斷線）才放棄。onRunning(job) 用來更新進度文字。
+async function pollJob(path, onRunning) {
   let failures = 0;
   for (;;) {
     let job;
     try {
-      job = await api(API.polish);
+      job = await api(path);
       failures = 0;
     } catch (err) {
       failures += 1;
@@ -2101,9 +2113,15 @@ async function pollPolish() {
       continue;
     }
     if (job.state !== 'running') return job;
-    el.polishStatus.textContent = `潤稿中：已完成 ${job.done}/${job.total} 段（${Math.round(job.elapsed || 0)} 秒）…`;
+    onRunning(job);
     await new Promise(r => setTimeout(r, 2000));
   }
+}
+
+function pollPolish() {
+  return pollJob(API.polish, job => {
+    el.polishStatus.textContent = `潤稿中：已完成 ${job.done}/${job.total} 段（${Math.round(job.elapsed || 0)} 秒）…`;
+  });
 }
 
 async function runPolish(mode, btn) {
@@ -2136,6 +2154,73 @@ if (!MOCK) {
   api(API.polish).then(job => {
     if (job && job.state === 'running') runPolish(null, null);
   }).catch(err => console.warn('polish status check failed', err));
+}
+
+// ── 高精度逐字稿＋分說話人 (SenseVoice＋CAM++，大改第 2、3 項)：錄音結束後在 Pi 的 CPU 上重新辨識整段錄音。
+//    後端是背景工作：POST /api/refine 啟動、GET 查進度；錄音一開始後端就停下 (state=stopped)。
+let refineBusy = false;
+let refineUnavailable = null;
+const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: '分說話人' };
+function syncRefineBox() {
+  const has = !!(el.transcript && el.transcript.innerText.trim());
+  el.refineBox.hidden = !has;
+  el.refineBtn.disabled = !has || refineBusy || !!refineUnavailable;
+}
+if (el.transcript) {
+  new MutationObserver(syncRefineBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
+}
+
+function renderRefine(job) {
+  if (job.state === 'error') {
+    el.refineStatus.textContent = '處理失敗：' + (job.error || '未知錯誤');
+    return;
+  }
+  if (job.state === 'idle' || !job.result) {
+    el.refineStatus.textContent = '工作已不存在（服務可能重啟），請再試一次';
+    return;
+  }
+  const r = job.result;
+  el.refineText.textContent = r.transcript || '';
+  const parts = [`${r.speakers || 0} 位說話人`, `錄音 ${Math.round(r.audio_s || 0)} 秒`,
+                 `辨識 ${r.asr_s ?? '—'} 秒`, `分說話人 ${r.diarize_s ?? '—'} 秒`];
+  const head = job.state === 'stopped'
+    ? '錄音開始，已中止' + (r.phase === 'diarize' ? '（已辨識，未分說話人）' : '')
+    : '完成';
+  el.refineStatus.textContent = `${head}：${parts.join('，')}（${r.engine || ''}）`;
+}
+
+async function runRefine(start) {
+  refineBusy = true;
+  syncRefineBox();
+  const label = el.refineBtn.textContent;
+  el.refineBtn.textContent = '處理中…';
+  try {
+    if (start) {
+      el.refineText.textContent = '';
+      el.refineStatus.textContent = '開始處理…';
+      await api(API.refine, {});
+    }
+    renderRefine(await pollJob(API.refine, job => {
+      el.refineStatus.textContent = `處理中：${REFINE_PHASE[job.phase] || job.phase || ''} ${job.progress || 0}%（${Math.round(job.elapsed || 0)} 秒）…`;
+    }));
+  } catch (err) {
+    el.refineStatus.textContent = '處理失敗：' + (err.message || err);
+  } finally {
+    el.refineBtn.textContent = label;
+    refineBusy = false;
+    syncRefineBox();
+  }
+}
+el.refineBtn.addEventListener('click', () => runRefine(true));
+// 開頁時：查這台能不能用；工作還在跑就接著顯示，已完成就顯示結果。
+if (!MOCK) {
+  api(API.refine).then(job => {
+    refineUnavailable = (job && job.unavailable) || null;
+    if (refineUnavailable) el.refineStatus.textContent = '這台裝置無法使用：' + refineUnavailable;
+    if (job && job.state === 'running') runRefine(false);
+    else if (job && (job.state === 'done' || job.state === 'stopped')) renderRefine(job);
+    syncRefineBox();
+  }).catch(err => console.warn('refine status check failed', err));
 }
 
 function handleTranscriptStream(data) {
