@@ -105,6 +105,8 @@
   - 排程停用未完成：update_trigger 將 trig_01XfezGs1zV3uroLZy1NZm4D 設為 enabled=false 被自動權限分類器拒絕（Cowork Scheduled Task Delete）。排程仍啟用；未以其他途徑繞過。每輪讀到本檔 DONE 且無可做項目時，只需回報、不需再改程式；是否停用由使用者決定。
   - 誤建檔 /home/pi/ln_stress/meeting_10min.wav（20 MB）仍在，待使用者手動刪除。
 
+- 2026-11-10 22:35 互動 session：排程提示已改成「後續改善」版（名稱「claude_localnote 大改後續改善循環」）。新提示要求夜間（19:00–07:00）照 CLAUDE.md 流程做 #1 聲學實測；#1 完成後排程會再嘗試停用，若仍被權限拒絕，由使用者手動停用。
+
 ## 工作規則
 - 白天（07:00–19:00）：只做數位工作（pytest、離線重放、合成資料 E2E、程式與文件）；不放音、不用藍牙耳麥。
 - 錄音或處理中（/api/status 的 state 為 recording 或 processing）：Pi 上不跑任何評估、不部署、不重啟。
