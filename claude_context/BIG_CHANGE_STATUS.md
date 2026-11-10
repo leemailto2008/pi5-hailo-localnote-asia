@@ -3,7 +3,7 @@
 互動 session 進行中，至 2026-11-10 19:50（台北）
 （使用者在互動 session 直接處理這個大改；排程輪看到此行且未過期就只讀、直接結束。見排程步驟 1b。）
 
-## 狀態：三項 DONE（2026-11-10 19:40）。後續改善清單已無可做項目；2026-11-10 22:28 排程最終輪停用排程（見排程輪次紀錄）
+## 狀態：三項 DONE（2026-11-10 19:40）。後續改善清單已無可做項目。排程停用被權限拒絕，排程仍啟用，待使用者決定（見排程輪次紀錄）
 
 ## 目標與順序（使用者指定）
 1. 潤稿區（待辦 #11）→ 2. SenseVoice 比較（ASR 品質與效能）→ 3. CAM++ 分說話人
@@ -101,7 +101,8 @@
 - 2026-11-10 22:28 排程最終輪（台北時間）：互動鎖 19:50 已過期。Pi：/api/status state=done、無 recording／processing；pgrep real_exp.py 無實際程序（只匹配到檢查指令本身）。git：未推送的只有 b2b1f34（文件）。
   - 後續改善清單：#1 需喇叭／耳麥（本排程指示目前不做）；#2–#4 已完成；#5 待使用者決定。無剩餘可做項目。
   - /health 回 status=degraded、redis_connected=false、ollama_running=true、queue_length=0。raspi678 的 redis-server 為 inactive，redis-cli 未安裝；自 2026-11-09 起即如此（ACTIVE_BACKLOG_AND_NEXT_STEPS.md 第 8 項）。本大改的 /api/refine、/api/polish 不依賴 redis，已實測通過。部署腳本的健康檢查只判斷 HTTP 200，故通過；嚴格的 status=healthy 未達成，屬第 8 項，不在本大改範圍，未處理。
-  - 本輪未部署、未在 Pi 跑評估。本輪動作：推送 gitlab、origin（b2b1f34 與本輪文件 commit），以 update_trigger 將排程 trig_01XfezGs1zV3uroLZy1NZm4D 設為 enabled=false。以 git log 為準。
+  - 本輪未部署、未在 Pi 跑評估。推送 gitlab、origin 完成（bf18d83，含 b2b1f34）。
+  - 排程停用未完成：update_trigger 將 trig_01XfezGs1zV3uroLZy1NZm4D 設為 enabled=false 被自動權限分類器拒絕（Cowork Scheduled Task Delete）。排程仍啟用；未以其他途徑繞過。每輪讀到本檔 DONE 且無可做項目時，只需回報、不需再改程式；是否停用由使用者決定。
   - 誤建檔 /home/pi/ln_stress/meeting_10min.wav（20 MB）仍在，待使用者手動刪除。
 
 ## 工作規則
