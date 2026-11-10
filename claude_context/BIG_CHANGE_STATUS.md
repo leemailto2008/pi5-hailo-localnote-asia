@@ -82,15 +82,20 @@
 - 2026-11-10 19:20 推送 gitlab、origin：7a2661e..8161b38（9 個 commit）。
 - 2026-11-10 19:20– Pi 60 分鐘 refine CLI（/home/pi/ln_e2e/data/meeting_60min.wav → /tmp/refine_60min.jsonl）：音訊 3691 s，辨識 168.6 s、分說話人 824.4 s（RTF 0.223），wall 995.1 s，峰值 RSS 1024 MB（未 OOM），692 句，分出 6 個說話人（真值 4 人，多出的 2 群在 timeline 上無對應句）。逐句歸屬正確率：timeline 行級 0.9547（530 行）、句子級 0.9653（692 句）；計算：.cc_scratch/sv/acc_refine.py（句子標籤版，與上方 diar_eval 的 turn 級口徑不完全相同）。
 
+- 2026-11-10 21:33 240 分鐘 refine CLI（Pi，run_240.sh，meeting_240min.wav，音訊 14383 s，rc=0）：ASR 652.9 s、分說話人 3258.0 s，wall 3919.6 s（RTF 0.272），峰值 RSS 4644 MB（8 GB 機器，未 OOM），2647 句，hyp 8 人（真值 4 人）。逐行歸屬 0.9228（2047 行，未歸屬 0）、句子級 0.9403（2647 句），計算 .cc_scratch/sv/acc_refine.py + tools/e2e/fixtures/meeting_240min.json。8 群中 4 群對應真值，其餘 4 群未對應（過度分群）；60 分鐘為 6 群、0.9547／0.9653。未調參，僅記錄。
+- 2026-11-10 21:33 句子合併離線重放（240 分鐘，.cc_scratch/sv/replay_merge_240.py）：句號 2683 → 2130（改 553 處），去標點後文字與舊版相同。
+- 2026-11-10 21:35 122051e 部署（備份 .deploy_backup/20261110_213534；py_compile、健康檢查通過）。POST /api/refine 冒煙（最後一場 m_1794309254，音訊 75.3 s）：完成，22.5 s，3 位說話人；同一說話人短停頓已見逗號（例：「好，我們開始今天的週會，今天有幾個議題要討論。」）。/health 回 status=degraded、redis_connected=false，只是觀察，尚未查是否為既有狀態。
+- 2026-11-10 21:37 #4 rewrite 實測啟動（Pi，/tmp/rewrite_real_check.py，實錄 22 段 12554 字，/api/polish mode=rewrite）：結果待填（/tmp/rewrite_real.json、/tmp/rewrite_real.log）。
+
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
-- 後續 #2 長會議：60 分鐘完成（見上方量測紀錄，未 OOM）。240 分鐘：2026-11-10 20:28 起在 Pi 背景跑（.cc_scratch/sv/run_240.sh，音檔 /home/pi/ln_e2e/data/meeting_240min.wav，nice 10）；腳本會在 state 為 recording／processing 時自行 pkill。輸出 /tmp/refine_240min.jsonl、/tmp/refine_240min.err（結束行 EXIT n；ABORT／KILL 行表示沒跑完）。結果待填。120 分鐘未單獨跑。
-- 後續 #3 句子合併（未部署）：code_dispatcher/refine_transcript.py 新增 MERGE_GAP_S = 0.6：同一人相鄰兩句停頓 ≤ 0.6 s 時，前句結尾的「。」改「，」；「？！」不改，跨人不併。tests/test_refine_transcript.py：2 個舊期望值依新規則更新，新增 4 個單測。Windows pytest：tests（同 CLAUDE.md 的 ignore 清單）558 passed。
+- 後續 #2 長會議：60 分鐘完成（見上方量測紀錄，未 OOM）。240 分鐘：2026-11-10 20:28 起在 Pi 背景跑（.cc_scratch/sv/run_240.sh，音檔 /home/pi/ln_e2e/data/meeting_240min.wav，nice 10）；腳本會在 state 為 recording／processing 時自行 pkill。輸出 /tmp/refine_240min.jsonl、/tmp/refine_240min.err（結束行 EXIT n；ABORT／KILL 行表示沒跑完）。結果見量測紀錄（21:33）。120 分鐘未單獨跑。
+- 後續 #3 句子合併（已部署 21:35）：code_dispatcher/refine_transcript.py 新增 MERGE_GAP_S = 0.6：同一人相鄰兩句停頓 ≤ 0.6 s 時，前句結尾的「。」改「，」；「？！」不改，跨人不併。tests/test_refine_transcript.py：2 個舊期望值依新規則更新，新增 4 個單測。Windows pytest：tests（同 CLAUDE.md 的 ignore 清單）558 passed。
   - 另修測試（與本改動無關）：Windows 上 3 個子行程測試因子行程 stdout 為 cp950 而失敗，已在測試用的子行程設 UTF-8（只改測試，production 路徑不變）。
   - 調參（10 分鐘 fixture，refine_result_10min.json，.cc_scratch/sv/gap_stats.py）：單句行內的句中停頓 27 處，0.224–0.544 s；相鄰行界（句界）62 處，最短 1.504 s → 取 0.6。
   - 驗證（60 分鐘，refine_60min.jsonl）：相鄰單句行界 359 處，最短 0.832 s → 0.6 下誤合併 0 處。句中樣本為 0（60 分鐘的行多為多句，無法判定句中斷點），所以召回率在 60 分鐘未驗證。多句行內的斷點也未以真值驗證。
   - 離線重放（同一份 refine 結果，只比較標點）：60 分鐘「。」696 → 552（改 144 處）；10 分鐘 160 → 122（改 38 處）。去掉標點後文字完全相同；CER 不變（0.3478、0.3530；此 CER 含說話人標籤字元，絕對值不可與上方表格比較）。
-  - 待辦：240 分鐘跑完、Pi 空閒後部署（tools/ci/deploy_on_pi.sh），再以 POST /api/refine 冒煙實測。
+  - 已部署（21:35，見量測紀錄）；後續 #3 完成。
 - 誤建檔（待使用者手動刪）：/home/pi/ln_stress/meeting_10min.wav（20 MB 複本，本輪誤建，未用到）。依規則不做刪除。
 
 ## 工作規則
