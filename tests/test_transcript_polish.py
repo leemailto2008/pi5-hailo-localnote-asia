@@ -38,8 +38,8 @@ def test_parse_fix_list_extracts_array_from_noisy_output():
 
 
 def test_parse_fix_list_drops_invalid_items_only():
-    raw = '[{"from": "", "to": "x"}, {"from": "a", "to": "a"}, {"from": 1, "to": "b"}, {"from": "ok", "to": "好"}]'
-    assert tp.parse_fix_list(raw) == [{"from": "ok", "to": "好"}]
+    raw = '[{"from": "", "to": "x"}, {"from": "a", "to": "a"}, {"from": 1, "to": "b"}, {"from": "李協里", "to": "李協理"}]'
+    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
 
 
 def test_parse_fix_list_returns_none_on_unparseable_output():
@@ -123,3 +123,14 @@ def test_parse_fix_list_drops_single_char_from():
     # 單字替換 (例如「的」→「得」) 會套用到全文每一處，風險太高，直接略過。
     raw = '[{"from": "的", "to": "得"}, {"from": "外科呱瓜", "to": "外科瓜瓜"}]'
     assert tp.parse_fix_list(raw) == [{"from": "外科呱瓜", "to": "外科瓜瓜"}]
+
+
+def test_parse_fix_list_rejects_deletion_and_semantic_rewrite():
+    raw = ('[{"from": "週五回報", "to": ""}, {"from": "涼率", "to": "合格率"}, '
+           '{"from": "使用者", "to": "用戶"}, {"from": "李協里", "to": "李協理"}]')
+    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
+
+
+def test_parse_fix_list_rejects_length_explosion_and_collapse():
+    raw = '[{"from": "好", "to": "很好很好很好很好很好"}, {"from": "劉課長送預算表", "to": "預算書"}]'
+    assert tp.parse_fix_list(raw) == []

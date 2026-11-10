@@ -13,6 +13,7 @@ transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11)。
   - 只透過 llm_backend.achat_complete 呼叫模型 (Hailo 優先，失敗退 CPU)。
 """
 
+import difflib
 import json
 import logging
 import re
@@ -28,6 +29,7 @@ MAX_FIX_ITEMS_PER_CHUNK = 30
 MIN_FIX_FROM_CHARS = 2
 MAX_FIX_FROM_CHARS = 40
 REQUEST_TIMEOUT_SEC = 120.0
+MIN_FIX_SIMILARITY = 0.5  # 修改前後相似度下限：低於此值視為語意改寫，略過
 
 _CUT_CHARS = "。！？!?.；;，,"
 _ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
@@ -94,6 +96,17 @@ def build_rewrite_prompt(chunk: str) -> str:
     )
 
 
+def _fix_is_sane(src: str, dst: str) -> bool:
+    """擋掉會傷害原意的修改：空字串（刪字）、長度暴增或暴減、相似度過低（語意改寫）。"""
+    if not dst or dst == src:
+        return False
+    if len(src) < MIN_FIX_FROM_CHARS or len(src) > MAX_FIX_FROM_CHARS:
+        return False
+    if len(dst) > 2 * len(src) + 4 or 2 * len(dst) < len(src):
+        return False
+    return difflib.SequenceMatcher(None, src, dst).ratio() >= MIN_FIX_SIMILARITY
+
+
 def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
     """從模型輸出取出修改清單。無法解析回傳 None；解析成功但個別項目不合規則略過該項。"""
     if not raw:
@@ -115,7 +128,7 @@ def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
         src, dst = item.get("from"), item.get("to")
         if not isinstance(src, str) or not isinstance(dst, str):
             continue
-        if len(src) < MIN_FIX_FROM_CHARS or len(src) > MAX_FIX_FROM_CHARS or src == dst:
+        if not _fix_is_sane(src, dst):
             continue
         fixes.append({"from": src, "to": dst})
     return fixes
