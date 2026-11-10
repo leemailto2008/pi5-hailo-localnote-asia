@@ -1,9 +1,9 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
 
-互動 session 進行中，至 2026-11-10 19:50（台北）
-（使用者在互動 session 直接處理這個大改；排程輪看到此行且未過期就只讀、直接結束。見排程步驟 1b。）
+（已過期的互動鎖已於 2026-11-10 23:24 移除）
 
-## 狀態：三項 DONE（2026-11-10 19:40）。後續改善清單已無可做項目。排程停用被權限拒絕，排程仍啟用，待使用者決定（見排程輪次紀錄）
+
+## 狀態：三項 DONE（2026-11-10 19:40）。後續改善：#2–#4 已完成；#1 阻塞（耳麥未連線，見 2026-11-10 23:24 排程輪次）；#5 待使用者決定。排程停用被權限拒絕，排程仍啟用（見排程輪次紀錄）
 
 ## 目標與順序（使用者指定）
 1. 潤稿區（待辦 #11）→ 2. SenseVoice 比較（ASR 品質與效能）→ 3. CAM++ 分說話人
@@ -106,6 +106,14 @@
   - 誤建檔 /home/pi/ln_stress/meeting_10min.wav（20 MB）仍在，待使用者手動刪除。
 
 - 2026-11-10 22:35 互動 session：排程提示已改成「後續改善」版（名稱「claude_localnote 大改後續改善循環」）。新提示要求夜間（19:00–07:00）照 CLAUDE.md 流程做 #1 聲學實測；#1 完成後排程會再嘗試停用，若仍被權限拒絕，由使用者手動停用。
+
+- 2026-11-10 23:24 排程輪次（台北，夜間窗）：互動鎖 19:50 已過期（已刪該行）。Pi：/api/status state=done；pgrep real_exp、refine_transcript、run_suite、speaker_selftest 無實際程序。
+  - #1 聲學實測：未執行，阻塞於耳麥連線。GET /api/bt/status：耳麥 RichChipAN（A0:D1:2A:42:12:34）為受信任裝置、auto_connect 原本已是 true，本輪以 POST /api/bt/trusted/auto_connect 再次確認為啟用；connected=false。
+  - POST /api/bt/connect 無回應（逾時，已 force_terminate）；Pi 上 bluetoothctl connect 回 org.bluez.Error.InProgress br-connection-busy；bluetoothctl scan 15 s 兩次（相隔約 2 分鐘）皆未看到該 MAC。推測：耳麥關機或超出範圍（未查證）。PC 端裝置清單無 RichChip（耳麥未連到 PC）。
+  - 因未見耳麥，本輪未播放 10 分鐘會議、未錄音、未跑 /api/refine；PC 喇叭與耳麥位置未確認（需人工）。未改程式、未部署、未重啟、未 commit 程式。
+  - 注意：GET /api/bt/trusted 不存在（404），信任清單請用 GET /api/bt/status 的 trusted_devices；連線端點是 POST /api/bt/connect（body {"mac": ...}）。
+  - 排程仍啟用（#1 未完成）。耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗輪次可照 CLAUDE.md 流程重試。
+  - 寫入限制：Desktop Commander 的 write_file 只能寫入 F:\ 下的專案資料夾，暫存 JSON 放在 F:\14_prj_raspi5_localnote_asia\.cc_scratch\（未追蹤，不 commit）。
 
 ## 工作規則
 - 白天（07:00–19:00）：只做數位工作（pytest、離線重放、合成資料 E2E、程式與文件）；不放音、不用藍牙耳麥。
