@@ -9,7 +9,7 @@ transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11)。
 
 處理方式：
   - 長逐字稿切成數段 (每段約 MAX_CHUNK_CHARS 字)，依序送 LLM，避免小模型上下文過長與 NPU 排隊過久。
-  - 單段 LLM 失敗 → 保留該段原文；rewrite 輸出長度異常 → 保留原文；fix 輸出格式錯誤 → 該段不套用修改。
+  - 單段 LLM 失敗 → 保留該段原文；rewrite 輸出長度異常或數字被改 → 保留原文；fix 輸出格式錯誤 → 該段不套用修改。
   - fix 輸出被 num_predict 截斷（陣列沒收尾）時，仍採用已完整的 {...} 項目。
   - 每段開始前可由 should_stop() 中止（錄音開始時讓出 CPU/NPU），剩下的段落保留原文。
   - 只透過 llm_backend.achat_complete 呼叫模型 (Hailo 優先，失敗退 CPU)。
@@ -19,6 +19,7 @@ import difflib
 import json
 import logging
 import re
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from llm_backend import LLMError, achat_complete
@@ -32,6 +33,7 @@ MAX_FIX_ITEMS_PER_CHUNK = 30
 MIN_FIX_FROM_CHARS = 2
 MAX_FIX_FROM_CHARS = 40
 REQUEST_TIMEOUT_SEC = 120.0
+REWRITE_MIN_TOKENS_PER_SEC = 4.0  # 估 rewrite 逾時用：Hailo qwen3:1.7b 實測約 4.5 tok/s
 MIN_FIX_SIMILARITY = 0.5  # 修改前後相似度下限：低於此值視為語意改寫，略過
 
 _CUT_CHARS = "。！？!?.；;，,"
@@ -185,6 +187,19 @@ def _rewrite_length_ok(src: str, out: str) -> bool:
     return 0.5 * len(src) <= len(out) <= 1.5 * len(src) + 20
 
 
+_NUMBER_RE = re.compile(r"\d+(?:[.:/]\d+)*")
+
+
+def _rewrite_numbers_ok(src: str, out: str) -> bool:
+    """rewrite 不得改動、刪掉或新增阿拉伯數字（日期、金額、數量、百分比）。
+
+    STT 輸出的數字幾乎都是阿拉伯數字，數字串的多重集合必須完全相同。
+    模型把「100臺」改寫成「一百臺」也算不同，該段保留原文（寧可不潤，也不改到事實）。
+    中文數字不在檢查範圍內。
+    """
+    return Counter(_NUMBER_RE.findall(src)) == Counter(_NUMBER_RE.findall(out))
+
+
 async def _run_fix(chunk: str, stats: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
     raw, backend = await achat_complete(
         build_fix_prompt(chunk),
@@ -203,18 +218,23 @@ async def _run_fix(chunk: str, stats: Dict[str, Any]) -> Tuple[str, List[Dict[st
 
 
 async def _run_rewrite(chunk: str, stats: Dict[str, Any]) -> str:
+    num_predict = max(128, 2 * len(chunk))
     raw, backend = await achat_complete(
         build_rewrite_prompt(chunk),
         system=REWRITE_SYSTEM,
         temperature=0.2,
-        num_predict=max(128, 2 * len(chunk)),
-        timeout=REQUEST_TIMEOUT_SEC,
+        num_predict=num_predict,
+        # 整段輸出：Hailo 約 4.5 tok/s，600 字的段落固定 120 s 會逾時退到 CPU。
+        timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / REWRITE_MIN_TOKENS_PER_SEC),
         hailo_retries=1,
     )
     stats["backend"] = backend.label
     out = to_taiwan_traditional((raw or "").strip())
     if not _rewrite_length_ok(chunk, out):
         stats["rejected_chunks"] += 1
+        return chunk
+    if not _rewrite_numbers_ok(chunk, out):
+        stats["fact_rejected_chunks"] += 1
         return chunk
     return out
 
@@ -238,6 +258,7 @@ async def polish_transcript(
         "chunks": len(chunks),
         "failed_chunks": 0,
         "rejected_chunks": 0,
+        "fact_rejected_chunks": 0,
         "parse_errors": 0,
         "stopped": False,
         "backend": None,

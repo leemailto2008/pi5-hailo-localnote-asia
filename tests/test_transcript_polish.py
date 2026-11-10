@@ -213,3 +213,39 @@ def test_apply_fixes_insertion_skips_when_everything_is_already_correct():
     new_text, applied = tp.apply_fixes(text, [{"from": "第138", "to": "第138個議題"}])
     assert new_text == text
     assert applied == []
+
+
+def test_polish_rewrite_keeps_original_when_numbers_change(monkeypatch):
+    # 日期、數量被改掉 (或中文化) 的段落保留原文。
+    async def fake_achat(prompt, system=None, **kwargs):
+        return "修正版預計十月十二日上線，先在一百臺裝置上試跑三天" + "。" * 10, _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    text = "修正版 預記 10月11日上線，先在100臺裝置上市跑三天"
+    res = _run(tp.polish_transcript(text, "rewrite"))
+    assert res["polished"] == text
+    assert res["fact_rejected_chunks"] == 1
+
+
+def test_polish_rewrite_accepts_when_numbers_are_kept(monkeypatch):
+    async def fake_achat(prompt, system=None, **kwargs):
+        return "修正版預計10月11日上線，先在100臺裝置上試跑三天", _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    text = "修正版 預記 10月11日上線，先在100臺裝置上市跑三天"
+    res = _run(tp.polish_transcript(text, "rewrite"))
+    assert res["polished"] == "修正版預計10月11日上線，先在100臺裝置上試跑三天"
+    assert res["fact_rejected_chunks"] == 0
+
+
+def test_rewrite_timeout_grows_with_output_budget(monkeypatch):
+    seen = {}
+
+    async def fake_achat(prompt, system=None, **kwargs):
+        seen.update(kwargs)
+        return "二" * 500, _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    _run(tp.polish_transcript("一" * 590, "rewrite"))
+    assert seen["num_predict"] == 1180
+    assert seen["timeout"] >= 1180 / 4.5

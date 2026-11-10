@@ -1980,6 +1980,7 @@ function renderPolishResult(job) {
   if (job.state === 'stopped') notes.push(`錄音開始，已中止（完成 ${job.done}/${job.total} 段，其餘保留原文）`);
   if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
   if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
+  if (res.fact_rejected_chunks) notes.push(`${res.fact_rejected_chunks} 段改到數字，已保留原文`);
   if (res.parse_errors) notes.push(`${res.parse_errors} 段輸出格式錯誤，已略過`);
   const secs = job.elapsed ? `，${Math.round(job.elapsed)} 秒` : '';
   el.polishStatus.textContent = `完成：${res.chunks} 段（${res.backend || '—'}${secs}）` + (notes.length ? `；${notes.join('；')}` : '');
