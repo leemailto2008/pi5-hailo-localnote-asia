@@ -1,0 +1,44 @@
+#ignore local notes myself
+.agents/
+note1.txt
+plan1.md
+plan2.md
+
+# Ignore large Ollama model backup files
+raspi5_ollama_backup/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.env
+telegram_agent/.env
+telegram_agent/data/
+code_dispatcher/data/
+telegram_agent/temp/
+*.db
+.vscode/
+
+# Audio files
+*.mp3
+*.wav
+*.ogg
+
+# Raspberry Pi remote probe outputs
+tools/pi_probe_out/
+
+# Local deploy bundles & scratch commit messages
+tools/*.tar
+tools/commit_msg.txt
+
+# e2e 報告與測試音檔 (音檔另行分發，見 tools/e2e/README.md)
+e2e_reports/
+*.flac
+
+# migration: scratch and one-off files
+.cc_scratch/
+_patch_*.py
+_commit_*.txt
+_loop_count.py
+_ui_screenshots/

@@ -1,0 +1,6 @@
+export XDG_RUNTIME_DIR=/run/user/1000
+for i in $(seq 1 20); do grep -q ALLDONE /tmp/loop3.txt 2>/dev/null && break; sleep 5; done; tail -4 /tmp/loop3.txt | cut -c1-200
+echo "===678: remove CVSD conf, keep mSBC==="; sudo -n rm -f /etc/wireplumber/wireplumber.conf.d/51-bluez-cvsd.conf /tmp/51-bluez-cvsd.conf.off; ls /etc/wireplumber/wireplumber.conf.d/ 2>/dev/null; systemctl --user restart wireplumber; sleep 4
+MAC=$(bluetoothctl devices Paired | grep -i RichChipAN | awk '{print $2}'); bluetoothctl disconnect $MAC >/dev/null 2>&1; sleep 3; for i in $(seq 1 8); do bluetoothctl connect $MAC >/dev/null 2>&1; sleep 3; bluetoothctl info $MAC | grep -q "Connected: yes" && break; done; bluetoothctl info $MAC | grep Connected; sleep 4
+pw-dump | python3 -c "import sys,json; [print('  profile enum =',[x.get('name') for x in n['info']['params'].get('EnumProfile',[])]) for n in json.load(sys.stdin) if (n.get('info',{}).get('props',{}) or {}).get('device.api')=='bluez5' and n.get('type','').endswith('Device')]"
+curl -s -m 5 http://127.0.0.1:80/api/bt/status | python3 -c "import sys,json; d=json.load(sys.stdin); print({k:d.get(k) for k in ('connected','connected_name','rssi','rssi_kind','signal_level_pct')})"

@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>LocalNote 聽記盒</title>
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiTG9jYWxOb3RlIiwic2hvcnRfbmFtZSI6IkxvY2FsTm90ZSIsInN0YXJ0X3VybCI6Ii8iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3IiOiIjZjNmNmY4IiwidGhlbWVfY29sb3IiOiIjMGY3NjZlIn0=">
+<style>
+/* ============================================================
+   LocalNote Demo UI · 工程版 (含藍牙音訊設備管理中心)
+   - 純靜態單檔案，離線運作不依賴外網
+   - 網址加 ?mock=1 可脫離後端預覽；加 ?dev=1 顯示開發工具連結
+   - 支援 #bt 或 /bluetooth 直達藍牙設備管理介面
+   ============================================================ */
+:root{
+  --bg:#f3f6f8; --card:#ffffff; --fg:#1f2933; --muted:#627d98; --line:#e3e9ee;
+  --op:#0f766e; --op-soft:#e6f1ef; --out:#1e3a5f; --out-soft:#e8eef7; --set:#4a5d70; --set-bg:#f8fafb; --set-line:#cdd6df;
+  --rec:#d9534f; --rec-soft:#fbe9e8; --busy:#d99a1e; --busy-soft:#fbf4e6; --busy-fg:#8a6d1c; --ok:#0f766e;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei","Heiti TC",system-ui,sans-serif;font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+button,select{font:inherit}
+button{cursor:pointer}
+button:focus-visible,select:focus-visible{outline:2px solid var(--op);outline-offset:2px}
+[hidden]{display:none!important}
+
+.topbar{background:var(--card);border-bottom:1px solid var(--line);padding:12px 20px;padding-top:calc(12px + env(safe-area-inset-top,0px));display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.logo{width:36px;height:36px;border-radius:10px;background:var(--op);color:#fff;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.brand{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.brand b{font-size:18px}
+.brand span{font-size:12px;color:var(--muted)}
+.spacer{flex-grow:1}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;font-size:13px;white-space:nowrap}
+.pill.net{background:var(--op-soft);color:var(--op);font-weight:700}
+.pill.net.online{background:#fdf1e6;color:#9a5b00}
+.pill.sys{background:var(--bg);color:var(--set)}
+.dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
+
+main{max-width:1200px;margin:0 auto;padding:18px 20px 56px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);grid-template-areas:"op out" "set out";gap:22px;align-items:start}
+.col{min-width:0;display:flex;flex-direction:column;gap:14px}
+.col.op{grid-area:op}.col.out{grid-area:out}.col.set{grid-area:set}
+@media (max-width:700px){.grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"op" "out" "set"}}
+.tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 10px;border-radius:6px;width:max-content}
+.tag.op{background:var(--op);color:#fff}
+.tag.out{background:var(--out);color:#fff}
+.tag.set{background:var(--line);color:var(--set)}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;display:flex;flex-direction:column;gap:14px}
+.card.op{border:2px solid var(--op);box-shadow:0 2px 8px rgba(15,118,110,.10)}
+.card.out{border-left:6px solid var(--out)}
+.card.out.minor{border-left-color:#9db3cf}
+.card.set{background:var(--set-bg);border:1px dashed var(--set-line);padding:14px 18px;color:var(--set);font-size:14px}
+.card h2{margin:0;font-size:17px}
+.card.set h2{font-size:15px;color:var(--set)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:4px 10px;border-radius:999px;background:var(--op-soft);color:var(--op)}
+.chip.off{background:var(--rec-soft);color:var(--rec)}
+.chip.out{background:var(--out-soft);color:var(--out)}
+.chip.minor{background:#eef2f7;color:var(--set)}
+
+.btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:9px 14px;border-radius:10px;font-size:13px;min-height:40px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
+.btn:hover:not(:disabled){filter:brightness(.96)}
+.btn.primary{background:var(--out);color:#fff;border-color:var(--out);font-weight:700}
+.btn.ghost{background:var(--card);color:var(--set);border-color:var(--set-line);font-size:12px}
+.btn.danger{color:#b33a36;border-color:#f3cfcd}
+.btn.danger:hover:not(:disabled){background:var(--rec-soft)}
+.btn.sm{min-height:32px;padding:4px 10px;font-size:12px;border-radius:8px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+.recwrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding:4px 0}
+.recbtn{width:132px;height:132px;border-radius:50%;background:var(--rec);border:8px solid var(--rec-soft);color:#fff;font-size:17px;font-weight:700;box-shadow:0 6px 18px rgba(217,83,79,.28);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:transform .1s}
+.recbtn:active{transform:scale(.97)}
+.recbtn small{font-size:12px;font-weight:400;opacity:.9}
+.recbtn.recording{background:#1f2933;border-color:#cfd6dd;box-shadow:none;animation:pulse 1.2s infinite}
+.recbtn.busy{background:#9aa9b8;border-color:#e3e9ee;box-shadow:none}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(217,83,79,.35)}50%{box-shadow:0 0 0 14px rgba(217,83,79,0)}}
+@media (prefers-reduced-motion:reduce){.recbtn.recording{animation:none}}
+.hint{color:var(--muted);font-size:13px;text-align:center;max-width:36ch}
+select{background:var(--card);border:1px solid var(--set-line);border-radius:10px;padding:8px 12px;min-height:40px}
+
+.progress{background:var(--busy-soft);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;color:var(--busy-fg)}
+.progress b{color:var(--fg)}
+.progress .label{font-size:11px;font-weight:700;letter-spacing:.06em}
+.bar{height:8px;background:#f0e2c2;border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--busy);border-radius:4px;transition:width .4s}
+.progress.rec{background:var(--rec-soft);color:#8a2a27}.progress.rec .bar{background:#f3cfcd}.progress.rec .bar i{background:var(--rec)}
+.progress.ok{background:var(--op-soft);color:#1f5e57}.progress.ok .bar{background:#cfe3df}.progress.ok .bar i{background:var(--op)}
+.progress.err{background:#fde8e7;color:#8a2a27}
+
+.minutes{display:flex;flex-direction:column;gap:12px;padding:2px}
+.minutes h3{margin:0;font-size:18px}
+.minutes .meta{font-size:13px;color:var(--muted)}
+.minutes h4{margin:0;font-size:13px;color:var(--out)}
+.minutes ul{margin:0;padding-left:18px}
+.minutes table{border-collapse:collapse;width:100%;font-size:14px;background:var(--set-bg);border-radius:10px;overflow:hidden}
+.minutes th{font-size:12px;color:var(--muted);font-weight:500;text-align:left;padding:8px 12px}
+.minutes td{padding:6px 12px;border-top:1px solid var(--line)}
+.empty{color:var(--muted);font-size:14px;padding:18px 0;text-align:center}
+details{border-top:1px solid var(--line);padding-top:10px}
+summary{cursor:pointer;color:var(--muted);font-size:13px;list-style:none;display:flex;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"展開 ▾";margin-left:auto}
+details[open] summary::after{content:"收起 ▴"}
+.transcript{white-space:pre-wrap;font-size:14px;color:var(--fg);margin-top:10px;max-height:360px;overflow:auto;line-height:1.7}
+.card.minor details{border-top:0;padding-top:0}
+.card.minor summary{color:var(--fg);font-weight:700;font-size:15px}
+.en{white-space:pre-wrap;font-size:14px;background:var(--set-bg);border-radius:10px;padding:12px;min-height:48px}
+.qr{width:56px;height:56px;border-radius:8px;border:1px solid var(--line);background:#fff;object-fit:contain;flex:none}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#1f2933;color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:9999}
+.toast.show{opacity:1}
+.devlinks{font-size:12px;color:var(--muted)}
+.devlinks a{color:var(--muted);margin-right:12px}
+
+/* ---------- 藍牙管理介面樣式 ---------- */
+.bt-item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;transition:box-shadow .15s}
+.bt-item:hover{box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.bt-item-info{display:flex;flex-direction:column;gap:3px;min-width:180px}
+.bt-item-info strong{font-size:14px;color:var(--fg);display:inline-flex;align-items:center;gap:6px}
+.bt-item-info span{font-size:12px;color:var(--muted);font-family:monospace}
+.bt-item-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toggle-btn{font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid var(--set-line);background:var(--card);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.toggle-btn.active{background:var(--op-soft);color:var(--op);border-color:var(--op);font-weight:700}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media (max-width:480px){main{padding:14px 16px 56px}.card{padding:16px}.topbar .pill.sys{display:none}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="logo">LN</span>
+  <div class="brand"><b>LocalNote 聽記盒</b><span>會議錄音，紀要在盒子裡生成</span></div>
+  <span class="spacer"></span>
+  <span class="pill net" id="netPill"><span class="dot"></span><span id="netText">檢查連線狀態…</span></span>
+  <span class="pill sys" id="sysPill">盒子：—</span>
+</header>
+
+<main>
+  <p class="devlinks" id="devLinks" hidden><a href="/dbg02" style="font-weight:700;color:var(--op)">🛠️ 工程除錯工作台 (/dbg02)</a><a href="/dbg01">Code Review (/dbg01)</a><a href="/docs">API Docs</a><a href="/bluetooth">藍牙管理</a></p>
+
+  <!-- ================= 主畫面：聽記 ================= -->
+  <div id="viewMain">
+    <div class="grid">
+      <!-- ================= 操作 ================= -->
+      <section class="col op">
+        <span class="tag op">操作</span>
+        <div class="card op">
+          <div class="row">
+            <h2>錄一段會議</h2>
+            <span class="spacer"></span>
+            <span class="chip" id="btChip" style="cursor:pointer;" title="點擊切換至耳麥管理頁面"><span class="dot"></span><span id="btText">耳麥：檢查中</span></span>
+          </div>
+          <div class="recwrap">
+            <button class="recbtn" id="recBtn" aria-label="開始錄音"><span id="recLabel">開始錄音</span><small id="recSub"></small></button>
+            <div class="row">
+              <label for="dur">這次錄</label>
+              <select id="dur">
+                <option value="60">1 分鐘</option>
+                <option value="90" selected>1 分 30 秒（演示）</option>
+                <option value="120">2 分鐘</option>
+                <option value="180">3 分鐘</option>
+              </select>
+            </div>
+            <p class="hint" id="hint">戴上耳麥，按下紅色按鈕開始說。時間到自動停，盒子接著整理成紀要。</p>
+          </div>
+          <div class="progress" id="progress" hidden>
+            <div class="row"><span class="label">進度</span><b id="pTitle">—</b><span class="spacer"></span><span id="pEta"></span></div>
+            <div class="bar"><i id="pBar"></i></div>
+            <span id="pSteps" style="font-size:13px"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 設定 ================= -->
+      <section class="col set">
+        <span class="tag set">設定</span>
+        <div class="card set">
+          <div class="row">
+            <div style="flex:1 1 220px;min-width:0">
+              <h2>手機怎麼連</h2>
+              <div>連 Wi-Fi「<b id="ssid">raspi543_AI</b>」→ 開「<b id="host">localnote.local</b>」。不用裝 App。</div>
+            </div>
+            <img class="qr" id="qr" alt="Wi-Fi QR Code" src="" hidden>
+            <button class="btn ghost" id="netSwitch">切回家用 Wi-Fi</button>
+          </div>
+        </div>
+        <div class="card set">
+          <div class="row">
+            <div style="flex:1 1 150px"><h2>耳麥</h2><div id="btDetail">—</div></div>
+            <div class="row">
+              <button class="btn ghost" id="btnOpenBtMgr" onclick="openBtView()" style="border-color:var(--op);color:var(--op);font-weight:700">🔍 找耳麥 / 管理 ↗</button>
+              <button class="btn ghost" id="btnConnectDefault">連線常用耳麥</button>
+              <button class="btn ghost danger" id="btnQuickDisconnect">中斷</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 輸出 ================= -->
+      <section class="col out">
+        <span class="tag out">輸出</span>
+        <div class="card out">
+          <div class="row">
+            <h2>會議紀要</h2>
+            <span class="chip out">盒子生成，未上傳</span>
+            <span class="spacer"></span>
+            <button class="btn" id="regenBtn" disabled>重新整理</button>
+            <button class="btn primary" id="copyBtn" disabled>複製紀要</button>
+          </div>
+          <div class="minutes" id="minutes"><div class="empty">還沒有紀要。錄一段會議，約一分鐘後這裡會出現摘要、待辦和決議。</div></div>
+          <details id="transcriptBox" hidden>
+            <summary>完整逐字稿</summary>
+            <div class="transcript" id="transcript"></div>
+          </details>
+        </div>
+
+        <div class="card out minor">
+          <details>
+            <summary>翻成英文、念給我聽 <span class="chip minor" style="margin-left:10px">加分項</span></summary>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+              <div class="row">
+                <button class="btn" id="toEnBtn" disabled>紀要翻成英文</button>
+                <button class="btn" id="toZhBtn" disabled>英文翻成中文</button>
+                <button class="btn" id="ttsBtn" disabled>在耳麥念出來</button>
+              </div>
+              <div class="en" id="enBox">—</div>
+            </div>
+          </details>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ================= 藍牙管理子頁面 ================= -->
+  <div id="viewBt" hidden>
+    <div class="row" style="margin-bottom:14px;justify-content:space-between">
+      <button class="btn primary" id="btnBackToMain" onclick="closeBtView()" style="padding:10px 18px;font-size:14px;display:inline-flex;align-items:center;gap:6px">
+        <span>← 返回 LocalNote 聽記盒</span>
+      </button>
+      <div class="row">
+        <span class="tag set" style="font-size:13px">藍牙音訊設備中心 (Bluetooth Hub)</span>
+        <button class="btn ghost" id="btnRefreshBtHub">🔄 刷新狀態</button>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:18px">
+      <!-- 目前連線耳麥卡片 -->
+      <div class="card" style="border-left:6px solid var(--op)">
+        <div class="row" style="gap:14px">
+          <span style="font-size:28px">🎧</span>
+          <div style="flex:1 1 200px;min-width:0">
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              <h2 id="hubCurName" style="font-size:18px;margin:0">檢查中...</h2>
+              <span class="chip off" id="hubCurBadge"><span class="dot"></span><span id="hubCurStatus">未連線</span></span>
+              <span class="chip off" id="hubBatteryPill" style="font-size:12px">🔋 <span id="hubBatteryVal">--</span></span>
+              <span class="chip off" id="hubSignalPill" style="font-size:12px">📶 <span id="hubSignalVal">--</span></span>
+            </div>
+            <div id="hubCurMac" style="font-size:12px;color:var(--muted);font-family:monospace;margin-top:2px">MAC: --:--:--:--:--:--</div>
+          </div>
+          <div class="row">
+            <button class="btn ghost danger" id="hubBtnDisconnect" disabled>中斷連線</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 周圍耳麥搜尋卡片 -->
+      <div class="card op">
+        <div class="row">
+          <div>
+            <h2 style="font-size:16px;margin:0">🔍 周圍耳麥搜尋 (Scan Nearby Headsets)</h2>
+            <div style="font-size:13px;color:var(--muted);margin-top:2px">請確保欲配對的耳麥已開機並處於配對狀態 (紅藍燈閃爍或長按配對鍵)</div>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn primary" id="hubBtnScan">🔍 開始掃描 (8秒)</button>
+        </div>
+        <div id="hubScanContainer" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="empty" id="hubScanEmpty">點擊上方「開始掃描」搜尋周圍的藍牙耳麥</div>
+        </div>
+      </div>
+
+      <!-- 已信任耳麥清單卡片 -->
+      <div class="card">
+        <div class="row">
+          <div>
+            <h2 style="font-size:16px;margin:0">⭐ 已信任耳麥清單 (Trusted Headsets)</h2>
+            <div style="font-size:13px;color:var(--muted);margin-top:2px">點擊即可快速切換連線，並可設定開機自動連線與預設耳麥</div>
+          </div>
+        </div>
+        <div id="hubTrustedContainer" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="empty" id="hubTrustedEmpty">載入設備清單中...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ============================================================
+   後端介面約定
+   所有請求同源，不走外網。
+   ============================================================ */
+const API = {
+  system: '/api/system', bt: '/api/bt', btStatus: '/api/bt/status', btScan: '/api/bt/scan',
+  btPair: '/api/bt/pair', btConnect: '/api/bt/connect', btDisconnect: '/api/bt/disconnect',
+  btAuto: '/api/bt/trusted/auto_connect',
+  record: '/api/record', status: '/api/status',
+  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate',
+  tts: '/api/tts', netSwitch: '/api/net/switch'
+};
+const POLL_MS = 1500;
+const q = new URLSearchParams(location.search);
+const MOCK = q.get('mock') === '1';
+if (q.get('dev') === '1') document.getElementById('devLinks').hidden = false;
+
+const $ = id => document.getElementById(id);
+const el = {
+  viewMain: $('viewMain'), viewBt: $('viewBt'),
+  netPill: $('netPill'), netText: $('netText'), sysPill: $('sysPill'), btChip: $('btChip'), btText: $('btText'), btDetail: $('btDetail'),
+  recBtn: $('recBtn'), recLabel: $('recLabel'), recSub: $('recSub'), dur: $('dur'), hint: $('hint'),
+  progress: $('progress'), pTitle: $('pTitle'), pEta: $('pEta'), pBar: $('pBar'), pSteps: $('pSteps'),
+  minutes: $('minutes'), transcriptBox: $('transcriptBox'), transcript: $('transcript'),
+  regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
+  ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
+  btnOpenBtMgr: $('btnOpenBtMgr'), btnConnectDefault: $('btnConnectDefault'), btnQuickDisconnect: $('btnQuickDisconnect'),
+  btnBackToMain: $('btnBackToMain'), btnRefreshBtHub: $('btnRefreshBtHub'),
+  hubCurName: $('hubCurName'), hubCurMac: $('hubCurMac'), hubCurBadge: $('hubCurBadge'), hubCurStatus: $('hubCurStatus'),
+  hubBatteryPill: $('hubBatteryPill'), hubBatteryVal: $('hubBatteryVal'),
+  hubSignalPill: $('hubSignalPill'), hubSignalVal: $('hubSignalVal'), hubBtnDisconnect: $('hubBtnDisconnect'),
+  hubBtnScan: $('hubBtnScan'), hubScanContainer: $('hubScanContainer'), hubTrustedContainer: $('hubTrustedContainer')
+};
+
+let state = 'idle', result = null, pollTimer = null, lastJob = null;
+
+/* ---------- 工具 ---------- */
+async function api(path, body) {
+  if (MOCK) return mock(path, body);
+  const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  if (!r.ok) {
+    let detail = '';
+    try {
+      const errData = await r.json();
+      detail = errData.detail || errData.msg || errData.message || '';
+    } catch (_) {}
+    throw new Error(detail || (path + ' ' + r.status));
+  }
+  return r.json();
+}
+function toast(msg, ms = 1800) { el.toast.textContent = msg; el.toast.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.toast.classList.remove('show'), ms); }
+function fmt(s) { s = Math.max(0, Math.round(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* ---------- 視圖切換 (SPA Router) 與藍牙智慧自動更新 ---------- */
+let btHubHeartbeatTimer = null;
+let lastBtHubStateJson = '';
+
+function startBtHubHeartbeat() {
+  stopBtHubHeartbeat();
+  // 每 3.5 秒在背景自動獲取最新狀態，讓電量、訊號與連線變更無感即時反映
+  btHubHeartbeatTimer = setInterval(() => {
+    if (!el.viewBt.hidden && state !== 'recording') {
+      refreshBtHub(true);
+    }
+  }, 3500);
+}
+
+function stopBtHubHeartbeat() {
+  if (btHubHeartbeatTimer) {
+    clearInterval(btHubHeartbeatTimer);
+    btHubHeartbeatTimer = null;
+  }
+}
+
+function triggerBurstRefresh() {
+  // 切換或中斷連線後，於 0.8s、2s、4s 執行三次快速更新，立即捕捉 PipeWire Sink 與電量
+  [800, 2000, 4000].forEach(delay => {
+    setTimeout(() => {
+      if (!el.viewBt.hidden && state !== 'recording') {
+        refreshBtHub(true);
+      }
+      refreshBt();
+    }, delay);
+  });
+}
+
+function openBtView() {
+  el.viewMain.hidden = true;
+  el.viewBt.hidden = false;
+  window.location.hash = 'bt';
+  refreshBtHub();
+  startBtHubHeartbeat();
+}
+function closeBtView() {
+  stopBtHubHeartbeat();
+  el.viewBt.hidden = true;
+  el.viewMain.hidden = false;
+  if (window.location.hash === '#bt') {
+    history.pushState('', document.title, window.location.pathname + window.location.search);
+  }
+  refreshBt();
+}
+
+window.openBtView = openBtView;
+window.closeBtView = closeBtView;
+
+el.btnOpenBtMgr.addEventListener('click', openBtView);
+el.btChip.addEventListener('click', openBtView);
+el.btnBackToMain.addEventListener('click', closeBtView);
+el.btnRefreshBtHub.addEventListener('click', () => refreshBtHub(false));
+
+window.addEventListener('hashchange', () => {
+  if (window.location.hash === '#bt') openBtView();
+  else if (!el.viewBt.hidden) closeBtView();
+});
+if (window.location.hash === '#bt' || window.location.pathname === '/bluetooth' || window.location.pathname === '/bt') {
+  openBtView();
+}
+
+/* ---------- 頂部狀態 ---------- */
+async function refreshSystem() {
+  try {
+    const s = await api(API.system);
+    el.netPill.classList.toggle('online', !s.offline);
+    el.netText.textContent = s.offline ? '離線運作 · 資料不出盒子' : '維護模式 · 有外網';
+    el.sysPill.textContent = `盒子：${state === 'processing' ? '整理中' : state === 'recording' ? '錄音中' : '待命'} · 負載 ${Math.round(s.cpu)}% · ${Math.round(s.temp)}°C`;
+    if (s.ssid) el.ssid.textContent = s.ssid;
+    if (s.host) el.host.textContent = s.host;
+    if (s.wifi_qr) { el.qr.src = s.wifi_qr; el.qr.hidden = false; }
+    el.netSwitch.textContent = s.mode === 'ap' ? '切回家用 Wi-Fi' : '切到演示熱點';
+    el.netSwitch.dataset.to = s.mode === 'ap' ? 'sta' : 'ap';
+  } catch (e) { el.netText.textContent = '連不上盒子'; }
+}
+
+async function refreshBt() {
+  try {
+    const b = await api(API.bt);
+    el.btChip.classList.toggle('off', !b.connected);
+    el.btText.textContent = b.connected ? `耳麥 ${b.name || ''} 已連線` : '耳麥未連線';
+    el.btDetail.textContent = b.connected ? `${b.name || ''} · 已連線` : '未連線。按「找耳麥 / 管理」。';
+    el.recBtn.disabled = !b.connected && state === 'idle';
+  } catch (e) { el.btText.textContent = '耳麥狀態未知'; }
+}
+
+/* ---------- 藍牙裝置管理中心 (Bluetooth Hub) ---------- */
+function getRssiQualityText(rssi) {
+  if (rssi == null) return '';
+  if (rssi >= -60) return '極佳';
+  if (rssi >= -75) return '良好';
+  return '微弱';
+}
+
+async function refreshBtHub(silent = false) {
+  try {
+    const b = await api(API.btStatus);
+    const conn = !!b.connected;
+    el.hubCurName.textContent = b.connected_name || (conn ? '未知設備' : '未連線耳麥');
+    el.hubCurMac.textContent = 'MAC: ' + (b.connected_mac || '--:--:--:--:--:--');
+    el.hubCurBadge.className = 'chip ' + (conn ? '' : 'off');
+    el.hubCurStatus.textContent = conn ? 'CONNECTED' : 'DISCONNECTED';
+    el.hubBtnDisconnect.disabled = !conn;
+
+    // 電量顯示
+    if (conn) {
+      if (b.battery_level != null) {
+        el.hubBatteryPill.className = 'chip ' + (b.battery_level <= 20 ? 'err' : (b.battery_level <= 50 ? 'minor' : 'out'));
+        el.hubBatteryVal.textContent = b.battery_level + '%';
+      } else {
+        el.hubBatteryPill.className = 'chip off';
+        el.hubBatteryVal.textContent = '電量未回報';
+      }
+    } else {
+      el.hubBatteryPill.className = 'chip off';
+      el.hubBatteryVal.textContent = '未連線';
+    }
+
+    // 訊號強度顯示
+    if (conn) {
+      el.hubSignalPill.className = 'chip';
+      if (b.rssi != null && b.rssi !== 0) {
+        const q = getRssiQualityText(b.rssi);
+        el.hubSignalVal.textContent = `${b.rssi} dBm (${q})`;
+      } else if (b.signal_level_pct) {
+        el.hubSignalVal.textContent = `訊號良好 (${b.signal_level_pct}%)`;
+      } else {
+        el.hubSignalVal.textContent = '已連線 (正常)';
+      }
+    } else {
+      el.hubSignalPill.className = 'chip off';
+      el.hubSignalVal.textContent = '離線';
+    }
+
+    // 只有資料發生變動時才重新渲染 DOM，避免打斷使用者點擊
+    const currentJson = JSON.stringify(b.trusted_devices || []);
+    if (currentJson !== lastBtHubStateJson) {
+      lastBtHubStateJson = currentJson;
+      renderTrustedDevices(b.trusted_devices || []);
+    }
+  } catch (e) {
+    if (!silent) toast('讀取藍牙詳細狀態失敗');
+  }
+}
+
+function renderTrustedDevices(list) {
+  if (!list || list.length === 0) {
+    el.hubTrustedContainer.innerHTML = '<div class="empty">尚未儲存任何已配對耳麥，請在上方搜尋周圍設備進行配對。</div>';
+    return;
+  }
+  el.hubTrustedContainer.innerHTML = list.map(dev => {
+    const isConn = !!dev.connected;
+    const isDef = !!dev.is_default;
+    const autoConn = !!dev.auto_connect;
+    const batBadge = (isConn && dev.battery_level != null)
+      ? `<span class="chip ${dev.battery_level <= 20 ? 'err' : 'out'}" style="font-size:11px">🔋 ${dev.battery_level}%</span>`
+      : '';
+    const rssiBadge = (isConn && dev.rssi)
+      ? `<span class="chip" style="font-size:11px">📶 ${dev.rssi} dBm</span>`
+      : '';
+    return `
+      <div class="bt-item">
+        <div class="bt-item-info">
+          <strong>${esc(dev.name || '耳麥')} ${isDef ? '<span class="tag set" style="font-size:10px">⭐ 預設</span>' : ''}</strong>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:2px;flex-wrap:wrap">
+            <span style="font-family:monospace">${esc(dev.mac)}</span>
+            ${batBadge}
+            ${rssiBadge}
+          </div>
+        </div>
+        <div class="bt-item-actions">
+          <span class="chip ${isConn ? '' : 'off'}" style="font-size:12px"><span class="dot"></span>${isConn ? '已連線' : '離線'}</span>
+          <button class="btn sm ${isConn ? 'ghost' : 'primary'}" data-action="connect" data-mac="${esc(dev.mac)}" data-name="${esc(dev.name || dev.mac)}" ${isConn ? 'disabled' : ''}>
+            ${isConn ? '已連線' : '連線'}
+          </button>
+          <button class="btn sm ghost" data-action="default" data-mac="${esc(dev.mac)}" data-name="${esc(dev.name || dev.mac)}" ${isDef ? 'disabled' : ''}>
+            ${isDef ? '已設預設' : '設為預設'}
+          </button>
+          <button class="toggle-btn ${autoConn ? 'active' : ''}" data-action="toggle-auto" data-mac="${esc(dev.mac)}" data-name="${esc(dev.name || dev.mac)}" data-curr="${autoConn}">
+            ${autoConn ? '✓ 自動連線: 開' : '✕ 自動連線: 關'}
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 綁定項目操作按鈕
+  el.hubTrustedContainer.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.dataset.action;
+      const mac = btn.dataset.mac;
+      const devName = btn.dataset.name || mac;
+      btn.disabled = true;
+      try {
+        if (act === 'connect') {
+          const isCurrentlyConnectedToOther = el.hubCurStatus.textContent === 'CONNECTED' && !el.hubCurMac.textContent.includes(mac);
+          btn.innerHTML = '<span class="spinner"></span> 切換中...';
+          if (isCurrentlyConnectedToOther) {
+            toast(`正在自動中斷原設備並切換至 ${devName}...`, 3000);
+          } else {
+            toast(`正在連線 ${devName}...`);
+          }
+          const r = await api(API.btConnect, { target: mac });
+          toast(r.msg || r.message || `🎧 已成功切換連線至 ${devName}`);
+          lastBtHubStateJson = ''; // 強制更新 DOM
+          await refreshBtHub(true);
+          await refreshBt();
+          triggerBurstRefresh();
+        } else if (act === 'default') {
+          await api(API.btAuto, { mac: mac, auto_connect: true, set_default: true });
+          toast(`已將 ${devName} 設為預設耳麥`);
+          lastBtHubStateJson = '';
+          await refreshBtHub(true);
+        } else if (act === 'toggle-auto') {
+          const nextVal = btn.dataset.curr !== 'true';
+          await api(API.btAuto, { mac: mac, auto_connect: nextVal, set_default: false });
+          toast(`已更新 ${devName} 自動連線設定為 ${nextVal ? '開' : '關'}`);
+          lastBtHubStateJson = '';
+          await refreshBtHub(true);
+        }
+      } catch (err) {
+        toast('操作失敗：' + err.message);
+        lastBtHubStateJson = '';
+        await refreshBtHub(true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+// 掃描周圍耳麥
+el.hubBtnScan.addEventListener('click', async () => {
+  const btn = el.hubBtnScan;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 正在搜尋周圍耳麥 (8秒)...';
+  el.hubScanContainer.innerHTML = '<div class="empty">正在掃描周圍藍牙設備，請確保耳麥處於配對狀態...</div>';
+  try {
+    const r = await api(API.btScan, {});
+    const devs = r.devices || [];
+    if (devs.length === 0) {
+      el.hubScanContainer.innerHTML = '<div class="empty">未找到可配對的耳麥。請確認耳麥處於紅藍燈配對狀態後重試。</div>';
+    } else {
+      el.hubScanContainer.innerHTML = devs.map(d => {
+        const q = getRssiQualityText(d.rssi);
+        const rssiLabel = d.rssi != null ? `<span class="chip" style="font-size:11px">📶 ${d.rssi} dBm (${q})</span>` : '';
+        const batLabel = d.battery_level != null ? `<span class="chip out" style="font-size:11px">🔋 ${d.battery_level}%</span>` : '';
+        return `
+          <div class="bt-item">
+            <div class="bt-item-info">
+              <strong>🎧 ${esc(d.name || '未知藍牙設備')}</strong>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:2px;flex-wrap:wrap">
+                <span style="font-family:monospace">${esc(d.mac)}</span>
+                ${rssiLabel}
+                ${batLabel}
+              </div>
+            </div>
+            <div class="bt-item-actions">
+              <button class="btn sm primary" data-pair="${esc(d.mac)}">🔗 配對並連線</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      el.hubScanContainer.querySelectorAll('[data-pair]').forEach(pBtn => {
+        pBtn.addEventListener('click', async () => {
+          const targetMac = pBtn.dataset.pair;
+          pBtn.disabled = true;
+          pBtn.innerHTML = '<span class="spinner"></span> 配對中...';
+          try {
+            toast(`正在配對 ${targetMac}...`);
+            await api(API.btPair, { target: targetMac });
+            toast(`配對成功，正在建立音訊連線...`);
+            await api(API.btConnect, { target: targetMac });
+            lastBtHubStateJson = '';
+            await refreshBtHub(true);
+            triggerBurstRefresh();
+          } catch (pErr) {
+            toast('配對連線失敗：' + pErr.message);
+          } finally {
+            pBtn.disabled = false;
+            pBtn.textContent = '🔗 配對並連線';
+          }
+        });
+      });
+    }
+  } catch (err) {
+    el.hubScanContainer.innerHTML = `<div class="empty" style="color:var(--rec)">掃描失敗：${esc(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🔍 開始掃描 (8秒)';
+  }
+});
+
+// 中斷連線按鈕
+async function handleBtDisconnect() {
+  try {
+    toast('正在中斷耳麥連線...');
+    const r = await api(API.btDisconnect, {});
+    toast(r.msg || r.message || '已中斷連線');
+    lastBtHubStateJson = '';
+    await refreshBtHub(true);
+    await refreshBt();
+    triggerBurstRefresh();
+  } catch (err) {
+    toast('中斷失敗：' + err.message);
+  }
+}
+el.hubBtnDisconnect.addEventListener('click', handleBtDisconnect);
+el.btnQuickDisconnect.addEventListener('click', handleBtDisconnect);
+
+// 連線常用/預設耳麥
+el.btnConnectDefault.addEventListener('click', async () => {
+  try {
+    toast('正在連線常用耳麥...');
+    const r = await api(API.btConnect, {});
+    toast(r.msg || r.message || '已連線');
+    await refreshBt();
+  } catch (err) {
+    toast('連線失敗：' + err.message);
+  }
+});
+
+/* ---------- 錄音與進度 ---------- */
+function setState(s) {
+  state = s;
+  el.recBtn.classList.toggle('recording', s === 'recording');
+  el.recBtn.classList.toggle('busy', s === 'processing');
+  el.recBtn.disabled = s !== 'idle' && s !== 'done' && s !== 'error';
+  el.dur.disabled = s === 'recording' || s === 'processing';
+  if (s === 'idle' || s === 'done' || s === 'error') { el.recLabel.textContent = '開始錄音'; el.recSub.textContent = ''; }
+  if (s === 'recording') el.recLabel.textContent = '錄音中';
+  if (s === 'processing') { el.recLabel.textContent = '整理中'; el.recSub.textContent = '請稍等'; }
+  el.regenBtn.disabled = !(result && (s === 'done' || s === 'idle' || s === 'error'));
+  refreshSystem();
+}
+function renderProgress(st) {
+  const p = el.progress;
+  if (st.state === 'idle') { p.hidden = true; return; }
+  p.hidden = false; p.className = 'progress';
+  if (st.state === 'recording') {
+    p.classList.add('rec');
+    el.pTitle.textContent = '錄音中';
+    el.pEta.textContent = `${fmt(st.elapsed)} / ${fmt(st.total)}`;
+    el.pBar.style.width = Math.min(100, 100 * st.elapsed / Math.max(1, st.total)) + '%';
+    el.pSteps.textContent = '時間到會自動停';
+    el.recSub.textContent = fmt(Math.max(0, st.total - st.elapsed));
+  } else if (st.state === 'processing') {
+    el.pTitle.textContent = '盒子正在整理紀要';
+    el.pEta.textContent = st.eta != null ? `還要約 ${Math.round(st.eta)} 秒` : '';
+    el.pBar.style.width = (st.progress ?? 0) + '%';
+    const done = (k) => (['record', 'transcribe', 'summarize'].indexOf(st.phase) > ['record', 'transcribe', 'summarize'].indexOf(k)) ? ' ✓' : (st.phase === k ? '…' : '');
+    el.pSteps.textContent = `錄音完成 ✓ → 聽寫${done('transcribe')} → 整理紀要${done('summarize')}`;
+  } else if (st.state === 'done') {
+    p.classList.add('ok'); el.pTitle.textContent = '紀要已完成'; el.pEta.textContent = ''; el.pBar.style.width = '100%'; el.pSteps.textContent = '看右邊';
+    setTimeout(() => { if (state === 'done') p.hidden = true; }, 6000);
+  } else if (st.state === 'error') {
+    p.classList.add('err'); el.pTitle.textContent = '出錯了'; el.pEta.textContent = ''; el.pBar.style.width = '0%'; el.pSteps.textContent = st.msg || '再按一次開始錄音';
+  }
+}
+async function poll() {
+  try {
+    const st = await api(API.status);
+    renderProgress(st);
+    if (st.state !== state) setState(st.state);
+    if (st.state === 'done' && st.job && st.job !== lastJob) { lastJob = st.job; await loadResult(); }
+    if (st.state === 'recording' || st.state === 'processing') pollTimer = setTimeout(poll, POLL_MS);
+    else pollTimer = setTimeout(poll, POLL_MS * 3);
+  } catch (e) { pollTimer = setTimeout(poll, POLL_MS * 2); }
+}
+el.recBtn.addEventListener('click', async () => {
+  if (state === 'recording' || state === 'processing') return;
+  try {
+    el.recBtn.disabled = true;
+    await api(API.record, { seconds: +el.dur.value });
+    setState('recording'); toast('開始錄音');
+    clearTimeout(pollTimer); poll();
+  } catch (e) { toast('無法開始錄音：' + e.message); setState('idle'); }
+});
+el.regenBtn.addEventListener('click', async () => {
+  try { await api(API.regenerate, {}); setState('processing'); toast('重新整理中'); clearTimeout(pollTimer); poll(); }
+  catch (e) { toast('無法重新整理：' + e.message); }
+});
+
+/* ---------- 紀要 ---------- */
+async function loadResult() {
+  try {
+    result = await api(API.result);
+    renderMinutes(result);
+    el.copyBtn.disabled = !result.markdown;
+    el.regenBtn.disabled = false; el.toEnBtn.disabled = false; el.toZhBtn.disabled = false;
+  } catch (e) { toast('讀取紀要失敗'); }
+}
+function renderMinutes(r) {
+  if (!r || (!r.summary && !r.todos)) { el.minutes.innerHTML = '<div class="empty">還沒有紀要。</div>'; return; }
+  const when = r.started_at ? new Date(r.started_at) : null;
+  const meta = [when ? `${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}` : '', r.duration ? fmt(r.duration).replace(/^(\d+):(\d+)$/, (m, a, b) => `${+a} 分 ${+b} 秒`) : ''].filter(Boolean).join(' · ');
+  el.minutes.innerHTML = `
+    <div><h3>${esc(r.title || '會議')}</h3><div class="meta">${esc(meta)}</div></div>
+    <div><h4>摘要</h4><ul>${(r.summary || []).map(s => `<li>${esc(s)}</li>`).join('') || '<li>—</li>'}</ul></div>
+    <div><h4>待辦</h4><table><thead><tr><th>事項</th><th>負責人</th><th>時間</th></tr></thead><tbody>
+      ${(r.todos || []).map(t => `<tr><td>${esc(t.item)}</td><td>${esc(t.owner || '待定')}</td><td>${esc(t.due || '待定')}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}
+    </tbody></table></div>
+    <div><h4>決議</h4><ul>${(r.decisions || []).map(s => `<li>${esc(s)}</li>`).join('') || '<li>—</li>'}</ul></div>`;
+  el.transcriptBox.hidden = !r.transcript;
+  el.transcript.textContent = r.transcript || '';
+}
+el.copyBtn.addEventListener('click', async () => {
+  const text = result?.markdown || '';
+  try { await navigator.clipboard.writeText(text); toast('紀要已複製'); }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('紀要已複製'); } catch (_) { toast('請長按選取複製'); } ta.remove();
+  }
+});
+
+/* ---------- 加分項 ---------- */
+el.toEnBtn.addEventListener('click', async () => { el.enBox.textContent = '翻譯中…'; try { const r = await api(API.translate, { text: result?.markdown || '', to: 'en' }); el.enBox.textContent = r.text; el.ttsBtn.disabled = false; } catch (e) { el.enBox.textContent = '翻譯失敗：' + e.message; } });
+el.toZhBtn.addEventListener('click', async () => { const src = el.enBox.textContent; el.enBox.textContent = '翻譯中…'; try { const r = await api(API.translate, { text: src, to: 'zh' }); el.enBox.textContent = r.text; } catch (e) { el.enBox.textContent = '翻譯失敗：' + e.message; } });
+el.ttsBtn.addEventListener('click', async () => { try { await api(API.tts, { text: el.enBox.textContent }); toast('正在耳麥播放'); } catch (e) { toast('播放失敗：' + e.message); } });
+
+/* ---------- 網路切換 ---------- */
+el.netSwitch.addEventListener('click', async () => {
+  const to = el.netSwitch.dataset.to || 'sta';
+  if (!el.netSwitch.dataset.armed) { el.netSwitch.dataset.armed = '1'; el.netSwitch.textContent = '再按一次確認切換'; setTimeout(() => { delete el.netSwitch.dataset.armed; refreshSystem(); }, 4000); return; }
+  try { await api(API.netSwitch, { mode: to }); toast('網路切換中，頁面可能短暫斷線'); } catch (e) { toast('切換失敗：' + e.message); }
+});
+
+/* ---------- 啟動 ---------- */
+setState('idle');
+refreshSystem(); refreshBt(); poll();
+setInterval(refreshSystem, 2000); setInterval(refreshBt, 5000);
+
+/* ---------- 假後端（?mock=1 預覽用） ---------- */
+let M = {
+  state: 'idle', t0: 0, total: 90, job: 0,
+  connectedMac: 'E8:07:BF:22:A1:99', connectedName: 'RichChipAN',
+  mockTrusted: [
+    { mac: 'E8:07:BF:22:A1:99', name: 'RichChipAN', is_default: true, auto_connect: true, battery_level: 85, rssi: -56 },
+    { mac: '00:1B:66:88:99:AA', name: 'Sony WH-1000XM4', is_default: false, auto_connect: true, battery_level: 90, rssi: -62 },
+    { mac: '44:5C:E9:12:34:56', name: 'AirPods Pro 2', is_default: false, auto_connect: false, battery_level: 75, rssi: -70 }
+  ]
+};
+function mock(path, body) {
+  const now = Date.now();
+  if (path === API.system) return { offline: true, cpu: M.state === 'processing' ? 97 : 6, temp: M.state === 'processing' ? 52 : 44, mode: 'ap', ssid: 'raspi543_AI', host: 'localnote.local' };
+  if (path === API.bt) return { connected: !!M.connectedMac, name: M.connectedName || '' };
+  if (path === API.btStatus) {
+    const isConn = !!M.connectedMac;
+    return {
+      connected: isConn, connected_name: M.connectedName, connected_mac: M.connectedMac,
+      battery_level: isConn ? 85 : null, signal_level_pct: isConn ? 92 : 0, rssi: isConn ? -56 : null,
+      trusted_devices: M.mockTrusted.map(d => ({
+        ...d,
+        connected: d.mac === M.connectedMac
+      }))
+    };
+  }
+  if (path === API.btScan) return {
+    ok: true, count: 2, msg: '找到 2 個周圍設備',
+    devices: [
+      { mac: 'A4:C1:38:99:88:77', name: 'Bose QuietComfort 45', rssi: -58, battery_level: 70 },
+      { mac: 'B8:D5:0B:44:33:22', name: 'Jabra Evolve2 65', rssi: -72, battery_level: 45 }
+    ]
+  };
+  if (path === API.btPair) {
+    if (body?.target && !M.mockTrusted.some(d => d.mac === body.target)) {
+      M.mockTrusted.push({ mac: body.target, name: '新耳麥', is_default: false, auto_connect: true, battery_level: 80, rssi: -60 });
+    }
+    return { ok: true, msg: '已成功配對並信任設備' };
+  }
+  if (path === API.btConnect) {
+    const target = body?.target || M.mockTrusted[0]?.mac;
+    M.connectedMac = target;
+    const found = M.mockTrusted.find(d => d.mac === target);
+    M.connectedName = found ? found.name : '耳麥';
+    return { ok: true, msg: `🎧 已成功切換連線至耳麥：${M.connectedName}` };
+  }
+  if (path === API.btDisconnect) {
+    M.connectedMac = null;
+    M.connectedName = null;
+    return { ok: true, msg: '已中斷連線' };
+  }
+  if (path === API.btAuto) {
+    const d = M.mockTrusted.find(item => item.mac === body?.mac);
+    if (d) {
+      if (body.auto_connect !== undefined) d.auto_connect = !!body.auto_connect;
+      if (body.set_default) {
+        M.mockTrusted.forEach(item => item.is_default = (item.mac === body.mac));
+      }
+    }
+    return { ok: true, msg: '已更新設定' };
+  }
+  if (path === API.record) { M = { state: 'recording', t0: now, total: Math.min(body.seconds, 8), job: M.job + 1 }; return { job: 'j' + M.job }; }
+  if (path === API.regenerate) { M.state = 'processing'; M.t0 = now; M.job++; return { job: 'j' + M.job }; }
+  if (path === API.status) {
+    const e = (now - M.t0) / 1000;
+    if (M.state === 'recording') { if (e >= M.total) { M.state = 'processing'; M.t0 = now; } else return { state: 'recording', elapsed: e, total: M.total }; }
+    if (M.state === 'processing') { const e2 = (now - M.t0) / 1000; if (e2 >= 6) M.state = 'done'; else return { state: 'processing', phase: e2 < 3 ? 'transcribe' : 'summarize', progress: Math.round(e2 / 6 * 100), eta: Math.round(6 - e2), job: 'j' + M.job }; }
+    return { state: M.state, job: 'j' + M.job };
+  }
+  if (path === API.result) return { job: 'j' + M.job, title: '客戶會議', started_at: new Date().toISOString(), duration: 90, summary: ['客戶要 200 台樣機，11 月前交貨', '對單價有異議，要求降 8%', '同意先簽 50 台試單'], todos: [{ item: '發修訂報價', owner: '張三', due: '週五' }, { item: '確認樣機產能', owner: '李四', due: '下週一' }], decisions: ['先簽 50 台試單，價格按新報價'], transcript: '[00:00] 發言人1：我們這邊希望 11 月前能拿到 200 台樣機……\n[00:21] 發言人2：單價還是偏高，能不能降 8%……', markdown: '# 客戶會議 · 10-07 10:50 · 1 分 30 秒\n\n## 摘要\n- 客戶要 200 台樣機，11 月前交貨\n- 對單價有異議，要求降 8%\n- 同意先簽 50 台試單\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 發修訂報價 | 張三 | 週五 |\n| 確認樣機產能 | 李四 | 下週一 |\n\n## 決議\n先簽 50 台試單，價格按新報價' };
+  if (path === API.translate) return { text: body.to === 'en' ? '# Client meeting\n\n## Summary\n- Client wants 200 sample units before November\n- Objects to unit price, asks for 8% off\n- Agrees to a 50-unit trial order first' : '（中文翻譯預覽）' };
+  if (path === API.tts) return { ok: true };
+  if (path === API.netSwitch) return { ok: true };
+  return {};
+}
+</script>
+</body>
+</html>
