@@ -3,7 +3,7 @@
 （已過期的互動鎖已於 2026-11-10 23:24 移除）
 
 
-## 狀態：三項 DONE（2026-11-10 19:40）。後續改善：#2–#4 已完成；#1 阻塞（耳麥未連線，見 2026-11-10 23:24 排程輪次）；#5 待使用者決定。排程停用被權限拒絕，排程仍啟用（見排程輪次紀錄）
+## 狀態：三項 DONE（2026-11-10 19:40）。後續改善：#2–#4 已完成；#1 阻塞（耳麥未連線，見 2026-11-10 23:24、2026-11-11 00:26、01:24 排程輪次）；#5 待使用者決定。排程停用被權限拒絕，排程仍啟用（見排程輪次紀錄）
 
 ## 目標與順序（使用者指定）
 1. 潤稿區（待辦 #11）→ 2. SenseVoice 比較（ASR 品質與效能）→ 3. CAM++ 分說話人
@@ -115,6 +115,17 @@
   - 排程仍啟用（#1 未完成）。耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗輪次可照 CLAUDE.md 流程重試。
   - 寫入限制：Desktop Commander 的 write_file 只能寫入 F:\ 下的專案資料夾，暫存 JSON 放在 F:\14_prj_raspi5_localnote_asia\.cc_scratch\（未追蹤，不 commit）。
 
+- 2026-11-11 00:26 排程輪次（台北，夜間窗）：Pi /api/status state=done；pgrep 檢查 real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無實際評估程序（唯一匹配為檢查指令本身）。
+  - #1 聲學實測：仍阻塞於耳麥未連線。POST /api/bt/trusted/auto_connect（body {"mac": "A0:D1:2A:42:12:34", "auto_connect": true}）回 success，auto_connect 維持 true；POST /api/bt/connect（body {"target": "A0:D1:2A:42:12:34"}）回 400（連線失敗，回應內文未讀到）；bluetoothctl info：Paired／Bonded／Trusted yes、Connected no；bluetoothctl scan 15 s 未見 A0:D1:2A:42:12:34。推測：耳麥關機或不在範圍內（未查證）。
+  - API 欄位更正：/api/bt/connect 的 body 是 {"target": ...}（main.py BTConnectRequest），不是 {"mac": ...}；23:24 紀錄的寫法有誤。
+  - 本輪未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit；未發送任何權限請求。
+  - 本輪 device_bash 回報「未連接資料夾」，改以 Desktop Commander start_process（PowerShell）執行 SSH 與 Pi HTTP。
+  - 無新進度（阻塞與 23:24 相同），本輪不回報。排程仍啟用。耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗輪次重試。
+- 2026-11-11 01:24 排程輪次（台北，夜間窗）：互動鎖已無（標頭行已移除）。Pi：/api/status state=done（最後一場 m_1794309254，無錄音／處理）；pgrep real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無實際評估程序。
+  - #1 聲學實測：仍阻塞於耳麥未連線。GET /api/bt/status：connected=false、trusted auto_connect=true；POST /api/bt/connect（body {"target": "A0:D1:2A:42:12:34"}）回 Page Timeout（連線超時），錯誤訊息要求確認耳麥已開機、未在充電倉、未被其他裝置佔線；bluetoothctl info：Paired yes、Trusted yes、Connected no。
+  - 本輪 device_bash 因未連接資料夾無法使用，未請求資料夾權限；改用 Desktop Commander start_process 執行 SSH 與 Pi 指令。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit；未發送任何權限請求。無新進度，本輪不回報。排程仍啟用。
+
 ## 工作規則
 - 白天（07:00–19:00）：只做數位工作（pytest、離線重放、合成資料 E2E、程式與文件）；不放音、不用藍牙耳麥。
 - 錄音或處理中（/api/status 的 state 為 recording 或 processing）：Pi 上不跑任何評估、不部署、不重啟。
@@ -122,3 +133,34 @@
 - 不做刪除，不送需使用者確認的權限請求（包括內建瀏覽器的網站授權；要看前端用 PC 上的 Playwright 無頭模式）。
 - .cc_scratch/ 為未追蹤暫存，不 commit。
 - 不要測一次就停著等：長任務放背景，等待時做別的數位工作（2026-11-10 使用者指定）。
+
+
+## 排程輪次紀錄（續）
+- 2026-11-11 02:24 排程輪次（台北，夜間窗）：Pi /api/status state=done（最後一場 m_1794309254，無錄音／處理）。遠端 pgrep -fl 只匹配到檢查指令本身的 bash（PID 146941），無 real_exp、refine_transcript、run_suite、speaker_selftest 評估程序。
+  - #1 聲學實測：仍阻塞於耳麥未連線。GET /api/bt/status：connected=false、auto_connect=true、paired／trusted 清單含 RichChipAN（A0:D1:2A:42:12:34）。POST /api/bt/trusted/auto_connect（body {"mac", "auto_connect": true}）回 success；POST /api/bt/connect（body {"target": ...}）回 400，錯誤為 Page Timeout，訊息要求確認耳麥已開機、未在充電倉、未被其他裝置佔線。
+  - 本輪 device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell（bt_try.ps1）與 read_file／write_file 讀寫檔並呼叫 Pi HTTP。未發送任何刪除權限、資料夾權限、電腦控制請求。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit。
+  - 暫存腳本 F:\14_prj_raspi5_localnote_asia\.cc_scratch\bt_try.ps1（未追蹤，不 commit）。
+  - 無新進度（與 23:24、00:26、01:24 相同阻塞），本輪不回報。排程仍啟用。耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗輪次重試。
+- 2026-11-11 03:24 排程輪次（台北，夜間窗）：Pi /api/status state=done（m_1794309254，無錄音／處理）；ps 比對 real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無評估程序。
+  - 本輪 device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - #1 聲學實測：仍阻塞於耳麥未連線。POST /api/bt/trusted/auto_connect（body {"mac", "auto_connect": true}）回 success；POST /api/bt/connect（body {"target": ...}）逾時無回應（curl -m 60，以 force_terminate 結束）；GET /api/bt/status：controller_ok=true、connected=false、trusted 清單含 A0:D1:2A:42:12:34（auto_connect=true）。推測：耳麥關機或不在範圍內（未查證）。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit。後續改善 #2–#4 已完成，#5 待使用者決定，#1 須待耳麥連線。
+  - 無新進度（同上阻塞），本輪不回報。排程仍啟用。耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗輪次重試。
+
+- 2026-11-11 04:24 排程輪次（台北，夜間窗）：互動鎖無（標頭無該行）。Pi /api/status state=done（m_1794309254，無錄音／處理）；SSH pgrep real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無評估程序。
+  - #1 聲學實測：仍阻塞於耳麥未連線。GET /api/bt/status：controller_ok=true、connected=false、auto_connect=true（RichChipAN，A0:D1:2A:42:12:34）。POST /api/bt/trusted/auto_connect（body {"mac", "auto_connect": true}）回 success；POST /api/bt/connect（body {"target": ...}）回 Page Timeout，訊息要求確認耳麥已開機、未在充電倉、未被其他裝置佔線。耳麥是否開機、位置是否在範圍內，本環境無法查證。
+  - 本輪 device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 執行 SSH、curl 與讀寫檔。JSON 請求 body 以 F:\14_prj_raspi5_localnote_asia\.cc_scratch\bt_auto.json、bt_connect.json 傳入（PowerShell 直接傳參會吃掉內層雙引號，回 json_invalid）。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit。未發送任何刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - 無新進度（與 23:24 起相同阻塞），本輪不回報。後續改善 #2–#4 已完成，#5 待使用者決定，#1 須待耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）後，下一個夜間窗輪次重試。排程仍啟用。
+
+- 2026-11-11 05:24 排程輪次（台北，夜間窗）：互動鎖無（標頭無該行）。Pi /api/status state=done（m_1794309254，無錄音／處理）；SSH ps 比對 real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無評估程序（none）。
+  - #1 聲學實測：仍阻塞於耳麥未連線。GET /api/bt/status：connected=false、auto_connect=true（RichChipAN，A0:D1:2A:42:12:34）。POST /api/bt/trusted/auto_connect 回 success；POST /api/bt/connect（body {"target": ...}）回 Page Timeout，訊息要求確認耳麥已開機、未在充電倉、未被其他裝置佔線。
+  - 本輪 device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell（暫存腳本 F:\14_prj_raspi5_localnote_asia\.cc_scratch\bt_round.ps1，未追蹤，不 commit）執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit。
+  - 無新進度（與 23:24 起相同阻塞），本輪不回報。後續改善 #2–#4 已完成，#5 待使用者決定，#1 須待耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）後，下一個夜間窗輪次重試。排程仍啟用。
+- 2026-11-11 06:24 排程輪次（台北 06:24 前後，夜間窗末段，07:00 進入白天）：互動鎖無（標頭無該行）。Pi /api/status state=done（m_1794309254，無錄音／處理）；SSH ps 比對 real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無評估程序。
+  - #1 聲學實測：仍阻塞於耳麥未連線。GET /api/bt/status：controller_ok=true、connected=false、auto_connect=true（RichChipAN，A0:D1:2A:42:12:34）。POST /api/bt/trusted/auto_connect 回 success；POST /api/bt/connect（body {"target": ...}）回「連線失敗：請確認耳麥處於開機或待連線狀態後重試」。耳麥是否開機、是否在範圍內，本環境無法查證。
+  - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit 程式；未發送任何刪除、資料夾、電腦控制或內建瀏覽器授權請求。device_bash 仍回報「未連接資料夾」，改用 Desktop Commander 的 PowerShell（暫存腳本 .cc_scratch\round_check.ps1、bt_round2.ps1，未追蹤，不 commit）。
+  - 數位工作：清單 #2–#4 已完成，#1 需人工開機耳麥並確認喇叭位置，#5 待使用者決定，無其他可做的數位改善；本輪不改程式、不跑 pytest。
+  - 無新進度，本輪不回報。排程仍啟用；耳麥開機並靠近 Pi 與喇叭後，下一個夜間窗（19:00 後）輪次重試 #1。
