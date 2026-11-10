@@ -40,3 +40,63 @@ def test_refine_raises_clear_error_when_unavailable(monkeypatch, tmp_path):
         assert str(e)
     else:
         raise AssertionError("expected RefineError")
+
+
+import asyncio  # noqa: E402
+import json  # noqa: E402
+import sys  # noqa: E402
+
+
+def _child(script):
+    return [sys.executable, "-c", script]
+
+
+_EMIT = "import json, sys, time\ndef emit(o):\n    print(json.dumps(o, ensure_ascii=False), flush=True)\n"
+
+
+def test_run_in_subprocess_relays_progress_and_returns_result():
+    seen = []
+    script = _EMIT + "emit({'progress': ['asr', 0.5]})\nemit({'partial': {'transcript': '甲'}})\nemit({'result': {'transcript': '說話人1：甲', 'speakers': 1}})\n"
+    res = asyncio.run(rt.run_in_subprocess("x.ogg", on_progress=lambda p, f: seen.append((p, f)), cmd=_child(script)))
+    assert res == {"transcript": "說話人1：甲", "speakers": 1}
+    assert seen == [("asr", 0.5)]
+
+
+def test_run_in_subprocess_stops_child_and_returns_partial(monkeypatch):
+    monkeypatch.setattr(rt, "STOP_POLL_S", 0.05)
+    script = _EMIT + "emit({'partial': {'transcript': '還沒分人', 'speakers': 0}})\ntime.sleep(30)\nemit({'result': {}})\n"
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return calls["n"] >= 3
+
+    res = asyncio.run(asyncio.wait_for(rt.run_in_subprocess("x.ogg", should_stop=should_stop, cmd=_child(script)), 10))
+    assert res["stopped"] is True and res["transcript"] == "還沒分人"
+
+
+def test_run_in_subprocess_reports_child_error_message():
+    script = _EMIT + "emit({'error': '缺少模型檔'})\nsys.exit(1)\n"
+    try:
+        asyncio.run(rt.run_in_subprocess("x.ogg", cmd=_child(script)))
+    except rt.RefineError as e:
+        assert str(e) == "缺少模型檔"
+    else:
+        raise AssertionError("expected RefineError")
+
+
+def test_run_in_subprocess_reports_crash_with_stderr_tail():
+    script = "import sys\nsys.stderr.write('Segmentation fault\\n')\nsys.exit(3)\n"
+    try:
+        asyncio.run(rt.run_in_subprocess("x.ogg", cmd=_child(script)))
+    except rt.RefineError as e:
+        assert "exit 3" in str(e) and "Segmentation fault" in str(e)
+    else:
+        raise AssertionError("expected RefineError")
+
+
+def test_cli_emits_error_line_when_unavailable(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(rt, "MODEL_DIR", str(tmp_path))
+    assert rt._cli(["refine_transcript", str(tmp_path / "x.ogg")]) == 1
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert "error" in json.loads(last)

@@ -1856,10 +1856,8 @@ async def post_refine(req: RefineRequest) -> Dict[str, Any]:
         _refine_job.update(phase=phase, progress=round(overall * 100))
 
     async def runner(job: SingleJob) -> Dict[str, Any]:
-        try:
-            return await asyncio.to_thread(refine_transcript.refine, path, is_any_recording_active, on_progress)
-        except refine_transcript.RefineError as e:
-            raise RuntimeError(str(e)) from e
+        # 子行程執行：sherpa-onnx 分說話人整段持有 GIL，放在本行程的執行緒會卡住整個 API (11-10 實測)。
+        return await refine_transcript.run_in_subprocess(path, is_any_recording_active, on_progress)
 
     return _refine_job.start(runner, job=job_id, phase="load", progress=0)
 

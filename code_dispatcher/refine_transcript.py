@@ -11,13 +11,19 @@ refine_transcript.py — 錄音結束後的高精度逐字稿：SenseVoice 重�
   ffmpeg 解成 16 kHz 單聲道 → Silero VAD 切句 → SenseVoice 逐句辨識（ITN 開，數字為阿拉伯數字）
   → pyannote-3.0 分段＋CAM++ 嵌入＋FastClustering 分說話人
   → 每句取重疊最長的說話人 → 依第一次出現的順序編成「說話人1、2…」，同一人連續的句子併成一段。
-限制：CPU 推論，只能在錄音結束後跑；處理中每隔幾秒音訊檢查 should_stop()，錄音一開始就停（CLAUDE.md 重點一）。
+限制：CPU 推論，只能在錄音結束後跑；錄音一開始就停（CLAUDE.md 重點一）。
+執行方式：服務用 run_in_subprocess() 在子行程（nice 10）跑。sherpa-onnx 的分說話人整段持有 GIL，
+  11-10 實測放在服務行程的執行緒裡跑時 /api/status 逾時（整個 API 卡住約 2 分鐘）；子行程也能在錄音開始時直接終止。
 模型：PI5_SHERPA_MODEL_DIR（預設 /home/pi/models/sherpa），安裝見 tools/ci/setup_sherpa_models.sh。
 """
 
+import asyncio
+import collections
+import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -34,6 +40,10 @@ CLUSTER_THRESHOLD = 0.7
 # 句子落在分段的空隙裡（分段模型會把句中停頓切掉）時，借用 1 秒內最近的說話人。
 NEAREST_TURN_MAX_GAP_S = 1.0
 DECODE_TIMEOUT_S = 900
+CHILD_NICE = 10
+STOP_POLL_S = 1.0
+STOP_GRACE_S = 5.0
+CHILD_LINE_LIMIT = 32 * 1024 * 1024  # 結果是一行 JSON；4 小時會議約數 MB，asyncio 預設 64 KB 不夠
 MODEL_FILES = {
     "asr": "sensevoice_small_int8.onnx",
     "tokens": "sensevoice_tokens.txt",
@@ -230,8 +240,12 @@ def format_transcript(sentences: Sequence[Sentence]) -> Tuple[str, int]:
 
 
 def refine(path: str, should_stop: StopFn = None,
-           on_progress: Optional[Callable[[str, float], None]] = None) -> Dict[str, Any]:
-    """整段流程（阻塞，請在執行緒裡跑）。回傳 dict；stopped=True 表示中途被錄音打斷。"""
+           on_progress: Optional[Callable[[str, float], None]] = None,
+           on_partial: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+    """整段流程（阻塞）。回傳 dict；stopped=True 表示中途被打斷。
+
+    on_partial(結果)：辨識完成、開始分說話人之前呼叫一次，內容是還沒分人的逐字稿；分說話人被打斷時用得到。
+    """
     reason = check_available()
     if reason:
         raise RefineError(reason)
@@ -253,6 +267,10 @@ def refine(path: str, should_stop: StopFn = None,
         return out
     for s in sentences:
         s.text = to_taiwan_traditional(s.text)
+    if on_partial is not None:
+        text, _ = format_transcript(sentences)
+        on_partial({**out, "phase": "diarize", "transcript": text, "speakers": 0,
+                    "sentences": [asdict(s) for s in sentences]})
 
     t1 = time.time()
     turns = diarize(samples, should_stop, lambda f: report("diarize", f))
@@ -270,3 +288,102 @@ def refine(path: str, should_stop: StopFn = None,
     logger.info("[refine] %.0f s audio: asr %.1f s, diarize %.1f s, %d sentences, %d speakers",
                 audio_s, out["asr_s"], out["diarize_s"], len(sentences), speakers)
     return out
+
+
+async def run_in_subprocess(path: str, should_stop: StopFn = None,
+                            on_progress: Optional[Callable[[str, float], None]] = None,
+                            cmd: Optional[List[str]] = None) -> Dict[str, Any]:
+    """在子行程執行 refine()（見檔頭「執行方式」）。should_stop() 每秒檢查一次，成立就終止子行程，
+    回傳 stopped=True 與已完成的部分（辨識完就有逐字稿，只是沒分人）。cmd 只給測試替換子行程用。"""
+    argv = cmd or ["nice", "-n", str(CHILD_NICE), sys.executable, "-m", "refine_transcript", path]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, cwd=os.path.dirname(os.path.abspath(__file__)),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=CHILD_LINE_LIMIT,
+    )
+    partial: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    stopped = False
+    stderr_tail: "collections.deque[str]" = collections.deque(maxlen=20)
+
+    async def read_stderr() -> None:
+        async for line in proc.stderr:
+            stderr_tail.append(line.decode("utf-8", "replace").rstrip())
+
+    async def watch_stop() -> None:
+        nonlocal stopped
+        while proc.returncode is None:
+            await asyncio.sleep(STOP_POLL_S)
+            if should_stop is not None and should_stop() and proc.returncode is None:
+                stopped = True
+                logger.info("[refine] recording started, terminating child %d", proc.pid)
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), STOP_GRACE_S)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                return
+
+    err_task = asyncio.create_task(read_stderr())
+    stop_task = asyncio.create_task(watch_stop())
+    try:
+        async for raw in proc.stdout:
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                logger.warning("[refine] unexpected child output: %r", raw[:200])
+                continue
+            if "progress" in msg and on_progress is not None:
+                on_progress(*msg["progress"])
+            elif "partial" in msg:
+                partial = msg["partial"]
+            elif "result" in msg:
+                result = msg["result"]
+            elif "error" in msg:
+                error = msg["error"]
+        await proc.wait()
+    finally:
+        stop_task.cancel()
+        if proc.returncode is None:  # 上層被取消：不留孤兒行程
+            proc.kill()
+            await proc.wait()
+        await asyncio.gather(stop_task, err_task, return_exceptions=True)
+
+    if stopped:
+        out = dict(partial) if partial else {"engine": ENGINE_LABEL, "phase": "asr", "transcript": "",
+                                              "speakers": 0, "sentences": []}
+        out["stopped"] = True
+        return out
+    if error:
+        raise RefineError(error)
+    if result is None or proc.returncode != 0:
+        detail = " | ".join(list(stderr_tail)[-3:])
+        raise RefineError(f"處理程序異常結束（exit {proc.returncode}）：{detail}")
+    return result
+
+
+def _cli(argv: List[str]) -> int:
+    """子行程入口：python3 -m refine_transcript <錄音檔>。stdout 每行一個 JSON：progress／partial／result／error。"""
+    if len(argv) != 2:
+        print("usage: python3 -m refine_transcript <audio file>", file=sys.stderr)
+        return 2
+
+    def emit(obj: Dict[str, Any]) -> None:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+    try:
+        result = refine(argv[1], on_progress=lambda phase, frac: emit({"progress": [phase, round(frac, 3)]}),
+                        on_partial=lambda part: emit({"partial": part}))
+    except RefineError as e:
+        emit({"error": str(e)})
+        return 1
+    emit({"result": result})
+    return 0
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    sys.exit(_cli(sys.argv))
