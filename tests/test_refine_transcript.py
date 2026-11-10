@@ -16,13 +16,13 @@ def test_format_transcript_numbers_speakers_by_first_appearance_and_merges_runs(
                  Sentence(2, 3, "收到。", 3), Sentence(3, 4, "繼續", 7)]
     text, speakers = rt.format_transcript(sentences)
     assert speakers == 2
-    assert text == "說話人1：好，我們開始。第一個議題是公安\n說話人2：收到。\n說話人1：繼續"
+    assert text == "說話人1：好，我們開始，第一個議題是公安\n說話人2：收到。\n說話人1：繼續"
 
 
 def test_format_transcript_without_speakers_is_plain_text():
     text, speakers = rt.format_transcript([Sentence(0, 1, "第一句"), Sentence(1, 2, "第二句。"), Sentence(2, 3, "第三句")])
     assert speakers == 0
-    assert text == "第一句，第二句。第三句"
+    assert text == "第一句，第二句，第三句"
 
 
 def test_check_available_reports_missing_models(monkeypatch, tmp_path):
@@ -51,7 +51,7 @@ def _child(script):
     return [sys.executable, "-c", script]
 
 
-_EMIT = "import json, sys, time\ndef emit(o):\n    print(json.dumps(o, ensure_ascii=False), flush=True)\n"
+_EMIT = "import json, sys, time; sys.stdout.reconfigure(encoding='utf-8')\ndef emit(o):\n    print(json.dumps(o, ensure_ascii=False), flush=True)\n"
 
 
 def test_run_in_subprocess_relays_progress_and_returns_result():
@@ -100,3 +100,27 @@ def test_cli_emits_error_line_when_unavailable(monkeypatch, tmp_path, capsys):
     assert rt._cli(["refine_transcript", str(tmp_path / "x.ogg")]) == 1
     last = capsys.readouterr().out.strip().splitlines()[-1]
     assert "error" in json.loads(last)
+
+
+def test_merge_short_pause_turns_sentence_period_into_comma():
+    sentences = [Sentence(0.0, 3.0, "不良率從5%。", 1), Sentence(3.2, 5.0, "降到1%。", 1)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：不良率從5%，降到1%。"
+
+
+def test_long_pause_keeps_sentence_period():
+    sentences = [Sentence(0.0, 3.0, "第一件事。", 1), Sentence(3.0 + rt.MERGE_GAP_S + 0.3, 6.0, "第二件事。", 1)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：第一件事。第二件事。"
+
+
+def test_question_and_exclamation_are_not_merged():
+    sentences = [Sentence(0.0, 1.0, "你好嗎？", 1), Sentence(1.1, 2.0, "好！", 1)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：你好嗎？好！"
+
+
+def test_merge_does_not_cross_speakers():
+    sentences = [Sentence(0.0, 1.0, "同意。", 1), Sentence(1.1, 2.0, "反對。", 2)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：同意。\n說話人2：反對。"

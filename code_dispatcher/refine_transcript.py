@@ -39,6 +39,9 @@ NUM_THREADS = int(os.environ.get("PI5_SHERPA_THREADS", "4"))
 CLUSTER_THRESHOLD = 0.7
 # 句子落在分段的空隙裡（分段模型會把句中停頓切掉）時，借用 1 秒內最近的說話人。
 NEAREST_TURN_MAX_GAP_S = 1.0
+# 同一人相鄰兩句的停頓 ≤ 此秒數 → 前句結尾的「。」改「，」（VAD 句中切開，不是句界）。
+# 調參用 10 分鐘合成會議（句中停頓 0.22–0.54 s，句界 ≥ 1.50 s）；驗證用 60 分鐘（句界最短 0.83 s）。見 claude_context/BIG_CHANGE_STATUS.md。
+MERGE_GAP_S = 0.6
 DECODE_TIMEOUT_S = 900
 CHILD_NICE = 10
 STOP_POLL_S = 1.0
@@ -204,12 +207,19 @@ def assign_speakers(sentences: List[Sentence], turns: Sequence[Turn]) -> None:
             s.speaker = nearest
 
 
-def _join(texts: Sequence[str]) -> str:
+def _join(parts: Sequence[Sentence]) -> str:
+    """同一人的連續句子接成一段。前句結尾是「。」且與下一句的停頓很短（VAD 在句中切開）→ 「。」改「，」；
+    其他沒有標點的前句補「，」。"""
     out = ""
-    for t in texts:
-        if out and out[-1] not in _PUNCT:
-            out += "，"
-        out += t
+    prev: Optional[Sentence] = None
+    for s in parts:
+        if prev is not None:
+            if prev.text.endswith("。") and s.start - prev.end <= MERGE_GAP_S:
+                out = out[:-1] + "，"
+            elif out and out[-1] not in _PUNCT:
+                out += "，"
+        out += s.text
+        prev = s
     return out
 
 
@@ -218,7 +228,7 @@ def format_transcript(sentences: Sequence[Sentence]) -> Tuple[str, int]:
     order: Dict[int, int] = {}
     lines: List[str] = []
     cur: Any = object()
-    buf: List[str] = []
+    buf: List[Sentence] = []
 
     def flush() -> None:
         if buf:
@@ -226,7 +236,7 @@ def format_transcript(sentences: Sequence[Sentence]) -> Tuple[str, int]:
             lines.append(f"{label}：{_join(buf)}")
 
     if all(s.speaker is None for s in sentences):
-        return _join([s.text for s in sentences]), 0
+        return _join(sentences), 0
     for s in sentences:
         if s.speaker is not None and s.speaker not in order:
             order[s.speaker] = len(order) + 1
@@ -234,7 +244,7 @@ def format_transcript(sentences: Sequence[Sentence]) -> Tuple[str, int]:
             flush()
             buf = []
             cur = s.speaker
-        buf.append(s.text)
+        buf.append(s)
     flush()
     return "\n".join(lines), len(order)
 
