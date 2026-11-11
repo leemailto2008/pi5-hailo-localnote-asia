@@ -14,6 +14,19 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def meeting_busy_reason(recording_active: bool, meeting_state: Optional[str]) -> Optional[str]:
+    """錄音中或會議還在整理（逐字稿收尾、紀要生成）時不可啟動潤稿／高精度逐字稿，回傳給前端看的原因；可啟動回傳 None。
+
+    11-11 實測：紀要生成中按潤稿，潤稿請求在 hailo-ollama 排在紀要後面，等了 120 s 逾時；
+    hailo-ollama 不會取消已送出的請求，重試又排在那個被放棄的請求後面，一段要好幾分鐘。
+    """
+    if recording_active or meeting_state == "recording":
+        return "錄音中不可執行，請錄音結束後再試"
+    if meeting_state == "processing":
+        return "會議紀要還在生成，完成後再試"
+    return None
+
+
 class JobBusyError(RuntimeError):
     """已有同名工作在跑。"""
 

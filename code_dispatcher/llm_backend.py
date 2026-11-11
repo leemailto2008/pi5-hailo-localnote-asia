@@ -232,6 +232,14 @@ def extract_token(chunk: Dict[str, Any]) -> str:
     return chunk.get("response", "") or ""
 
 
+def _describe(e: Optional[BaseException]) -> str:
+    """例外的類型＋訊息。httpx.ReadTimeout 等例外的 str() 是空字串，只印訊息會看到空白（11-11 日誌）。"""
+    if e is None:
+        return "unknown error"
+    text = str(e)
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
 # ------------------------------------------------------------------ sync (requests)
 
 def chat_complete(
@@ -258,8 +266,8 @@ def chat_complete(
             return text, backend
         except (requests.RequestException, ValueError, LLMError) as e:
             last_err = e
-            logger.warning(f"[LLM] {backend.label} failed, trying next backend: {e}")
-    raise LLMError(f"all LLM backends failed: {last_err}")
+            logger.warning(f"[LLM] {backend.label} failed, trying next backend: {_describe(e)}")
+    raise LLMError(f"all LLM backends failed: {_describe(last_err)}")
 
 
 def iter_chat_stream(
@@ -303,7 +311,7 @@ def iter_chat_stream(
             if emitted:
                 raise LLMError(f"{backend.label} stream interrupted: {e}") from e
             logger.warning(f"[LLM] {backend.label} stream failed before first token, trying next backend: {e}")
-    raise LLMError(f"all LLM backends failed: {last_err}")
+    raise LLMError(f"all LLM backends failed: {_describe(last_err)}")
 
 
 def prewarm(timeout: float = 120.0) -> Optional[LLMBackend]:
@@ -365,11 +373,11 @@ async def achat_complete(
                     return extract_token(resp.json()).strip(), backend
             except (httpx.HTTPError, ValueError, LLMError) as e:
                 last_err = e
-                logger.warning(f"[LLM] {backend.label} failed (attempt {attempt + 1}): {e}")
+                logger.warning(f"[LLM] {backend.label} failed (attempt {attempt + 1}): {_describe(e)}")
                 if backend.is_hailo and attempt < hailo_retries:
                     await asyncio.sleep(3.0)
-        logger.warning(f"[LLM] {backend.label} failed, trying next backend: {last_err}")
-    raise LLMError(f"all LLM backends failed: {last_err}")
+        logger.warning(f"[LLM] {backend.label} failed, trying next backend: {_describe(last_err)}")
+    raise LLMError(f"all LLM backends failed: {_describe(last_err)}")
 
 
 async def aiter_chat_stream(
@@ -424,4 +432,4 @@ async def aiter_chat_stream(
                     await asyncio.sleep(hailo_retry_wait)
                     continue
                 logger.warning(f"[LLM] {backend.label} stream failed before first token, trying next backend: {e}")
-    raise LLMError(f"all LLM backends failed: {last_err}")
+    raise LLMError(f"all LLM backends failed: {_describe(last_err)}")

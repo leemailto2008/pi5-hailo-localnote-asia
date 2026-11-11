@@ -1242,6 +1242,26 @@ function setState(s) {
   el.regenBtn.disabled = !(result && isFinished);
   if (lastSystemData) updateSystemUI(lastSystemData);
   else refreshSystem();
+  document.dispatchEvent(new CustomEvent('ln-state', { detail: s }));
+}
+// 錄音中或會議紀要生成中不能潤稿／重新辨識（後端也會回 409）：紀要和潤稿都用 NPU，潤稿會排在紀要後面逾時 (11-11)。
+function meetingBusyHint() {
+  if (state === 'recording') return '錄音中，結束後才能執行';
+  if (state === 'processing') return '會議紀要生成中，完成後才能執行';
+  return '';
+}
+// 狀態列只在「沒有其他內容」或「上次放的也是提示」時才換成提示，結果文字不會被蓋掉。
+function showBusyHint(statusEl, busy) {
+  const hint = meetingBusyHint();
+  if (!busy && hint && (!statusEl.textContent || statusEl.dataset.hint === '1')) {
+    statusEl.textContent = hint;
+    statusEl.dataset.hint = '1';
+  } else if (!hint && statusEl.dataset.hint === '1') {
+    statusEl.textContent = '';
+    statusEl.dataset.hint = '';
+  } else if (busy) {
+    statusEl.dataset.hint = '';
+  }
 }
 function scrollToMinutes() {
   const target = document.getElementById('secMinutes') || el.minutes;
@@ -2061,14 +2081,17 @@ let polishBusy = false;
 function syncPolishBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
   el.polishBox.hidden = !has;
-  el.polishFixBtn.disabled = !has || polishBusy;
-  el.polishRewriteBtn.disabled = !has || polishBusy;
+  const blocked = !has || polishBusy || !!meetingBusyHint();
+  el.polishFixBtn.disabled = blocked;
+  el.polishRewriteBtn.disabled = blocked;
   if (!has && !polishBusy) {
     el.polishText.textContent = '';
     el.polishChanges.textContent = '';
     el.polishStatus.textContent = '';
   }
+  if (has) showBusyHint(el.polishStatus, polishBusy);
 }
+document.addEventListener('ln-state', syncPolishBox);
 if (el.transcript) {
   new MutationObserver(syncPolishBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
 }
@@ -2164,12 +2187,14 @@ const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: 
 function syncRefineBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
   el.refineBox.hidden = !has;
-  el.refineBtn.disabled = !has || refineBusy || !!refineUnavailable;
+  el.refineBtn.disabled = !has || refineBusy || !!refineUnavailable || !!meetingBusyHint();
   if (!has && !refineBusy) {
     el.refineText.textContent = '';
     el.refineStatus.textContent = refineUnavailable ? '這台裝置無法使用：' + refineUnavailable : '';
   }
+  if (has && !refineUnavailable) showBusyHint(el.refineStatus, refineBusy);
 }
+document.addEventListener('ln-state', syncRefineBox);
 if (el.transcript) {
   new MutationObserver(syncRefineBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
 }

@@ -1782,7 +1782,7 @@ class DemoPolishRequest(BaseModel):
 
 # 潤稿、高精度逐字稿都是背景工作（single_job.SingleJob）：一小時的會議潤稿約 22 段，Hailo 每段 60–95 秒，
 # 同步回應一定超過前端逾時。狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）。
-from single_job import SingleJob  # noqa: E402
+from single_job import SingleJob, meeting_busy_reason  # noqa: E402
 
 _polish_job = SingleJob("polish")
 _refine_job = SingleJob("refine")
@@ -1793,12 +1793,14 @@ _JOB_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
 async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
     """啟動 LLM 潤稿背景工作 (待辦 #11)，立即回傳狀態；進度與結果用 GET /api/polish 查詢。
 
-    錄音中回 409；同時只跑一個；錄音一開始就在段落之間停下 (state=stopped，其餘段落保留原文)。
+    錄音中或會議紀要生成中回 409；同時只跑一個；錄音一開始就在段落之間停下 (state=stopped，其餘段落保留原文)。
     """
     from voice_streaming import is_any_recording_active
+    from meeting_minutes import minutes_manager
     from transcript_polish import MODES, polish_transcript, split_chunks
-    if is_any_recording_active():
-        raise HTTPException(status_code=409, detail="錄音中不可潤稿，請錄音結束後再試")
+    busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
+    if busy:
+        raise HTTPException(status_code=409, detail=busy)
     if req.mode not in MODES:
         raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
     if not (req.text or "").strip():
@@ -1830,14 +1832,15 @@ class RefineRequest(BaseModel):
 async def post_refine(req: RefineRequest) -> Dict[str, Any]:
     """高精度逐字稿 (大改第 2、3 項)：錄音結束後用 SenseVoice 重新辨識整段錄音並分說話人 (CPU，背景工作)。
 
-    錄音中回 409；sherpa-onnx 或模型不在回 503；錄音檔不在 (例如服務重啟後 RAM 磁碟已清空) 回 404。
+    錄音中或會議紀要生成中回 409；sherpa-onnx 或模型不在回 503；錄音檔不在 (例如服務重啟後 RAM 磁碟已清空) 回 404。
     處理中一開始錄音就停下 (state=stopped)。進度與結果用 GET /api/refine 查詢。
     """
     from voice_streaming import is_any_recording_active
     from meeting_minutes import minutes_manager
     import refine_transcript
-    if is_any_recording_active():
-        raise HTTPException(status_code=409, detail="錄音中不可執行，請錄音結束後再試")
+    busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
+    if busy:
+        raise HTTPException(status_code=409, detail=busy)
     if _refine_job.running:
         raise HTTPException(status_code=409, detail="高精度逐字稿正在處理中，請稍候")
     reason = refine_transcript.check_available()

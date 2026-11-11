@@ -72,3 +72,13 @@ def test_runner_exception_becomes_error_state_and_job_can_restart():
         assert (await _wait_finished(job))["state"] == "done"
 
     asyncio.run(scenario())
+
+
+def test_meeting_busy_reason_blocks_recording_and_processing():
+    from single_job import meeting_busy_reason
+
+    assert meeting_busy_reason(True, "done") is not None
+    assert meeting_busy_reason(False, "recording") is not None
+    assert "紀要" in meeting_busy_reason(False, "processing")
+    for state in ("idle", "done", "completed", "error", None):
+        assert meeting_busy_reason(False, state) is None
