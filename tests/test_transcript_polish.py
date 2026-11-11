@@ -67,6 +67,14 @@ def test_accept_homophone_edits_never_touches_speaker_labels():
     assert st == {"accepted": 1, "rejected": 1}
 
 
+def test_accept_homophone_edits_rejects_insertions_at_line_or_chunk_end():
+    src = "說話人3：所以我們在運\n說話人1：動激觸過程。因為畢竟是老師。"
+    dst = "說話人3：所以我們在運動\n說話人1：動激觸過程。因為畢竟是老師。還"
+    out, stats = tp.accept_homophone_edits(src, dst, tp.protected_spans(src))
+    assert out == src
+    assert stats == {"accepted": 0, "rejected": 2}
+
+
 def test_accept_homophone_edits_keeps_original_layout():
     out, st = tp.accept_homophone_edits("第一行\n第二行", "第一行第二行")
     assert out == "第一行\n第二行" and st == {"accepted": 0, "rejected": 0}
