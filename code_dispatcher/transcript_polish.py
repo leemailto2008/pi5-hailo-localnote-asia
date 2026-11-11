@@ -213,6 +213,26 @@ def cut_like(src_lines: Sequence[str], out: str) -> List[str]:
     return [dst[a:b] for a, b in zip(cuts, cuts[1:])]
 
 
+def revert_byte_slips(src: str, out: str) -> Tuple[str, int]:
+    """把模型輸出裡「同一個 64 字 Unicode 區塊的單字替換」改回原字，回傳 (新文字, 還原字數)。
+    這類替換的 UTF-8 只差最後一個位元組，是模型逐位元組輸出罕用字時出錯，不是改字：11-11 Hailo qwen3:1.7b 實錄 10 分
+    「外殼」(E6 AE BC) 兩次變「外殠」(E6 AE A0)、一次變「外殔」(E6 AE 94)，事實召回因此掉 1 個。
+    同一批 11 份重新潤稿輸出共 35 處單字替換，只有這 3 處同區塊，其餘 32 處（成→程、體→題、提→題…）都不同區塊。"""
+    pieces: List[str] = []
+    reverted = 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, out, autojunk=False).get_opcodes():
+        seg = out[j1:j2]
+        if tag == "replace" and i2 - i1 == j2 - j1:
+            chars = list(seg)
+            for k, (a, b) in enumerate(zip(src[i1:i2], seg)):
+                if a != b and _CJK_RE.match(a) and _CJK_RE.match(b) and ord(a) >> 6 == ord(b) >> 6:
+                    chars[k] = a
+                    reverted += 1
+            seg = "".join(chars)
+        pieces.append(seg)
+    return "".join(pieces), reverted
+
+
 def _rewrite_length_ok(src: str, out: str) -> bool:
     """擋掉模型截斷或亂加內容：輸出長度須落在原文的 0.5 倍到 1.5 倍 (+20 字) 之間。"""
     return 0.5 * len(src) <= len(out) <= 1.5 * len(src) + 20
@@ -277,6 +297,8 @@ async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
+    out, slips = revert_byte_slips(src, out)
+    stats["reverted_chars"] += slips
     if not _rewrite_length_ok(src, out):
         stats["rejected_chunks"] += 1
         return chunk
@@ -324,6 +346,7 @@ async def polish_transcript(
         "rejected_chunks": 0,
         "fact_rejected_chunks": 0,
         "rejected_lines": 0,
+        "reverted_chars": 0,
         "accepted_edits": 0,
         "rejected_edits": 0,
         "stopped": False,

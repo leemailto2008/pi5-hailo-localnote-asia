@@ -2270,6 +2270,7 @@ function renderPolishResult(job, mode) {
   if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
   if (res.fact_rejected_chunks) notes.push(`${res.fact_rejected_chunks} 段改到數字，已保留原文`);
   if (res.rejected_lines) notes.push(`${res.rejected_lines} 行改到數字或長度異常，已保留原文`);
+  if (res.reverted_chars) notes.push(`${res.reverted_chars} 個字疑似模型輸出亂碼，已改回原字`);
   if (res.rejected_edits) notes.push(`模型另有 ${res.rejected_edits} 處較大的改動未採用（只收短的替換與補字）`);
   const secs = job.elapsed ? `，${Math.round(job.elapsed)} 秒` : '';
   z.status.textContent = `完成：${res.chunks} 段${secs}；${res.segments ? marks : '（舊版結果沒有標色資料）'}` + (notes.length ? `；${notes.join('；')}` : '');

@@ -266,6 +266,20 @@ def test_polish_rewrite_keeps_only_the_line_whose_number_changed(monkeypatch):
     assert res["rejected_lines"] == 1
 
 
+def test_revert_byte_slips_restores_same_block_replacements_only():
+    # 殼 E6 AE BC → 殠 E6 AE A0（只差最後一個位元組）改回；成→程、體→題 是真的改字，保留。
+    out, n = tp.revert_byte_slips("外殼刮傷，行成4天，議體", "外殠刮傷，行程4天，議題")
+    assert out == "外殼刮傷，行程4天，議題"
+    assert n == 1
+
+
+def test_polish_rewrite_reverts_byte_slips(monkeypatch):
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "客訴主要是外殔刮傷。\n週五回報。"))
+    res = _run(tp.polish_transcript("說話人1：客訴主要是外殼刮傷。\n說話人2：週五回報。", "rewrite", source="refine"))
+    assert res["polished"] == "說話人1：客訴主要是外殼刮傷。\n說話人2：週五回報。"
+    assert res["reverted_chars"] == 1
+
+
 def test_output_timeout_grows_with_output_budget(monkeypatch):
     seen = []
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 500, seen))
