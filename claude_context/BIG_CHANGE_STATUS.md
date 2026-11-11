@@ -109,6 +109,40 @@
   - ALSA 只有 PCM Playback Switch／Volume、Mic Capture Switch／Volume。USB ID 8888:1234（非正式廠商 ID）；核心警告「Unlikely big volume range (=999), cval->res is probably wrong」，PCM 原始值 0–999、Mic 0–3996。插上時預設 PCM 0、Mic 3932/3780，WirePlumber 隨即設為 999／3996。
   - 喇叭→GS3 麥克風自測：PCM {0,250,500,750,999} × Mic {0,1000,2000,3000,3996}，1 kHz 測試音全部偵測不到（1 kHz 相對鄰頻 −2.2～+1.1 dB）。Mic 0 為數位靜音；Mic 1000–3000 底噪都是 −76.7 dBFS（不隨增益變）。使用者敲麥克風、講話時峰值只到 −39／−45 dBFS。結論：類比輸入幾乎沒有訊號；喇叭端無法用麥克風自測。
   - 推測（未驗證）：兩支 3.5 mm 插頭插反，或插在 4 極孔；或 GS3 機身的喇叭／麥克風靜音鍵、音量轉盤（產品資料有，Pi 看不到）。已請使用者現場檢查。10:25:44 起循環播放語音最多 30 分鐘，麥克風每秒記錄於 Pi /tmp/gs3_meter_cont.log；停止：touch /dev/shm/gs3_stop 後 pkill -x pw-play。
+  - 10:37 解決：使用者把 Pi 移到關門的小房間、調大 GS3 硬體音量、Pi 重開機。之後 1 kHz 相對鄰頻 +21.3 dB，麥克風 −23～−30 dBFS，15 秒錄音的 SenseVoice 逐字稿與正在播的會議內容一致。三個動作中是哪一個修好的未確定（推測硬體音量）。
+  - 換 USB 口時 PipeWire 會把播放／錄音串流改接到預設裝置（藍牙耳麥）；自測腳本改用 pw-play／pw-record 加 node.dont-fallback／node.dont-reconnect。
+
+### 2026-11-11 GS3 接進系統、聲學實測、ASR 比較、逐句分說話人（使用者 10:43 指示：GS3 白天也可整天測；SenseVoice／CAM++ 深入改良並與 Whisper 比較）
+- 系統整合（6ba1c9d，部署 .228 10:58，備份 20261111_105806）：沒有藍牙耳麥時錄 USB 麥克風；偏好 bluetooth／usb 存 data/mic_preference.json；
+  GET/POST /api/config/mic；前端「🎙️ 錄音麥克風」切換鈕（Playwright 實點來回切換正常）。
+  正式路徑實測（不用 ln_force_source，偏好 usb）：log「偏好 USB 麥克風：alsa_input.usb-GS3…」，1 分鐘會議 CER 0.2458、事實召回 0.818；測完改回 bluetooth。
+- e2e 聲學模式（a5a727e）：--play-sink／--source。GS3 聲學 e2e 全部門檻 PASS：
+  | 會議 | Hailo 即時 CER／事實 | SenseVoice CER／事實 | 紀要回顧召回／議題覆蓋 | 紀要延遲 |
+  |---|---|---|---|---|
+  | 5 分（m_1794365242） | 0.2206／0.896 | 0.1812／0.881 | 1.0／1.0 | 129 s |
+  | 10 分（m_1794367149） | 0.2555／0.807 | 0.1915／0.864 | 0.833／1.0 | 80 s |
+  錄音相對原檔延遲 1.62–1.64 s（互相關估計，/home/pi/ln_e2e/acoustic_gs3/shift_fixture.py），說話人評分用平移後的 fixture。
+- ASR 比較（5 分會議，Pi 5，compare_asr.py；faster-whisper 參數同 voice_pipeline 的 CPU 路徑，beam 5 另加）：
+  | 引擎 | 乾淨 WAV CER | GS3 聲學 CER | RTF |
+  |---|---|---|---|
+  | SenseVoice small int8 | 0.163 | 0.181 | 0.05 |
+  | faster-whisper small int8 beam 5 | 0.178 | 0.182 | 0.65 |
+  | faster-whisper small int8 beam 1 | 0.266 | 0.212 | 0.44 |
+  | Hailo Whisper-Small 即時（NPU） | 未量（11-10 數位 10 分 0.2265） | 0.221 | CPU 0 |
+  結論：SenseVoice 準確度最好或持平、速度快 9–13 倍；維持「錄音中 Hailo Whisper、錄音後 SenseVoice」。
+- 分說話人改為逐句法（DIARIZE_METHOD=sentence）：每句（SenseVoice VAD 句子，≥ 1.0 s）算 CAM++ 嵌入、sherpa FastClustering 門檻 0.6；短句借時間上最近的長句。
+  句子級正確率（一對一對應，.cc_scratch 外的 /home/pi/ln_e2e/sec_test、acoustic_gs3 腳本）：
+  | 音訊 | pyannote（舊） | 逐句法 0.6／1.0 s |
+  |---|---|---|
+  | 合成 5／15／30 分（x86） | 86.4／76.4／92.9% | 100／100／100%（4 人） |
+  | 合成 60 分（Pi） | 96.5%，6 人 | 100%，4 人（門檻 0.5 那輪；最終參數見下） |
+  | GS3 實錄 5 分 | 90.0%，4 人 | 100%，4 人 |
+  | GS3 實錄 10 分 | 84.1%，5 人 | 96.6%，5 人 |
+  耗時（Pi）：5 分 5.4 s（pyannote 67 s）、10 分 10.6 s（139 s）、60 分 74 s（824 s）。
+  門檻掃描：合成會議 0.65 起兩個相近女聲（HsiaoChen／HsiaoYu）併成一人；實錄 0.5 分成 8–12 人。0.6 是兩者都 ≥ 96% 的唯一值，邊界窄。
+  其他嵌入模型（逐句法，同資料）：ERes2Net base 合成 ≤ 0.7 正確、實錄 10 分需 ≥ 0.75，沒有共同區間；ERes2NetV2、ERes2Net large、CAM++ zh_en advanced 合成區間不比 CAM++ 寬；
+  WeSpeaker ResNet34-LM 實錄 74–77%。嵌入先減會議平均再分群：實錄大幅變差，不採用。小群併入大群（< 5% 時長）：會把只講一行的第 4 人併掉，不採用。
+  限制：逐句法切不開同一句內換人（VAD 停頓 < 0.25 s）；合成資料沒有搶話，真人會議未驗證。PI5_DIARIZE_METHOD=pyannote 可切回。
 
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
@@ -150,7 +184,10 @@
   - 未播放、未錄音、未跑 /api/refine；未改程式、未部署、未重啟、未 commit；未發送任何權限請求。無新進度，本輪不回報。排程仍啟用。
 
 ## 工作規則
-- 白天（07:00–19:00）：只做數位工作（pytest、離線重放、合成資料 E2E、程式與文件）；不放音、不用藍牙耳麥。
+- 白天（07:00–19:00）：只做數位工作（pytest、離線重放、合成資料 E2E、程式與文件）；不用 PC 喇叭放音、不用藍牙耳麥。
+- 例外（2026-11-11 10:43 使用者指定）：.228 上的 USB 音效卡 GS3（喇叭＋麥克風，放在關門的小房間）白天也可以整天測。
+  聲學 e2e：tools/e2e/run_suite.py --play-sink alsa_output.usb-GS3_GS3_20180508-00.analog-stereo --source alsa_input.usb-GS3_GS3_20180508-00.analog-stereo；
+  Pi 上的包裝腳本 /home/pi/ln_e2e/acoustic_gs3/run_acoustic.sh <分鐘> <repo 目錄>（e2e → 存錄音 → /api/refine → 兩套逐字稿評分）。
 - 錄音或處理中（/api/status 的 state 為 recording 或 processing）：Pi 上不跑任何評估、不部署、不重啟。
 - 部署前一律 commit；用 Desktop Commander 的 Windows git 做 add／commit。累積 3–5 個已驗證 commit 才推送。
 - 不做刪除，不送需使用者確認的權限請求（包括內建瀏覽器的網站授權；要看前端用 PC 上的 Playwright 無頭模式）。
@@ -211,4 +248,11 @@
   - #1 聲學實測：白天不做（須待 19:00 後）；本輪未呼叫 /api/bt、未放音、未用耳麥。#2–#4 已完成，#5 待使用者決定；清單內無剩餘可做的數位改善，本輪未改程式、未跑 pytest、未部署。
   - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 curl 與 SSH。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
   - git：工作區另有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入；本輪只記錄本檔。
+  - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
+
+- 2026-11-11 11:25 排程輪次（台北，白天窗）：互動鎖無（標頭無該行）。Pi /api/status state=recording（job m_1794367149，錄音進度 61%，eta 約 243 s）→ 本輪不在 Pi 上跑評估、不部署、不重啟。
+  - Pi ps 觀察：另有一個 run_suite.py --minutes 10 --no-fail --play-sink alsa_output.usb-GS3… --source alsa_input.usb-GS3…（輸出 /home/pi/ln_e2e/acoustic_gs3/20261111_111905_10min，11:19:05 起），與上述錄音同時進行。非本輪啟動，來源未查證（可能為使用者手動測試）；本輪未終止、未干預。pw-play 無程序。
+  - #1 聲學實測：白天（07:00–19:00）不做，GS3 白天條款只在 Pi 非錄音時才適用；本輪未呼叫 /api/bt、未放音、未用耳麥。
+  - 數位工作：清單 #2–#4 已完成，#5 待使用者決定，無剩餘可做的數位改善；本輪未改程式、未跑 pytest、未部署、未 commit。
+  - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
   - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
