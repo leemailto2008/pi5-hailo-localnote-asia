@@ -1410,7 +1410,7 @@ async function handleStatusUpdate(st) {
   // 完整逐字稿區只放 ASR 原文 (transcript_live)；transcript 是整理＋規則修正後給紀要用的版本 (舊後端只有 transcript)。
   const liveText = st.transcript_live || st.transcript;
   if (st.metrics && st.metrics.stt_engine !== undefined) renderTranscriptInfo(st.metrics);
-  if (liveText && (el.transcriptBox.hidden || !el.transcriptBox.open || el.transcript.innerText !== liveText)) {
+  if (liveText && (el.transcriptBox.hidden || !el.transcriptBox.open || plainText(el.transcript) !== liveText)) {
     el.transcriptBox.hidden = false;
     el.transcriptBox.open = true;
     const cursor = (st.phase === 'transcribe') ? ' <span class="streaming-cursor"></span>' : '';
@@ -2193,7 +2193,17 @@ function clearPolishZone(z) {
 // 使用者自己點過就照他選的。
 let polishSrcTouched = false;
 const POLISH_SRC_LABEL = { refine: '高精度逐字稿（SenseVoice）', live: '完整逐字稿（即時 ASR）' };
-function refinePlainText() { return (el.refineText && el.refineText.innerText || '').trim(); }
+// 卡片 (<details>) 收合時 innerText 會回傳空字串（11-11 Playwright 實測），所以不能用 innerText 判斷「有沒有逐字稿」或取潤稿來源。
+// 改從 DOM 取字：<br> 換回換行、拿掉打字游標，結果和展開時的 innerText 相同。
+function plainText(node) {
+  if (!node) return '';
+  const copy = node.cloneNode(true);
+  copy.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  copy.querySelectorAll('.streaming-cursor').forEach(c => c.remove());
+  return copy.textContent;
+}
+function transcriptPlainText() { return plainText(el.transcript).trim(); }
+function refinePlainText() { return (el.refineText && el.refineText.textContent || '').trim(); }
 function polishSource() { return el.polishSrcRefine.checked && refinePlainText() ? 'refine' : 'live'; }
 function syncPolishSource() {
   const hasRefine = !!refinePlainText();
@@ -2206,7 +2216,7 @@ function syncPolishSource() {
 el.polishSrcRefine.addEventListener('change', () => { polishSrcTouched = true; });
 el.polishSrcLive.addEventListener('change', () => { polishSrcTouched = true; });
 function syncPolishBox() {
-  const has = !!(el.transcript && el.transcript.innerText.trim());
+  const has = !!transcriptPlainText();
   el.polishBox.hidden = !has;
   syncPolishSource();
   const blocked = !has || polishBusy || !!meetingBusyHint();
@@ -2287,7 +2297,7 @@ async function pollJob(path, onRunning) {
 // mode：這次要啟動的模式；null = 頁面重新整理時接著顯示後端還在跑的工作（runningMode 是它的模式）。
 async function runPolish(mode, runningMode) {
   const source = polishSource();
-  const src = source === 'refine' ? refinePlainText() : (el.transcript.innerText || '').trim();
+  const src = source === 'refine' ? refinePlainText() : transcriptPlainText();
   if (mode && !src) { toast('沒有逐字稿可潤稿'); return; }
   const z = POLISH_UI[mode || runningMode] || POLISH_UI.fix;
   const label = z.btn.textContent;
@@ -2329,7 +2339,7 @@ let refineUnavailable = null;
 let pendingRefine = null;
 const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: '分說話人' };
 function syncRefineBox() {
-  const has = !!(el.transcript && el.transcript.innerText.trim());
+  const has = !!transcriptPlainText();
   el.refineBox.hidden = !has;
   el.refineBtn.disabled = !has || refineBusy || !!refineUnavailable || !!meetingBusyHint();
   if (!has && !refineBusy) {
@@ -2343,6 +2353,8 @@ function syncRefineBox() {
     renderRefine(job);
   }
   if (has && !refineUnavailable) showBusyHint(el.refineStatus, refineBusy);
+  // 高精度逐字稿有沒有內容會決定潤稿來源能不能選它（預設選它）。
+  syncPolishSource();
 }
 document.addEventListener('ln-state', syncRefineBox);
 // 會議整理完成後後端會自動跑高精度逐字稿 (AUTO_REFINE)：狀態變成 done 時看一下，在跑就接著顯示進度。
