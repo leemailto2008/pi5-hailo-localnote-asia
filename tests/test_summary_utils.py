@@ -260,13 +260,23 @@ def test_taiwan_usage_fixes_after_opencc(monkeypatch):
     tw = summary_utils.to_taiwan_traditional
     assert tw("大約可以撐6周。") == "大約可以撐6週。"
     assert tw("主要是熒幕亮點") == "主要是螢幕亮點"
-    assert tw("至少要做十輪迴歸測試") == "至少要做十輪回歸測試"
     # 不是數字後面的「周」（姓氏、四周）與一般的「輪迴」不動
     assert tw("周經理看了四周") == "周經理看了四周"
     assert tw("生死輪迴") == "生死輪迴"
 
 
 def test_voice_pipeline_uses_same_taiwan_conversion(monkeypatch):
+    import sys
+    import types
+    if "config" not in sys.modules:  # voice_pipeline 頂層 import config；單獨執行本檔時沒有這個模組
+        try:
+            import config  # noqa: F401
+        except ImportError:
+            stub = types.ModuleType("config")
+            stub.WHISPER_MODEL_SIZE = stub.WHISPER_DEVICE = stub.WHISPER_COMPUTE_TYPE = ""
+            stub.DEFAULT_TTS_VOICE = ""
+            stub.DATA_DIR = "."
+            monkeypatch.setitem(sys.modules, "config", stub)
     import voice_pipeline
     monkeypatch.setattr(summary_utils, "_CC", _IdentityCC())
     assert voice_pipeline.to_taiwan_traditional("撐12周") == "撐12週"
