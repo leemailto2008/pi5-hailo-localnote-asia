@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 MODEL_DIR = os.environ.get("PI5_SHERPA_MODEL_DIR", "/home/pi/models/sherpa")
 NUM_THREADS = int(os.environ.get("PI5_SHERPA_THREADS", "4"))
+# SenseVoice 語言：auto 每句自動判斷。2026-11-11 實測：中文合成會議 CER 與 zh 相當（5／10／15 分：auto 0.166／0.179／0.1858，zh 0.166／0.177／0.1875）；
+# 英文新聞夾中文廣告，zh 把英文段辨成亂碼中文，auto 英文段正常、中文廣告也正確。見 claude_context/BIG_CHANGE_STATUS.md。
+ASR_LANGUAGE = os.environ.get("PI5_SENSEVOICE_LANGUAGE", "auto")
 # 分群門檻：sherpa 預設 0.5 在 15 分鐘合成會議切出 8–10 人（實際 4 人）；0.7 在 5／10／15／30 分鐘都找到 4–5 人。
 CLUSTER_THRESHOLD = 0.7
 # 句子落在分段的空隙裡（分段模型會把句中停頓切掉）時，借用 1 秒內最近的說話人。
@@ -115,7 +118,7 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     import sherpa_onnx
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-        model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language="zh", use_itn=True
+        model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=ASR_LANGUAGE, use_itn=True
     )
     cfg = sherpa_onnx.VadModelConfig()
     cfg.silero_vad.model = model_path("vad")

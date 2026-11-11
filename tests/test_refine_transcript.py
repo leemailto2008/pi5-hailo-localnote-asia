@@ -139,3 +139,26 @@ def test_mixed_chinese_after_english_still_uses_fullwidth_comma():
     sentences = [Sentence(0.0, 1.0, "這次 release 延後", 1), Sentence(3.0, 4.0, "QA 下週再測", 1)]
     text, _ = rt.format_transcript(sentences)
     assert text == "說話人1：這次 release 延後，QA 下週再測"
+
+
+def test_transcribe_passes_auto_language_to_sensevoice(monkeypatch):
+    # 11-11：language="zh" 把英文會議辨成亂碼中文；預設改 auto。
+    import types
+
+    import pytest
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def from_sense_voice(**kwargs):
+        captured.update(kwargs)
+        raise _Stop()
+
+    fake = types.SimpleNamespace(OfflineRecognizer=types.SimpleNamespace(from_sense_voice=from_sense_voice))
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
+    with pytest.raises(_Stop):
+        rt.transcribe([])
+    assert rt.ASR_LANGUAGE == "auto"
+    assert captured["language"] == "auto"
