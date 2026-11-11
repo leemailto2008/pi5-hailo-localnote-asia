@@ -8,6 +8,21 @@ from typing import Dict, List, Optional
 # 小模型 (qwen3:1.7b) 的紀要偶爾混出簡體字：2026-10-29 檢查 228 的 29 份 e2e／實錄紀要，11 份含簡體 (应、许、条、温…)，
 # 例如「应商」讓議題關鍵字比對落空。逐字稿已由 Whisper 引擎轉成台灣繁體 (OpenCC s2twp)，紀要也走同一套轉換；沒有 OpenCC 時原樣輸出。
 _CC = None
+# OpenCC s2twp 之後的台灣用字修正（2026-11-11 SenseVoice 逐字稿錯誤分析，不是詞表）：
+# - 阿拉伯數字後的「周」：s2twp 會把「六周」轉成「六週」，SenseVoice ITN 輸出的「6周」卻不轉 →「6週」。
+# - s2twp 把「荧幕」轉成「熒幕」（「屏幕」才轉成「螢幕」），台灣用「螢幕」。
+# - 「十轮回归」被 s2twp 斷成「輪迴」＋「歸」→「輪迴歸」，改回「輪回歸」。
+# 量測（tools/e2e/scoring.py）：GS3 實錄 10／30／60 分 SenseVoice CER 0.1915／0.2061／0.2214 → 0.1890／0.2038／0.2188，
+# 事實召回 0.864／0.894／0.928 → 0.879／0.908／0.943；Hailo 即時（實錄 10／30／60）與乾淨合成 5／15／30 分同方向，沒有一份變差。
+_TW_DIGIT_WEEK_RE = re.compile(r"(?<=[0-9])周")
+_TW_FIXES = (("熒幕", "螢幕"), ("輪迴歸", "輪回歸"))
+
+
+def _taiwan_usage_fixes(text: str) -> str:
+    text = _TW_DIGIT_WEEK_RE.sub("週", text)
+    for wrong, right in _TW_FIXES:
+        text = text.replace(wrong, right)
+    return text
 
 
 def to_taiwan_traditional(text: str) -> str:
@@ -23,7 +38,7 @@ def to_taiwan_traditional(text: str) -> str:
     if not _CC:
         return text
     try:
-        return _CC.convert(text)
+        return _taiwan_usage_fixes(_CC.convert(text))
     except Exception:
         return text
 

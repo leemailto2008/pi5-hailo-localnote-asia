@@ -47,23 +47,12 @@ def get_whisper_model():
     return _whisper_model if _whisper_model is not False else None
 
 
-try:
-    from opencc import OpenCC
-    _opencc_converter = OpenCC('s2twp')
-except Exception:
-    _opencc_converter = None
-
-
 def to_taiwan_traditional(text: str) -> str:
-    """Normalize Chinese text to Taiwan Traditional standard using OpenCC."""
-    if not text:
-        return ""
-    if _opencc_converter:
-        try:
-            return _opencc_converter.convert(text)
-        except Exception:
-            pass
-    return text
+    """轉台灣繁體：與 summary_utils.to_taiwan_traditional 同一份實作（OpenCC s2twp＋台灣用字修正），
+    即時逐字稿（Hailo Whisper）與高精度逐字稿（SenseVoice）用字一致。"""
+    from summary_utils import to_taiwan_traditional as _to_tw
+
+    return _to_tw(text) if text else ""
 
 
 def is_silence_or_empty_audio(wav_path: str, rms_threshold: int = 80) -> bool:

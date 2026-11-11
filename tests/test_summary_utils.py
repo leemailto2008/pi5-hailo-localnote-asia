@@ -250,6 +250,29 @@ def test_long_minutes_notes_become_traditional(monkeypatch):
     assert "許經理" in out and "供應商" in out and "应" not in out
 
 
+class _IdentityCC:
+    def convert(self, text):
+        return text
+
+
+def test_taiwan_usage_fixes_after_opencc(monkeypatch):
+    monkeypatch.setattr(summary_utils, "_CC", _IdentityCC())
+    tw = summary_utils.to_taiwan_traditional
+    assert tw("大約可以撐6周。") == "大約可以撐6週。"
+    assert tw("主要是熒幕亮點") == "主要是螢幕亮點"
+    assert tw("至少要做十輪迴歸測試") == "至少要做十輪回歸測試"
+    # 不是數字後面的「周」（姓氏、四周）與一般的「輪迴」不動
+    assert tw("周經理看了四周") == "周經理看了四周"
+    assert tw("生死輪迴") == "生死輪迴"
+
+
+def test_voice_pipeline_uses_same_taiwan_conversion(monkeypatch):
+    import voice_pipeline
+    monkeypatch.setattr(summary_utils, "_CC", _IdentityCC())
+    assert voice_pipeline.to_taiwan_traditional("撐12周") == "撐12週"
+    assert voice_pipeline.to_taiwan_traditional("") == "" and voice_pipeline.to_taiwan_traditional(None) == ""
+
+
 def test_without_opencc_text_is_unchanged(monkeypatch):
     monkeypatch.setattr(summary_utils, "_CC", False)
     assert summary_utils.to_taiwan_traditional("供应商") == "供应商"
