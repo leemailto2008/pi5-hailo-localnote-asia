@@ -198,7 +198,9 @@ def split_labels(chunk: str) -> Tuple[List[str], List[str]]:
 
 def cut_like(src_lines: Sequence[str], out: str) -> List[str]:
     """把模型輸出 out 切回和 src_lines 一樣的行數：用 difflib 對齊（原文各行接起來 ↔ 輸出去掉換行），
-    在原文換行處對應的位置下刀，切點靠向 ±6 字內最近的標點後面。
+    在原文換行處對應的位置下刀；原文那行以標點結尾時，切點靠向 ±6 字內最近的標點後面。
+    原文那行沒有標點結尾（高精度稿常在句中換人）就照對齊位置切，不靠標點：11-11 使用者實錄靠標點時
+    「…公時寬，所以你會」的「所以你會」被搬到下一位說話人那行。
     小模型重寫時會自己拆開或合併行（11-11 實測 Hailo qwen3:1.7b 18 行變 20 行，在議題轉換處拆開），只照輸出的換行對不起來。"""
     src = "".join(src_lines)
     dst = "".join(part.strip() for part in out.split("\n"))
@@ -211,7 +213,9 @@ def cut_like(src_lines: Sequence[str], out: str) -> List[str]:
     for line in src_lines[:-1]:
         pos += len(line)
         c = max(amap[pos], cuts[-1])
-        near = [j for j in range(max(cuts[-1] + 1, c - 6), min(len(dst), c + 6) + 1) if dst[j - 1] in _CUT_CHARS]
+        near = []
+        if line and line[-1] in _CUT_CHARS:
+            near = [j for j in range(max(cuts[-1] + 1, c - 6), min(len(dst), c + 6) + 1) if dst[j - 1] in _CUT_CHARS]
         cuts.append(min(near, key=lambda j: abs(j - c)) if near else c)
     cuts.append(len(dst))
     return [dst[a:b] for a, b in zip(cuts, cuts[1:])]

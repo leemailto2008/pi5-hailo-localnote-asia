@@ -254,6 +254,13 @@ def test_cut_like_follows_edits_and_merged_lines():
     assert tp.cut_like(src, out) == ["行程4天。", "預算抓12萬元。"]
 
 
+def test_cut_like_does_not_move_words_across_a_mid_sentence_speaker_change():
+    # 高精度稿常在句中換人：原文那行沒有標點結尾時，不能把切點拉到前面的逗號（會把「所以你會」搬給下一個人）。
+    src = ["塞到一兩百公時寬，所以你會", "走繞來繞走外觀，對你就會切啊。"]
+    out = "塞到一兩百公時寬，所以你會走繞來繞走外觀，你就會切。"
+    assert tp.cut_like(src, out) == ["塞到一兩百公時寬，所以你會", "走繞來繞走外觀，你就會切。"]
+
+
 def test_polish_rewrite_keeps_speaker_labels_out_of_the_model(monkeypatch):
     seen = []
     # 模型照實錄行為：沒有標籤、在議題轉換處把一行拆成兩行、順手修錯字。
