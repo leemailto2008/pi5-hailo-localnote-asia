@@ -61,6 +61,14 @@ MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。�
 # 原合成會議 5／15／30 分維持 100%（4 人）。改用 token 間隔 ≥ 0.35–0.45 s 也切，換人資料更好（82–94%）但原會議掉到 88–93%、分出 9–14 人，不採用。
 # 分群後再看長段（≥ WINDOW_SPLIT_MIN_S）：1.5 s 視窗、0.75 s 步進，每個視窗比對各群中心；連續 ≥ 2 個視窗屬於別人就在該處切開。
 # 同一批快速換人資料：77／70／70.5% → 92／90／95%（hop 0.5／need 3：90／91／96%；hop 1.0：89／89／94%）；原合成會議 5／15／30 分仍 100%。
+# 切開的片段要 ≥ PIECE_MIN_EMBED_S 才自己算嵌入，否則借同句的長片段；同句沒有長片段時整句當一個單位算嵌入（片段共用說話人）。
+# 2026-11-11 GS3 實錄 5／10 分：片段也用 1.0 s 時 frame 正確率 99.49／99.79%（「週五回報。」1.02 s 片段自己分群分錯；
+# 「3月8日／有一場／自安課程。」切成三段都短，後面的「名額20。」借到下一個人），改後 100／100%。
+# 調參（x86，實錄 5 分＋快速換人 fast10，皆含整句單位）：1.0 → 99.49／92.29、1.1 → 100／92.29、1.25 → 100／92.04、1.5 → 100／91.06、2.0 → 100／86.71。
+# 1.1 在實錄 60 分驗證失敗：99.86%、5 人（三個 1.1–1.2 s 的「週X回報。」片段字一樣，自成一群）；1.25 → 100%、4 人。
+# 1.25 全部資料：實錄 5／10／30／60 分 100／100／99.74／100%（片段 1.0 s 時 99.49／99.79／99.45／99.68%；未切段的舊法 100／100／99.74／100%），
+# 快速換人 fast10／fast15／mid10 92.0／90.1／96.2%（舊法 42／44／46%），乾淨合成 5／15／30 分 100%。
+PIECE_MIN_EMBED_S = 1.25
 WINDOW_S = 1.5
 WINDOW_HOP_S = 0.75
 WINDOW_SPLIT_MIN_S = 3.0
@@ -318,15 +326,43 @@ def merge_close_clusters(labels: Sequence[int], embeddings, min_cos: float) -> L
     return lab.tolist()
 
 
+def embedding_units(sentences: Sequence[Sentence]) -> Tuple[List[Tuple[float, float, List[int]]], List[int]]:
+    """決定要算嵌入的單位。回傳 (units, groups)：units = [(start, end, [句子索引])]，groups = 每句所屬的 VAD 句（cont 串）編號。
+    沒切開的句子 ≥ MIN_EMBED_S 自成一個單位；切開的句子裡 ≥ PIECE_MIN_EMBED_S 的片段各自一個單位；
+    切開後沒有夠長的片段時，整句（≥ MIN_EMBED_S）當一個單位，所有片段共用它的說話人。"""
+    groups: List[int] = []
+    g = -1
+    for s in sentences:
+        g += 0 if s.cont else 1
+        groups.append(g)
+    members: Dict[int, List[int]] = {}
+    for i, gi in enumerate(groups):
+        members.setdefault(gi, []).append(i)
+    units: List[Tuple[float, float, List[int]]] = []
+    for idx in members.values():
+        first, last = sentences[idx[0]], sentences[idx[-1]]
+        if len(idx) == 1:
+            if first.end - first.start >= MIN_EMBED_S:
+                units.append((first.start, first.end, idx))
+            continue
+        longs = [i for i in idx if sentences[i].end - sentences[i].start >= PIECE_MIN_EMBED_S]
+        units.extend((sentences[i].start, sentences[i].end, [i]) for i in longs)
+        if not longs and last.end - first.start >= MIN_EMBED_S:
+            units.append((first.start, last.end, idx))
+    units.sort(key=lambda u: u[0])
+    return units, groups
+
+
 def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = None,
                       on_progress: ProgressFn = None) -> bool:
-    """逐句分說話人：每句（≥ MIN_EMBED_S）算一個 CAM++ 嵌入，FastClustering 分群後寫入 sentence.speaker；
-    太短的句子借時間上最近的長句。被 should_stop 中止時回傳 False（speaker 維持 None）。"""
+    """逐句分說話人：每個單位（見 embedding_units）算一個 CAM++ 嵌入，FastClustering 分群後寫入 sentence.speaker；
+    不屬於任何單位的短片段先借同一 VAD 句內時間上最近的單位，同句沒有才借全場最近的單位。
+    被 should_stop 中止時回傳 False（speaker 維持 None）。"""
     import numpy as np
     import sherpa_onnx
 
-    long_idx = [i for i, s in enumerate(sentences) if s.end - s.start >= MIN_EMBED_S]
-    if not long_idx:
+    units, groups = embedding_units(sentences)
+    if not units:
         for s in sentences:
             s.speaker = 0
         return True
@@ -335,42 +371,36 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
         raise RefineError("說話人嵌入模型設定無效（請檢查模型檔）")
     extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
     embeddings = []
-    for k, i in enumerate(long_idx):
+    for k, (a, b, _) in enumerate(units):
         if k % 20 == 0:
             if should_stop is not None and should_stop():
                 return False
             if on_progress is not None:
-                on_progress(0.6 * k / len(long_idx))
-        s = sentences[i]
+                on_progress(0.6 * k / len(units))
         stream = extractor.create_stream()
-        stream.accept_waveform(SAMPLE_RATE, samples[int(s.start * SAMPLE_RATE):int(s.end * SAMPLE_RATE)])
+        stream.accept_waveform(SAMPLE_RATE, samples[int(a * SAMPLE_RATE):int(b * SAMPLE_RATE)])
         stream.input_finished()
         embeddings.append(extractor.compute(stream))
     clustering = sherpa_onnx.FastClustering(
         sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SENTENCE_CLUSTER_THRESHOLD))
     emb = np.ascontiguousarray(np.array(embeddings, dtype=np.float32))
     labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
-    for i, label in zip(long_idx, labels):
-        sentences[i].speaker = int(label)
-    # 太短的片段：同一個 VAD 句子切出來的（cont 串在一起）先借同句裡時間上最近的已分群片段；
-    # 同句沒有才借全場時間上最近的長句。（GS3 實錄上，切出來的短尾巴借全場最近的長句會借到下一個人，11-11。）
-    group, groups = -1, []
-    for s in sentences:
-        group += 0 if s.cont else 1
-        groups.append(group)
-    long_in_group: Dict[int, List[int]] = {}
-    for i in long_idx:
-        long_in_group.setdefault(groups[i], []).append(i)
-    mids = np.array([(sentences[i].start + sentences[i].end) / 2 for i in long_idx])
+    for (_, _, idx), label in zip(units, labels):
+        for i in idx:
+            sentences[i].speaker = int(label)
+    units_in_group: Dict[int, List[int]] = {}
+    for u, (_, _, idx) in enumerate(units):
+        units_in_group.setdefault(groups[idx[0]], []).append(u)
+    mids = np.array([(a + b) / 2 for a, b, _ in units])
     for n, s in enumerate(sentences):
         if s.speaker is None:
             mid = (s.start + s.end) / 2
-            same = long_in_group.get(groups[n])
+            same = units_in_group.get(groups[n])
             if same:
-                j = min(same, key=lambda i: abs((sentences[i].start + sentences[i].end) / 2 - mid))
+                u = min(same, key=lambda v: abs(mids[v] - mid))
             else:
-                j = long_idx[int(np.argmin(np.abs(mids - mid)))]
-            s.speaker = sentences[j].speaker
+                u = int(np.argmin(np.abs(mids - mid)))
+            s.speaker = int(labels[u])
 
     unit = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-12)
     lab_arr = np.asarray(labels)
