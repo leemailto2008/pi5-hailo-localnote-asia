@@ -1890,8 +1890,9 @@ async def post_refine(req: RefineRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="找不到這場會議的錄音檔（服務重啟後記憶體磁碟會清空）")
 
     def on_progress(phase: str, frac: float) -> None:
-        # 進度權重依 Pi 實測耗時：辨識約佔 1/6，分說話人約 5/6。
-        overall = frac / 6 if phase == "asr" else (1 / 6 + frac * 5 / 6 if phase == "diarize" else 0.0)
+        # 進度權重依 Pi 實測耗時（逐句分說話人，11-11）：辨識約佔 70%，分說話人約 30%
+        # （5 分鐘 15.3 s／5.4 s，60 分鐘 182 s／74 s）。
+        overall = frac * 0.7 if phase == "asr" else (0.7 + frac * 0.3 if phase == "diarize" else 0.0)
         _refine_job.update(phase=phase, progress=round(overall * 100))
 
     async def runner(job: SingleJob) -> Dict[str, Any]:

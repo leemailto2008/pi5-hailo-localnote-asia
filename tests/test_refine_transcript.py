@@ -166,3 +166,76 @@ def test_transcribe_passes_auto_language_to_sensevoice(monkeypatch):
         rt.transcribe([])
     assert rt.ASR_LANGUAGE == "auto"
     assert captured["language"] == "auto"
+
+def _fake_sherpa(monkeypatch):
+    """假的 sherpa_onnx：嵌入 = 該句第一個樣本值；分群 = 嵌入第一維取整。"""
+    import types
+
+    import numpy as np
+
+    class Stream:
+        def accept_waveform(self, sr, x):
+            self.x = np.asarray(x)
+
+        def input_finished(self):
+            pass
+
+    class Extractor:
+        def __init__(self, config):
+            pass
+
+        def create_stream(self):
+            return Stream()
+
+        def compute(self, stream):
+            return [float(stream.x[0]), 0.0]
+
+    class Config:
+        def __init__(self, **kw):
+            pass
+
+        def validate(self):
+            return True
+
+    class Clustering:
+        def __init__(self, config):
+            pass
+
+        def __call__(self, feats):
+            return [int(round(f[0])) for f in feats]
+
+    fake = types.SimpleNamespace(SpeakerEmbeddingExtractorConfig=Config, SpeakerEmbeddingExtractor=Extractor,
+                                 FastClusteringConfig=lambda **kw: kw, FastClustering=Clustering)
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
+
+
+def _samples(spans):
+    import numpy as np
+    x = np.zeros(4 * rt.SAMPLE_RATE, dtype=np.float32)
+    for start, end, value in spans:
+        x[int(start * rt.SAMPLE_RATE):int(end * rt.SAMPLE_RATE)] = value
+    return x
+
+
+def test_diarize_sentences_clusters_long_sentences_and_short_ones_borrow_nearest(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    x = _samples([(0.0, 1.0, 0.0), (1.1, 1.3, 1.0), (2.0, 3.0, 1.0)])
+    sents = [Sentence(0.0, 1.0, "甲說"), Sentence(1.1, 1.3, "好"), Sentence(2.0, 3.0, "乙說")]
+    assert rt.diarize_sentences(x, sents) is True
+    # 「好」只有 0.2 s，不算嵌入，借時間上最近的長句（甲）
+    assert [s.speaker for s in sents] == [0, 0, 1]
+
+
+def test_diarize_sentences_stop_leaves_speakers_empty(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    x = _samples([(0.0, 1.0, 0.0)])
+    sents = [Sentence(0.0, 1.0, "甲說")]
+    assert rt.diarize_sentences(x, sents, should_stop=lambda: True) is False
+    assert sents[0].speaker is None
+
+
+def test_diarize_sentences_all_short_is_one_speaker(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    sents = [Sentence(0.0, 0.3, "好"), Sentence(1.0, 1.2, "對")]
+    assert rt.diarize_sentences(_samples([]), sents) is True
+    assert [s.speaker for s in sents] == [0, 0]

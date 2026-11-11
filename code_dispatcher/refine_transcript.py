@@ -38,7 +38,16 @@ NUM_THREADS = int(os.environ.get("PI5_SHERPA_THREADS", "4"))
 # SenseVoice 語言：auto 每句自動判斷。2026-11-11 實測：中文合成會議 CER 與 zh 相當（5／10／15 分：auto 0.166／0.179／0.1858，zh 0.166／0.177／0.1875）；
 # 英文新聞夾中文廣告，zh 把英文段辨成亂碼中文，auto 英文段正常、中文廣告也正確。見 claude_context/BIG_CHANGE_STATUS.md。
 ASR_LANGUAGE = os.environ.get("PI5_SENSEVOICE_LANGUAGE", "auto")
-# 分群門檻：sherpa 預設 0.5 在 15 分鐘合成會議切出 8–10 人（實際 4 人）；0.7 在 5／10／15／30 分鐘都找到 4–5 人。
+# 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
+# pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
+# 2026-11-11 逐句正確率（門檻 0.6、MIN_EMBED_S 1.0）：合成會議 5／15／30 分 100%（4 人；pyannote 86／76／93%）；
+# GS3 喇叭→麥克風實錄 5／10 分 100%／96.6%（pyannote 90.0%／84.1%）。門檻 0.5 實錄會分太多人，0.65 起合成會議兩個相近女聲會併成一人。
+# Pi 上分說話人耗時：5 分鐘 6.5 s（pyannote 67 s）、60 分鐘 74 s（pyannote 824 s）。
+# 逐句法無法切開同一句內換人（VAD 停頓 < 0.25 s 的搶話），必要時用環境變數切回 pyannote。
+DIARIZE_METHOD = os.environ.get("PI5_DIARIZE_METHOD", "sentence")
+SENTENCE_CLUSTER_THRESHOLD = 0.6
+MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。」、實錄的殘響），借時間上最近的長句的說話人
+# pyannote 流程的分群門檻：sherpa 預設 0.5 在 15 分鐘合成會議切出 8–10 人（實際 4 人）；0.7 在 5／10／15／30 分鐘都找到 4–5 人。
 CLUSTER_THRESHOLD = 0.7
 # 句子落在分段的空隙裡（分段模型會把句中停頓切掉）時，借用 1 秒內最近的說話人。
 NEAREST_TURN_MAX_GAP_S = 1.0
@@ -193,6 +202,48 @@ def diarize(samples, should_stop: StopFn = None, on_progress: ProgressFn = None)
     return [(r.start, r.end, r.speaker) for r in result]
 
 
+def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = None,
+                      on_progress: ProgressFn = None) -> bool:
+    """逐句分說話人：每句（≥ MIN_EMBED_S）算一個 CAM++ 嵌入，FastClustering 分群後寫入 sentence.speaker；
+    太短的句子借時間上最近的長句。被 should_stop 中止時回傳 False（speaker 維持 None）。"""
+    import numpy as np
+    import sherpa_onnx
+
+    long_idx = [i for i, s in enumerate(sentences) if s.end - s.start >= MIN_EMBED_S]
+    if not long_idx:
+        for s in sentences:
+            s.speaker = 0
+        return True
+    config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=model_path("embedding"), num_threads=NUM_THREADS)
+    if not config.validate():
+        raise RefineError("說話人嵌入模型設定無效（請檢查模型檔）")
+    extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
+    embeddings = []
+    for k, i in enumerate(long_idx):
+        if k % 20 == 0:
+            if should_stop is not None and should_stop():
+                return False
+            if on_progress is not None:
+                on_progress(k / len(long_idx))
+        s = sentences[i]
+        stream = extractor.create_stream()
+        stream.accept_waveform(SAMPLE_RATE, samples[int(s.start * SAMPLE_RATE):int(s.end * SAMPLE_RATE)])
+        stream.input_finished()
+        embeddings.append(extractor.compute(stream))
+    clustering = sherpa_onnx.FastClustering(
+        sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SENTENCE_CLUSTER_THRESHOLD))
+    labels = clustering(np.ascontiguousarray(np.array(embeddings, dtype=np.float32)))
+    for i, label in zip(long_idx, labels):
+        sentences[i].speaker = int(label)
+    mids = np.array([(sentences[i].start + sentences[i].end) / 2 for i in long_idx])
+    for s in sentences:
+        if s.speaker is None:
+            s.speaker = sentences[long_idx[int(np.argmin(np.abs(mids - (s.start + s.end) / 2)))]].speaker
+    if on_progress is not None:
+        on_progress(1.0)
+    return True
+
+
 def assign_speakers(sentences: List[Sentence], turns: Sequence[Turn]) -> None:
     """每句取重疊時間最長的說話人；沒有重疊就借 NEAREST_TURN_MAX_GAP_S 內最近的說話人。"""
     for s in sentences:
@@ -296,16 +347,24 @@ def refine(path: str, should_stop: StopFn = None,
                     "sentences": [asdict(s) for s in sentences]})
 
     t1 = time.time()
-    turns = diarize(samples, should_stop, lambda f: report("diarize", f))
+    if DIARIZE_METHOD == "pyannote":
+        turns = diarize(samples, should_stop, lambda f: report("diarize", f))
+        done = turns is not None
+        if done:
+            assign_speakers(sentences, turns)
+    else:
+        done = diarize_sentences(samples, sentences, should_stop, lambda f: report("diarize", f))
     out["diarize_s"] = round(time.time() - t1, 1)
-    if turns is None:
+    out["diarize_method"] = DIARIZE_METHOD
+    if not done:
         # 分說話人被打斷：仍交出辨識結果（不分人）。
+        for s in sentences:
+            s.speaker = None
         text, _ = format_transcript(sentences)
         out.update(stopped=True, phase="diarize", transcript=text, speakers=0,
                    sentences=[asdict(s) for s in sentences])
         return out
 
-    assign_speakers(sentences, turns)
     text, speakers = format_transcript(sentences)
     out.update(transcript=text, speakers=speakers, sentences=[asdict(s) for s in sentences])
     logger.info("[refine] %.0f s audio: asr %.1f s, diarize %.1f s, %d sentences, %d speakers",
