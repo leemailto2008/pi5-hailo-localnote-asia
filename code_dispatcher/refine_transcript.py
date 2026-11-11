@@ -96,6 +96,21 @@ MODEL_FILES = {
     "embedding": "campplus_zh_cn_common.onnx",
 }
 ENGINE_LABEL = "SenseVoiceSmall int8 + CAM++（sherpa-onnx，CPU）"
+
+
+def pipeline_labels() -> Dict[str, str]:
+    """網頁顯示用：這次高精度逐字稿實際用的 ASR／VAD／分說話人組合（數值取自本模組的設定，不另寫一份）。"""
+    if DIARIZE_METHOD == "pyannote":
+        diar = f"pyannote-3.0 分段＋CAM++ 嵌入＋FastClustering（門檻 {CLUSTER_THRESHOLD:g}）"
+    else:
+        diar = (f"CAM++ 逐句分群（門檻 {SENTENCE_CLUSTER_THRESHOLD:g}、群中心合併 {CENTROID_MERGE_COS:g}）"
+                f"＋滑動視窗找句內換人（{WINDOW_S:g} s 視窗、{WINDOW_HOP_S:g} s 步進）")
+    return {
+        "asr": f"SenseVoiceSmall int8（sherpa-onnx，CPU {NUM_THREADS} 執行緒，語言 {ASR_LANGUAGE}，ITN）",
+        "vad": f"Silero VAD（最短靜音 {VAD_MIN_SILENCE_S:g} s；分說話人另用 {FINE_VAD_MIN_SILENCE_S:g} s 找句內停頓）",
+        "diarize": diar,
+        "post": "OpenCC s2twp＋台灣用字修正",
+    }
 _PUNCT = "。！？!?，,、；;：:…"
 _ASCII_PUNCT = ".!?,;:"
 
@@ -578,7 +593,7 @@ def refine(path: str, should_stop: StopFn = None,
     report("load", 0.0)
     samples = load_audio(path)
     audio_s = len(samples) / SAMPLE_RATE
-    out: Dict[str, Any] = {"engine": ENGINE_LABEL, "audio_s": round(audio_s, 1), "stopped": False}
+    out: Dict[str, Any] = {"engine": ENGINE_LABEL, **pipeline_labels(), "audio_s": round(audio_s, 1), "stopped": False}
 
     t0 = time.time()
     sentences = transcribe(samples, should_stop, lambda f: report("asr", f))
@@ -681,7 +696,7 @@ async def run_in_subprocess(path: str, should_stop: StopFn = None,
         await asyncio.gather(stop_task, err_task, return_exceptions=True)
 
     if stopped:
-        out = dict(partial) if partial else {"engine": ENGINE_LABEL, "phase": "asr", "transcript": "",
+        out = dict(partial) if partial else {"engine": ENGINE_LABEL, **pipeline_labels(), "phase": "asr", "transcript": "",
                                               "speakers": 0, "sentences": []}
         out["stopped"] = True
         return out

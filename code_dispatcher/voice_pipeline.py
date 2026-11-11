@@ -11,7 +11,7 @@ import re
 import asyncio
 import subprocess
 from collections import deque
-from typing import Optional, Any, Callable, Dict, Union, List
+from typing import Optional, Any, Callable, Dict, Union, List, Tuple
 import numpy as np
 
 from config import (
@@ -45,6 +45,18 @@ def get_whisper_model():
             print(f"[VoicePipeline] Error loading faster-whisper: {e}")
             _whisper_model = False
     return _whisper_model if _whisper_model is not False else None
+
+
+# 網頁顯示用的 ASR 組合說明 (speech_to_text 的 info_out)。數值要跟實際呼叫一致：CPU 路徑的 VAD 參數只在這裡定義。
+CPU_VAD_PARAMS = {"threshold": 0.30, "min_silence_duration_ms": 350, "speech_pad_ms": 150}
+CPU_VAD_LABEL = "Silero VAD（faster-whisper vad_filter，門檻 0.30、最短靜音 350 ms）"
+CPU_POST_LABEL = "OpenCC s2twp＋重複迴圈清理"
+HAILO_POST_LABEL = "OpenCC s2twp＋規則修正 fix_meeting_terms（日期、職稱、人名…）＋解碼迴圈清理"
+
+
+def slice_bounds(chunk_sec: float) -> Tuple[float, float]:
+    """即時 STT 切片長度範圍 (秒)：在這個範圍內找能量最低處下刀 (Whisper 輸入窗口 10 s)。"""
+    return max(3.0, chunk_sec - 4.0), min(chunk_sec + 1.5, 9.5)
 
 
 def to_taiwan_traditional(text: str) -> str:
@@ -212,10 +224,13 @@ def speech_to_text(
     start_sec: Optional[float] = None,
     end_sec: Optional[float] = None,
     on_segment_callback: Optional[Any] = None,
-    language: Optional[str] = None
+    language: Optional[str] = None,
+    info_out: Optional[Dict[str, str]] = None
 ) -> Optional[str]:
     """
     Transcribe speech from an audio file, PCM bytes, or float32 PCM ndarray.
+    info_out (optional dict) receives what this call actually used, for the web UI:
+    "engine" (ASR engine/model), "vad" (speech gate), "post" (text post-processing).
     Supports 100% automatic language detection (language=None) preserving natural bilingual code-switching (Traditional Chinese & English verbatim).
     Optimized with 100% Zero-Disk I/O and RAM-based PCM streaming for Raspberry Pi 5:
     - Decodes audio directly into float32 16kHz PCM array in RAM.
@@ -250,6 +265,10 @@ def speech_to_text(
             from stt_worker import stt_worker
             h10_res = stt_worker.transcribe(audio_source, language=language)
             if h10_res is not None and "text" in h10_res:
+                if info_out is not None:
+                    info_out.update(engine=f"Hailo-10H {h10_res.get('model') or 'Whisper'}（NPU）",
+                                    vad=h10_res.get("vad") or "",
+                                    post=HAILO_POST_LABEL)
                 txt = h10_res.get("text", "")
                 if txt:
                     print(f"[VoicePipeline] ⚡ Hailo-10H 轉錄完成: '{txt}' (耗時: {h10_res.get('inference_time_ms', 0)}ms)")
@@ -294,6 +313,8 @@ def speech_to_text(
                                 on_segment_callback=on_segment_callback
                             )
                             if res and res.get("text"):
+                                if info_out is not None:
+                                    info_out.update(engine="Hailo-8 Whisper-base（NPU）", vad="", post="OpenCC s2twp")
                                 text = to_taiwan_traditional(res["text"])
                                 print(f"[VoicePipeline] ⚡ AI NPU 轉錄完成: '{text}' (耗時: {res.get('duration_sec', 0):.2f}s, RTF: {res.get('rtf', 0):.2f})")
                                 return text
@@ -385,8 +406,11 @@ def speech_to_text(
                     compression_ratio_threshold=2.2,
                     hallucination_silence_threshold=1.5,
                     vad_filter=True,
-                    vad_parameters=dict(threshold=0.30, min_silence_duration_ms=350, speech_pad_ms=150)
+                    vad_parameters=dict(CPU_VAD_PARAMS)
                 )
+                if info_out is not None:
+                    info_out.update(engine=f"faster-whisper {WHISPER_MODEL_SIZE} {WHISPER_COMPUTE_TYPE}（CPU，beam 1）",
+                                    vad=CPU_VAD_LABEL, post=CPU_POST_LABEL)
                 for seg in segments:
                     if cancellation_event and hasattr(cancellation_event, "is_set") and cancellation_event.is_set():
                         print(f"[VoicePipeline] Transcription cancelled mid-stream by token.")
@@ -902,8 +926,7 @@ async def record_audio_from_mic(
     ]
     vu_frame_bytes = 1600  # 50ms @ 16kHz mono (800 samples * 2 bytes)
     # STT 切片改為「停頓處切點」：在 [min, max] 秒內找能量最低處下刀，避免切在句中 (Whisper 輸入窗口 10 s)
-    slice_min_s = max(3.0, chunk_sec - 4.0)
-    slice_max_s = min(chunk_sec + 1.5, 9.5)
+    slice_min_s, slice_max_s = slice_bounds(chunk_sec)
     slice_max_bytes = int(slice_max_s * 32000)
     splicer = ZeroSplicer(sr=16000)
     # 只有藍牙來源才量 SCO 到達率 (USB 麥克風等不會有 SCO 封包，不能顯示成掉包 100%)

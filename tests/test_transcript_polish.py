@@ -249,3 +249,39 @@ def test_rewrite_timeout_grows_with_output_budget(monkeypatch):
     _run(tp.polish_transcript("一" * 590, "rewrite"))
     assert seen["num_predict"] == 1180
     assert seen["timeout"] >= 1180 / 4.5
+
+
+def test_diff_segments_marks_replacement_insertion_and_deletion():
+    segs = tp.diff_segments("請李協里確認期", "請李協理確認日期")
+    assert segs == [["eq", "請李協", ""], ["rep", "理", "里"], ["eq", "確認", ""], ["ins", "日", ""], ["eq", "期", ""]]
+    assert tp.diff_segments("好的好的，開始", "好的，開始") == [["del", "好的", ""], ["eq", "好的，開始", ""]]
+    # 去掉 del 後接起來就是新文字
+    src, dst = "第一個議題是公安", "第一個議題是工安。"
+    assert "".join(t for op, t, _ in tp.diff_segments(src, dst) if op != "del") == dst
+
+
+def test_polish_returns_segments_joined_like_polished_text(monkeypatch):
+    async def fake_achat(prompt, system=None, **kwargs):
+        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    text = "\n".join(["改報" + "甲" * 590, "沒有要改" + "乙" * 590])
+    res = _run(tp.polish_transcript(text, "fix"))
+    assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
+    assert ["rep", "善", "報"] in res["segments"]
+    assert res["diff_counts"] == {"rep": 1, "ins": 0, "del": 0}
+
+
+def test_polish_stopped_chunks_are_unmarked_segments(monkeypatch):
+    calls = []
+
+    async def fake_achat(prompt, system=None, **kwargs):
+        calls.append(prompt)
+        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
+
+    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590])
+    res = _run(tp.polish_transcript(text, "fix", should_stop=lambda: len(calls) >= 1))
+    assert res["stopped"] is True
+    assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
+    assert res["diff_counts"]["rep"] == 1   # 沒處理的第二段不標

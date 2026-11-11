@@ -182,6 +182,23 @@ def apply_fixes(text: str, fixes: List[Dict[str, str]]) -> Tuple[str, List[Dict[
     return text, applied
 
 
+def diff_segments(src: str, dst: str) -> List[List[str]]:
+    """網頁標色用的字元級差異 (difflib)。回傳 [[op, text, orig], ...]，依序接起來的 text (del 除外) 就是 dst：
+    eq 相同；rep 替換 (text 新字、orig 原字，修同音字)；ins 補上的字 (修漏字)；del 刪掉的字 (text 是原字)。
+    autojunk 關掉：中文常用字出現次數多，開著會被當成雜訊而對不齊。"""
+    out: List[List[str]] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+        if tag == "equal":
+            out.append(["eq", dst[j1:j2], ""])
+        elif tag == "replace":
+            out.append(["rep", dst[j1:j2], src[i1:i2]])
+        elif tag == "insert":
+            out.append(["ins", dst[j1:j2], ""])
+        else:
+            out.append(["del", src[i1:i2], ""])
+    return out
+
+
 def _rewrite_length_ok(src: str, out: str) -> bool:
     """擋掉模型截斷或亂加內容：輸出長度須落在原文的 0.5 倍到 1.5 倍 (+20 字) 之間。"""
     return 0.5 * len(src) <= len(out) <= 1.5 * len(src) + 20
@@ -265,11 +282,24 @@ async def polish_transcript(
     }
     parts: List[str] = []
     changes: List[Dict[str, Any]] = []
+    segments: List[List[str]] = []
+    counts = {"rep": 0, "ins": 0, "del": 0}
+
+    def add_segments(src: str, dst: str) -> None:
+        if segments:
+            segments.append(["eq", "\n\n", ""])
+        for seg in diff_segments(src, dst):
+            segments.append(seg)
+            if seg[0] in counts:
+                counts[seg[0]] += 1
+
     for idx, chunk in enumerate(chunks, start=1):
         if should_stop is not None and should_stop():
             logger.info("[polish] stopped before chunk %d/%d", idx, len(chunks))
             stats["stopped"] = True
             parts.extend(chunks[idx - 1:])
+            for rest in chunks[idx - 1:]:
+                add_segments(rest, rest)
             break
         try:
             if mode == "fix":
@@ -282,6 +312,8 @@ async def polish_transcript(
             stats["failed_chunks"] += 1
             new_chunk = chunk
         parts.append(new_chunk)
+        add_segments(chunk, new_chunk)
         if on_progress is not None:
             on_progress(idx, len(chunks))
-    return {"mode": mode, "polished": "\n\n".join(parts), "changes": changes, **stats}
+    return {"mode": mode, "polished": "\n\n".join(parts), "changes": changes,
+            "segments": segments, "diff_counts": counts, **stats}

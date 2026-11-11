@@ -52,6 +52,17 @@ WHISPER_VAD = os.environ.get("PI5_WHISPER_VAD", "1").strip() != "0"
 _VAD_OPTIONS = None
 
 
+def vad_label() -> str:
+    """網頁顯示用：這條路徑實際用的語音閘門 (與 speech_seconds() 的判斷一致)。"""
+    if not WHISPER_VAD:
+        return "能量門檻（Silero VAD 已用 PI5_WHISPER_VAD=0 關閉）"
+    try:
+        import faster_whisper.vad  # noqa: F401
+    except ImportError:
+        return "能量門檻（未安裝 faster-whisper，沒有 Silero VAD）"
+    return "Silero VAD 語音閘門（faster-whisper，最短語音 250 ms；沒有語音的切片不送 NPU）"
+
+
 def speech_seconds(audio: "np.ndarray", sr: int = 16000) -> Optional[float]:
     """Silero VAD 偵測到的語音總秒數；VAD 關閉、未安裝或出錯時回傳 None (呼叫端照常送 NPU)。"""
     global _VAD_OPTIONS
@@ -748,6 +759,10 @@ class HailoWhisperEngine(WhisperEngineInterface):
         self._initialized = False
         self._probe_and_init()
 
+    def model_name(self) -> str:
+        """載入的 HEF 檔名（不含副檔名），例如 Whisper-Small。"""
+        return os.path.splitext(os.path.basename(self.hef_path or ""))[0] or "Whisper"
+
     def _resolve_hef_path(self) -> Optional[str]:
         if self.hef_path and os.path.exists(self.hef_path):
             return self.hef_path
@@ -880,6 +895,8 @@ class HailoWhisperEngine(WhisperEngineInterface):
                     "language": language or "en",
                     "inference_time_ms": 0.0,
                     "backend": "hailo-10h",
+                    "model": self.model_name(),
+                    "vad": vad_label(),
                 }
 
             from hailo_platform.genai import Speech2TextTask
@@ -936,6 +953,8 @@ class HailoWhisperEngine(WhisperEngineInterface):
                 "language": lang_code or "auto",
                 "inference_time_ms": round(elapsed_ms, 2),
                 "backend": "hailo-10h",
+                "model": self.model_name(),
+                "vad": vad_label(),
             }
         finally:
             _hailo_inferring = False

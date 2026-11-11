@@ -13,6 +13,7 @@ import subprocess
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import threading
+import collections
 import requests
 from pydantic import BaseModel, Field
 import sys
@@ -31,7 +32,7 @@ if os.path.exists(_agent_dir) and _agent_dir not in sys.path:
 
 from voice_memory import get_in_memory_cache_dir
 from last_meeting import load_last_meeting, save_last_meeting
-from voice_pipeline import NoMicrophoneError, record_audio_from_mic, speech_to_text
+from voice_pipeline import NoMicrophoneError, record_audio_from_mic, slice_bounds, speech_to_text
 
 AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 
@@ -171,6 +172,44 @@ LANG_LIMITS = {
 
 
 
+# 即時 STT 的能量快篩：切片峰值與 RMS 都低於門檻 (停頓或微弱環境音) 就不送 STT
+LIVE_SKIP_PEAK = 0.035
+LIVE_SKIP_RMS = 0.0025
+
+
+def live_slicing_label(chunk_sec: float) -> str:
+    lo, hi = slice_bounds(chunk_sec)
+    return (f"停頓處切片 {lo:g}–{hi:g} 秒（能量最低點下刀）＋能量快篩"
+            f"（峰值 < {LIVE_SKIP_PEAK:g} 且 RMS < {LIVE_SKIP_RMS:g} 的切片不送 STT）")
+
+
+class SttCombo:
+    """統計一場會議實際用到的 ASR 引擎／VAD／後處理 (每次 speech_to_text 的 info_out)，給網頁顯示。
+    同一場有多個引擎 (例如 NPU 失敗退 CPU) 時列出各自的段數。"""
+
+    def __init__(self, slicing: str = "") -> None:
+        self.slicing = slicing
+        self.engines: collections.Counter = collections.Counter()
+        self.vads: Dict[str, None] = {}    # dict 保留出現順序
+        self.posts: Dict[str, None] = {}
+
+    def add(self, info: Dict[str, str]) -> None:
+        if info.get("engine"):
+            self.engines[info["engine"]] += 1
+        if info.get("vad"):
+            self.vads[info["vad"]] = None
+        if info.get("post"):
+            self.posts[info["post"]] = None
+
+    def describe(self) -> Dict[str, str]:
+        if len(self.engines) > 1:
+            engine = "、".join(f"{name} {n} 段" for name, n in self.engines.most_common())
+        else:
+            engine = next(iter(self.engines), "")
+        vad = "；".join(list(self.vads) + ([self.slicing] if self.slicing else []))
+        return {"stt_engine": engine, "stt_vad": vad, "stt_post": "；".join(self.posts)}
+
+
 class MeetingResult(BaseModel):
     job: str
     title: str = "會議紀要"
@@ -179,9 +218,15 @@ class MeetingResult(BaseModel):
     summary: List[str] = Field(default_factory=list)
     todos: List[Dict[str, str]] = Field(default_factory=list)
     decisions: List[str] = Field(default_factory=list)
-    transcript: str = ""
+    transcript: str = ""      # 給紀要用的全文 (tidy_live_transcript＋fix_meeting_terms 之後)
     markdown: str = ""
     lang: str = "zh"          # 紀要語言 (跟著逐字稿)：zh／en
+    # 網頁「完整逐字稿」區顯示的 ASR 原文：錄音中即時切片串接的結果，錄音後不再改 (2026-11-11 使用者指定)
+    transcript_live: str = ""
+    # 這場會議實際用到的 ASR 組合 (網頁顯示用；多個引擎時附段數)
+    stt_engine: str = ""
+    stt_vad: str = ""
+    stt_post: str = ""
 
 
 class JobStatus(BaseModel):
@@ -194,6 +239,7 @@ class JobStatus(BaseModel):
     job: Optional[str] = None
     msg: Optional[str] = None
     transcript: Optional[str] = None
+    transcript_live: Optional[str] = None   # 見 MeetingResult.transcript_live
     audio_url: Optional[str] = None
     summary_stream: Optional[str] = None
     # LLM 原始輸出（未經 clean/ensure/merge 後處理），僅供 e2e 存檔比對，不影響畫面
@@ -397,6 +443,7 @@ class MeetingJobManager:
             total=float(self.result.duration), elapsed=float(self.result.duration),
             msg=f"已載入服務重啟前的最後一場會議（{payload.get('saved_at', '')} 保存）。",
             transcript=self.result.transcript,
+            transcript_live=self.result.transcript_live or None,
             audio_url=f"/audio/{job}.ogg" if audio_ok else None,
             metrics=(payload.get("status") or {}).get("metrics") or {},
         )
@@ -627,7 +674,7 @@ class MeetingJobManager:
                 "stt_rtf": None,
                 "stt_chars": 0,
                 "stt_paragraphs": 0,
-                "stt_engine": "AI NPU",
+                "stt_engine": "",
                 "first_chunk_time": None,
                 "first_stt_time": None,
                 "first_stt_latency": None,
@@ -656,6 +703,8 @@ class MeetingJobManager:
             # 確保錄音結束當下已完成 95% 以上文字轉錄，尾端延遲 < 1.5 秒！
             # -------------------------------------------------------------
             chunk_queue: asyncio.Queue = asyncio.Queue()
+            stt_combo = SttCombo(slicing=live_slicing_label(8.0))
+            self.status.metrics.update(stt_combo.describe())
             live_segments: List[str] = []
             curr_preview: str = ""
             chunk_worker_done = asyncio.Event()
@@ -681,17 +730,21 @@ class MeetingJobManager:
                                 # VAD 靜音快篩：若切片為停頓或微弱環境音，0秒直接跳過，杜絕佇列堆疊
                                 peak = float(np.max(np.abs(pcm_np)))
                                 rms = float(np.sqrt(np.mean(pcm_np**2)))
-                                if peak < 0.035 and rms < 0.0025:
+                                if peak < LIVE_SKIP_PEAK and rms < LIVE_SKIP_RMS:
                                     last_done_enq_t = enq_t
                                     self.status.metrics["stt_audio_delay"] = max(0.0, round(time.time() - enq_t, 1))
                                     chunk_queue.task_done()
                                     continue
 
+                                stt_info: Dict[str, str] = {}
                                 seg_text = await asyncio.to_thread(
                                     speech_to_text,
                                     pcm_np,
-                                    self._thread_cancellation_token
+                                    self._thread_cancellation_token,
+                                    info_out=stt_info
                                 )
+                                stt_combo.add(stt_info)
+                                self.status.metrics.update(stt_combo.describe())
                                 last_done_enq_t = enq_t
                                 now_t = time.time()
                                 now_elapsed = round(now_t - t0, 1)
@@ -741,6 +794,7 @@ class MeetingJobManager:
                                                 sep = "，"
                                         curr_preview = curr_preview + sep + clean_t
                                     self.status.transcript = curr_preview
+                                    self.status.transcript_live = curr_preview
                                     self.status.metrics["stt_chars"] = len(curr_preview.replace("\n", "").strip())
                                     self.status.metrics["stt_paragraphs"] = len(live_segments)
                                     self.status.metrics["first_stt_text_time"] = now_elapsed
@@ -974,17 +1028,24 @@ class MeetingJobManager:
             if not final_preview and live_segments:
                 final_preview = "，".join(live_segments)
 
+            transcript_live = final_preview
             if final_preview and len(final_preview.strip()) >= 5:
                 transcript = fix_meeting_terms(tidy_live_transcript(final_preview))    # 與錄音中預先整理用同一套整理
                 print(f"[MeetingMinutes] ⚡ 0秒尾端等待！成功取用即時切片串流 STT (字數: {len(transcript)}，段落數: {len(live_segments)})！")
             else:
                 # 保底：若即時切片為空，快速執行一次母帶轉錄
                 print(f"[MeetingMinutes] ⚠️ 即時切片為空，降級使用母帶轉錄...")
+                master_info: Dict[str, str] = {}
                 master_res = await asyncio.to_thread(
                     speech_to_text,
                     raw_ogg,
-                    self._thread_cancellation_token
+                    self._thread_cancellation_token,
+                    info_out=master_info
                 )
+                stt_combo = SttCombo(slicing="整段母帶（即時切片沒有結果時的保底）")
+                stt_combo.add(master_info)
+                self.status.metrics.update(stt_combo.describe())
+                transcript_live = (master_res or "").strip().replace("\ufffd", "")
                 transcript = fix_meeting_terms((master_res or "").strip().replace("\ufffd", "").replace("\uFFFD", "")) if master_res else "（未能辨識出清晰人聲語音）"
 
             if self._cancellation_token.is_set():
@@ -1016,7 +1077,9 @@ class MeetingJobManager:
             self.status.metrics["stt_chars_per_sec"] = round(chars_count / max(1.0, total_stt_sec), 1)
 
             self.status.transcript = transcript
+            self.status.transcript_live = transcript_live or transcript
             self.status.audio_url = f"/audio/{job_id}.ogg"
+            stt_desc = stt_combo.describe()
 
             self.result = MeetingResult(
                 job=job_id,
@@ -1024,7 +1087,11 @@ class MeetingJobManager:
                 started_at=start_dt.isoformat(),
                 duration=duration_sec,
                 transcript=transcript,
-                markdown=f"# 會議紀要\n\n## 逐字稿\n{transcript}"
+                markdown=f"# 會議紀要\n\n## 逐字稿\n{transcript}",
+                transcript_live=transcript_live or transcript,
+                stt_engine=stt_desc["stt_engine"],
+                stt_vad=stt_desc["stt_vad"],
+                stt_post=stt_desc["stt_post"],
             )
 
             # ⚡ [漸進式展示] 聽寫完成立即向前端推播逐字稿與音訊波形，0秒等待！
@@ -1033,6 +1100,7 @@ class MeetingJobManager:
                 await ws_manager.broadcast("transcript_ready", {
                     "job_id": job_id,
                     "transcript": transcript,
+                    "transcript_live": transcript_live or transcript,
                     "duration": duration_sec,
                     "audio_url": f"/audio/{job_id}.ogg"
                 })
@@ -1142,7 +1210,11 @@ class MeetingJobManager:
                 decisions=parsed["decisions"],
                 transcript=transcript,
                 markdown=final_markdown,
-                lang=minutes_lang
+                lang=minutes_lang,
+                transcript_live=self.result.transcript_live if self.result else transcript,
+                stt_engine=self.result.stt_engine if self.result else "",
+                stt_vad=self.result.stt_vad if self.result else "",
+                stt_post=self.result.stt_post if self.result else "",
             )
 
             # --- PHASE 4: Done ---
