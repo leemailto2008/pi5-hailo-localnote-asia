@@ -55,6 +55,13 @@ DIARIZE_METHOD = os.environ.get("PI5_DIARIZE_METHOD", "sentence")
 SENTENCE_CLUSTER_THRESHOLD = 0.55
 CENTROID_MERGE_COS = 0.8
 MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。」、實錄的殘響），借時間上最近的長句的說話人
+# 句內換人：辨識仍用 VAD_MIN_SILENCE_S 的長句（上下文較好），另跑一個靈敏的 VAD（最短靜音 0.1 s），
+# 在它的停頓處依 token 時間把句子切成小段再分說話人。2026-11-11 量測（合成會議重新拼接，換人停頓 0.05–0.3 s／0.3–0.6 s）：
+# 現行 VAD 只切開 6／79、28／79 個換人點，逐句法 frame 正確率 42%／46%；加切段後 77%／70.5%（另一份 15 分 44% → 70%）；
+# 原合成會議 5／15／30 分維持 100%（4 人）。改用 token 間隔 ≥ 0.35–0.45 s 也切，換人資料更好（82–94%）但原會議掉到 88–93%、分出 9–14 人，不採用。
+FINE_VAD_MIN_SILENCE_S = 0.1
+SPLIT_EDGE_S = 0.2           # 切點離句首、句尾至少這麼遠
+SPLIT_MAX_TOKEN_DIST_S = 0.6  # 切點附近 0.6 s 內要有 token 起點，才對得到字
 # pyannote 流程的分群門檻：sherpa 預設 0.5 在 15 分鐘合成會議切出 8–10 人（實際 4 人）；0.7 在 5／10／15／30 分鐘都找到 4–5 人。
 CLUSTER_THRESHOLD = 0.7
 # 句子落在分段的空隙裡（分段模型會把句中停頓切掉）時，借用 1 秒內最近的說話人。
@@ -93,6 +100,7 @@ class Sentence:
     end: float
     text: str
     speaker: Optional[int] = None
+    cont: bool = False   # 同一個 VAD 句子在短停頓處切開的後半段（接回時不加標點）
 
 
 def model_path(key: str) -> str:
@@ -130,23 +138,58 @@ def load_audio(path: str):
     return samples
 
 
+def split_at_pauses(start: float, end: float, tokens: Sequence[str], times: Sequence[float],
+                    cuts: Sequence[float]) -> List[Tuple[float, float, str]]:
+    """依 token 起點時間把一句切在 cuts（秒）附近：切點取最近的 token 起點與前一個 token 起點的中點。
+    token 與時間數量不符、切點附近 SPLIT_MAX_TOKEN_DIST_S 內沒有 token、或離句首尾太近時不切。
+    只剩標點的片段併回前一段。回傳 [(start, end, text)]。"""
+    if len(tokens) < 2 or len(tokens) != len(times):
+        return [(start, end, "".join(tokens).strip())]
+    idx_bounds, t_bounds = [0], [start]
+    for c in sorted(cuts):
+        k = min(range(1, len(times)), key=lambda i: abs(times[i] - c))
+        if abs(times[k] - c) > SPLIT_MAX_TOKEN_DIST_S or k <= idx_bounds[-1]:
+            continue
+        b = (times[k - 1] + times[k]) / 2
+        if t_bounds[-1] + SPLIT_EDGE_S < b < end - SPLIT_EDGE_S:
+            idx_bounds.append(k)
+            t_bounds.append(b)
+    idx_bounds.append(len(tokens))
+    t_bounds.append(end)
+    pieces: List[Tuple[float, float, str]] = []
+    for i in range(len(idx_bounds) - 1):
+        text = "".join(tokens[idx_bounds[i]:idx_bounds[i + 1]]).strip()
+        if pieces and not any(ch.isalnum() for ch in text):
+            s0, _, t0 = pieces[-1]
+            pieces[-1] = (s0, t_bounds[i + 1], t0 + text)
+            continue
+        pieces.append((t_bounds[i], t_bounds[i + 1], text))
+    return pieces
+
+
 def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None) -> Optional[List[Sentence]]:
-    """VAD 切句後逐句辨識。被 should_stop 中止時回傳 None。"""
+    """VAD 切句後逐句辨識，再依靈敏 VAD 的短停頓把句子切成小段（見 FINE_VAD_MIN_SILENCE_S；
+    後段的 cont=True）。被 should_stop 中止時回傳 None。"""
     import sherpa_onnx
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
         model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=ASR_LANGUAGE, use_itn=True
     )
-    cfg = sherpa_onnx.VadModelConfig()
-    cfg.silero_vad.model = model_path("vad")
-    cfg.silero_vad.min_silence_duration = VAD_MIN_SILENCE_S
-    cfg.silero_vad.min_speech_duration = 0.25
-    cfg.silero_vad.max_speech_duration = 20
-    cfg.sample_rate = SAMPLE_RATE
-    cfg.num_threads = 1
-    vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=120)
 
-    sentences: List[Sentence] = []
+    def make_vad(min_silence: float, min_speech: float):
+        cfg = sherpa_onnx.VadModelConfig()
+        cfg.silero_vad.model = model_path("vad")
+        cfg.silero_vad.min_silence_duration = min_silence
+        cfg.silero_vad.min_speech_duration = min_speech
+        cfg.silero_vad.max_speech_duration = 20
+        cfg.sample_rate = SAMPLE_RATE
+        cfg.num_threads = 1
+        return sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=120), cfg.silero_vad.window_size
+
+    vad, window = make_vad(VAD_MIN_SILENCE_S, 0.25)
+    fine_vad, _ = make_vad(FINE_VAD_MIN_SILENCE_S, 0.1)
+    raw: List[Tuple[float, float, str, List[str], List[float]]] = []
+    fine_regions: List[Tuple[float, float]] = []
 
     def drain() -> None:
         while not vad.empty():
@@ -154,17 +197,24 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, seg.samples)
             recognizer.decode_stream(stream)
-            text = stream.result.text.strip()
+            res = stream.result
+            text = res.text.strip()
             if text:
                 start = seg.start / SAMPLE_RATE
-                sentences.append(Sentence(start, start + len(seg.samples) / SAMPLE_RATE, text))
+                raw.append((start, start + len(seg.samples) / SAMPLE_RATE, text,
+                            list(res.tokens), [start + t for t in res.timestamps]))
             vad.pop()
+        while not fine_vad.empty():
+            seg = fine_vad.front
+            fine_regions.append((seg.start / SAMPLE_RATE, (seg.start + len(seg.samples)) / SAMPLE_RATE))
+            fine_vad.pop()
 
-    window = cfg.silero_vad.window_size
     check_every = window * 200  # 約每 6.4 秒音訊檢查一次中止與進度
     total = len(samples)
     for i in range(0, total, window):
-        vad.accept_waveform(samples[i:i + window])
+        chunk = samples[i:i + window]
+        vad.accept_waveform(chunk)
+        fine_vad.accept_waveform(chunk)
         drain()
         if i % check_every == 0:
             if should_stop is not None and should_stop():
@@ -172,7 +222,19 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
             if on_progress is not None:
                 on_progress(i / total)
     vad.flush()
+    fine_vad.flush()
     drain()
+
+    pauses = [(a[1] + b[0]) / 2 for a, b in zip(fine_regions, fine_regions[1:])]
+    sentences: List[Sentence] = []
+    for start, end, text, tokens, times in raw:
+        cuts = [p for p in pauses if start < p < end]
+        # tokens 接起來要等於 text（ITN 後的文字）才切，否則保留整句
+        pieces = split_at_pauses(start, end, tokens, times, cuts) \
+            if cuts and "".join(tokens).strip() == text else [(start, end, text)]
+        for j, (a, b, piece) in enumerate(pieces):
+            if piece:
+                sentences.append(Sentence(a, b, piece, cont=j > 0))
     return sentences
 
 
@@ -307,7 +369,11 @@ def _join(parts: Sequence[Sentence]) -> str:
         if prev is not None and out:
             last = out[-1]
             first = s.text[:1]
-            if prev.text.endswith("。") and s.start - prev.end <= MERGE_GAP_S:
+            if s.cont:
+                # 同一個 VAD 句子切開的後段：原樣接回，只補英文詞之間的空格
+                if last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first)):
+                    out += " "
+            elif prev.text.endswith("。") and s.start - prev.end <= MERGE_GAP_S:
                 out = out[:-1] + "，"
             elif last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first)):
                 out += " "

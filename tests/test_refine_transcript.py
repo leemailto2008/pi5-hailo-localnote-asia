@@ -251,3 +251,35 @@ def test_merge_close_clusters_leaves_dissimilar_and_single_cluster_alone():
     emb = [[1.0, 0.0], [0.0, 1.0]]
     assert rt.merge_close_clusters([0, 1], emb, 0.8) == [0, 1]
     assert rt.merge_close_clusters([3, 3], emb, 0.8) == [3, 3]
+
+def test_split_at_pauses_cuts_at_token_nearest_the_pause():
+    tokens = list("好我們開始") + ["，"] + list("請報告")
+    times = [0.0, 0.3, 0.45, 0.6, 0.75, 0.9, 2.0, 2.15, 2.3]
+    pieces = rt.split_at_pauses(0.0, 2.6, tokens, times, [1.5])
+    # 最近的 token 起點是「請」(2.0)；切點取「，」(0.9) 與「請」的中點
+    assert [(round(a, 2), round(b, 2), t) for a, b, t in pieces] == [(0.0, 1.45, "好我們開始，"), (1.45, 2.6, "請報告")]
+
+
+def test_split_at_pauses_skips_cuts_near_edges_or_far_from_tokens():
+    tokens, times = list("我們開始"), [0.0, 0.2, 0.4, 0.6]
+    assert rt.split_at_pauses(0.0, 0.65, tokens, times, [0.6]) == [(0.0, 0.65, "我們開始")]    # 切點 0.5 離句尾不到 0.2 s
+    assert rt.split_at_pauses(0.0, 5.0, tokens, times, [3.0]) == [(0.0, 5.0, "我們開始")]      # 附近沒有 token
+    assert rt.split_at_pauses(0.0, 5.0, tokens, times[:3], [0.3]) == [(0.0, 5.0, "我們開始")]  # 數量不符
+
+
+def test_split_at_pauses_merges_punctuation_only_piece_back():
+    tokens, times = ["好", "的", "。"], [0.0, 0.3, 1.5]
+    assert rt.split_at_pauses(0.0, 2.0, tokens, times, [1.2]) == [(0.0, 2.0, "好的。")]
+
+
+def test_continuation_pieces_join_without_extra_comma():
+    sentences = [Sentence(0.0, 1.4, "上線前先在100台設備上", 1), Sentence(1.4, 3.0, "試跑3天。", 1, cont=True),
+                 Sentence(3.1, 4.0, "好", 2, cont=True), Sentence(4.0, 5.0, "沒問題。", 2, cont=True)]
+    text, speakers = rt.format_transcript(sentences)
+    assert text == "說話人1：上線前先在100台設備上試跑3天。\n說話人2：好沒問題。"
+    assert speakers == 2
+
+
+def test_continuation_english_pieces_keep_word_spacing():
+    sentences = [Sentence(0.0, 1.0, "Okay,", 1), Sentence(1.0, 2.0, "let's start", 1, cont=True)]
+    assert rt.format_transcript(sentences)[0] == "說話人1：Okay, let's start"
