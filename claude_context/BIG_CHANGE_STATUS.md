@@ -181,3 +181,10 @@
   - 數位工作：清單 #2–#4 已完成，#5 待使用者決定；本輪重讀狀態檔與 CLAUDE.md，確認沒有剩餘可做的數位改善，未改程式、未跑 pytest、未部署、未 commit。
   - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 curl 與 SSH。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
   - 無新進度，本輪不回報。排程仍啟用；#1 待耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）後，下一個夜間窗（19:00 後）輪次重試。
+
+- 2026-11-11 09:24 排程輪次（台北，白天窗）：互動鎖無（標頭無該行）。Pi /api/status state=done（m_1794359755，無錄音／處理）；SSH pgrep real_exp、refine_transcript、run_suite、speaker_selftest 無評估程序。
+  - #1 聲學實測：白天不做（須待 19:00 後）。未呼叫 /api/bt、未放音、未用耳麥。09:03 使用者手動測試時耳麥曾連線，本輪未查其目前狀態。
+  - 數位工作：清單 #2–#4 已完成，#5 待使用者決定；本輪未改程式、未跑 pytest、未部署。
+  - git：工作區有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入本次 commit。
+  - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
