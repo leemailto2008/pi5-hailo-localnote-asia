@@ -69,6 +69,11 @@ MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。�
 # 1.25 全部資料：實錄 5／10／30／60 分 100／100／99.74／100%（片段 1.0 s 時 99.49／99.79／99.45／99.68%；未切段的舊法 100／100／99.74／100%），
 # 快速換人 fast10／fast15／mid10 92.0／90.1／96.2%（舊法 42／44／46%），乾淨合成 5／15／30 分 100%。
 PIECE_MIN_EMBED_S = 1.25
+# 分群後，最長單位都 < CLUSTER_MIN_LONGEST_S 的群不算一個人：它的單位不參與分群結果，改用下面的「借最近單位」。
+# 約 1 s 的單位嵌入不可靠，字一樣的短句會自成一群：GS3 實錄 5 分（第二次錄，m_1794387394）兩個 1.0 s 的「週五回報。」「招募方面。」
+# 自成第 5 人，frame 99.0%（未切段的舊法同樣 99.0%、5 人）→ 100%、4 人。其他資料都不變（實錄 5／10／30／60、快速換人、乾淨 5／15／30，x86）。
+# 2.0 會把實錄 5 分只講一行（最長 1.5–2.0 s）的真人併掉（97.7%、3 人）；1.25 與片段門檻相同。
+CLUSTER_MIN_LONGEST_S = 1.25
 WINDOW_S = 1.5
 WINDOW_HOP_S = 0.75
 WINDOW_SPLIT_MIN_S = 3.0
@@ -400,6 +405,14 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
         sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SENTENCE_CLUSTER_THRESHOLD))
     emb = np.ascontiguousarray(np.array(embeddings, dtype=np.float32))
     labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
+    longest: Dict[int, float] = {}
+    for (a, b, _), label in zip(units, labels):
+        longest[label] = max(longest.get(label, 0.0), b - a)
+    keep = [k for k, label in enumerate(labels) if longest[label] >= CLUSTER_MIN_LONGEST_S]
+    if keep and len(keep) < len(units):
+        units = [units[k] for k in keep]
+        labels = [labels[k] for k in keep]
+        emb = np.ascontiguousarray(emb[keep])
     for (_, _, idx), label in zip(units, labels):
         for i in idx:
             sentences[i].speaker = int(label)

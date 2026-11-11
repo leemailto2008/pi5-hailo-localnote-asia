@@ -209,9 +209,9 @@ def _fake_sherpa(monkeypatch):
     monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
 
 
-def _samples(spans):
+def _samples(spans, seconds=4):
     import numpy as np
-    x = np.zeros(4 * rt.SAMPLE_RATE, dtype=np.float32)
+    x = np.zeros(seconds * rt.SAMPLE_RATE, dtype=np.float32)
     for start, end, value in spans:
         x[int(start * rt.SAMPLE_RATE):int(end * rt.SAMPLE_RATE)] = value
     return x
@@ -326,10 +326,10 @@ def test_split_by_windows_leaves_short_or_tokenless_sentences():
 
 def test_short_piece_borrows_from_its_own_vad_sentence_first(monkeypatch):
     _fake_sherpa(monkeypatch)
-    # 乙說完（0.0–1.0），甲的句子 1.0–2.5（長片段）＋短尾巴 2.6–2.9（cont）；尾巴時間上離乙的下一句 2.95–3.95 更近
-    x = _samples([(0.0, 1.0, 1.0), (1.0, 2.5, 0.0), (2.6, 2.9, 2.0), (2.95, 3.95, 1.0)])
-    sents = [Sentence(0.0, 1.0, "乙說"), Sentence(1.0, 2.5, "甲說"), Sentence(2.6, 2.9, "完", cont=True),
-             Sentence(2.95, 3.95, "乙又說")]
+    # 乙說完（0.0–1.3），甲的句子 1.3–2.8（長片段）＋短尾巴 3.2–3.5（cont）；尾巴時間上離乙的下一句 3.55–4.9 更近
+    x = _samples([(0.0, 1.3, 1.0), (1.3, 2.8, 0.0), (3.2, 3.5, 2.0), (3.55, 4.9, 1.0)], seconds=6)
+    sents = [Sentence(0.0, 1.3, "乙說"), Sentence(1.3, 2.8, "甲說"), Sentence(3.2, 3.5, "完", cont=True),
+             Sentence(3.55, 4.9, "乙又說")]
     assert rt.diarize_sentences(x, sents) is True
     assert [s.speaker for s in sents] == [1, 0, 0, 1]
 
@@ -337,10 +337,10 @@ def test_short_piece_borrows_from_its_own_vad_sentence_first(monkeypatch):
 def test_split_piece_shorter_than_piece_min_borrows_instead_of_own_embedding(monkeypatch):
     _fake_sherpa(monkeypatch)
     # 甲的句子切成 0.0–1.6（長）與 1.6–2.65（1.05 s，< PIECE_MIN_EMBED_S）；後段若自己算嵌入會分到乙（值 1.0）
-    x = _samples([(0.0, 1.6, 0.0), (1.6, 2.65, 1.0), (3.0, 4.0, 1.0)])
-    sents = [Sentence(0.0, 1.6, "甲說"), Sentence(1.6, 2.65, "週五回報", cont=True), Sentence(3.0, 4.0, "乙說")]
+    x = _samples([(0.0, 1.6, 0.0), (1.6, 2.65, 1.0), (3.0, 4.3, 1.0)], seconds=6)
+    sents = [Sentence(0.0, 1.6, "甲說"), Sentence(1.6, 2.65, "週五回報", cont=True), Sentence(3.0, 4.3, "乙說")]
     units, groups = rt.embedding_units(sents)
-    assert [(a, b, idx) for a, b, idx in units] == [(0.0, 1.6, [0]), (3.0, 4.0, [2])]
+    assert [(a, b, idx) for a, b, idx in units] == [(0.0, 1.6, [0]), (3.0, 4.3, [2])]
     assert groups == [0, 0, 1]
     assert rt.diarize_sentences(x, sents) is True
     assert [s.speaker for s in sents] == [0, 0, 1]
@@ -349,11 +349,20 @@ def test_split_piece_shorter_than_piece_min_borrows_instead_of_own_embedding(mon
 def test_split_sentence_without_long_piece_is_embedded_as_a_whole(monkeypatch):
     _fake_sherpa(monkeypatch)
     # 甲的句子切成三段都短（共 1.5 s），整句當一個單位；後面的短句「名額」借它，不借時間上較遠的乙
-    # 「名額」中點 2.0：整句單位中點 0.75（差 1.25），乙中點 3.4（差 1.4）；若整句不算嵌入，最近的單位就只剩乙
-    x = _samples([(0.0, 1.5, 0.0), (2.9, 3.9, 1.0)])
+    # 「名額」中點 2.0：整句單位中點 0.75（差 1.25），乙中點 3.55（差 1.55）；若整句不算嵌入，最近的單位就只剩乙
+    x = _samples([(0.0, 1.5, 0.0), (2.9, 4.2, 1.0)], seconds=6)
     sents = [Sentence(0.0, 0.5, "3月8日"), Sentence(0.5, 1.0, "有一場", cont=True), Sentence(1.0, 1.5, "課程", cont=True),
-             Sentence(1.6, 2.4, "名額"), Sentence(2.9, 3.9, "乙說")]
+             Sentence(1.6, 2.4, "名額"), Sentence(2.9, 4.2, "乙說")]
     units, _ = rt.embedding_units(sents)
-    assert [(a, b, idx) for a, b, idx in units] == [(0.0, 1.5, [0, 1, 2]), (2.9, 3.9, [4])]
+    assert [(a, b, idx) for a, b, idx in units] == [(0.0, 1.5, [0, 1, 2]), (2.9, 4.2, [4])]
     assert rt.diarize_sentences(x, sents) is True
     assert [s.speaker for s in sents] == [0, 0, 0, 0, 1]
+
+def test_cluster_of_only_short_units_is_not_a_speaker(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    # 甲 0.0–1.6、乙 2.7–4.0 都夠長；中間 1.0 s 的「週五回報」自己分成一群（嵌入方向跟兩人都不同），
+    # 那群最長單位 < CLUSTER_MIN_LONGEST_S，不算一個人，改借時間上最近的單位（乙）
+    x = _samples([(0.0, 1.6, 0.0), (1.7, 2.7, 1.0), (2.7, 4.0, -1.0)])
+    sents = [Sentence(0.0, 1.6, "甲說"), Sentence(1.7, 2.7, "週五回報"), Sentence(2.7, 4.0, "乙說")]
+    assert rt.diarize_sentences(x, sents) is True
+    assert [s.speaker for s in sents] == [0, -1, -1]

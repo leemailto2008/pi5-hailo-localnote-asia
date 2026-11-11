@@ -2295,6 +2295,8 @@ if (!MOCK) {
 //    後端是背景工作：POST /api/refine 啟動、GET 查進度；錄音一開始後端就停下 (state=stopped)。
 let refineBusy = false;
 let refineUnavailable = null;
+// 開頁時已完成的結果：要等逐字稿載入後才顯示，否則下面「沒有逐字稿就清空」會把它清掉（11-11 Playwright 實測開頁看不到結果）。
+let pendingRefine = null;
 const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: '分說話人' };
 function syncRefineBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
@@ -2304,6 +2306,11 @@ function syncRefineBox() {
     el.refineText.textContent = '';
     el.refineInfo.innerHTML = '';
     el.refineStatus.textContent = refineUnavailable ? '這台裝置無法使用：' + refineUnavailable : '';
+  }
+  if (has && pendingRefine) {
+    const job = pendingRefine;
+    pendingRefine = null;
+    renderRefine(job);
   }
   if (has && !refineUnavailable) showBusyHint(el.refineStatus, refineBusy);
 }
@@ -2366,7 +2373,7 @@ if (!MOCK) {
     if (refineUnavailable) el.refineStatus.textContent = '這台裝置無法使用：' + refineUnavailable;
     const sameMeeting = !!(job && st && job.job && job.job === st.job);
     if (job && job.state === 'running') runRefine(false);
-    else if (sameMeeting && (job.state === 'done' || job.state === 'stopped')) renderRefine(job);
+    else if (sameMeeting && (job.state === 'done' || job.state === 'stopped')) pendingRefine = job;
     syncRefineBox();
   }).catch(err => console.warn('refine status check failed', err));
 }
