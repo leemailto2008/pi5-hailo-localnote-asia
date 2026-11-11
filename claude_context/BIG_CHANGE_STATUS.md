@@ -165,6 +165,7 @@
   把 GS3 的 PCM Playback Switch 關掉前後一樣（RMS 593／603）。來源未定：Pi／電源線圈聲、USB 雜訊進 GS3 麥克風、或 GS3 類比功放（PCM 靜音擋不到）。
   錄音中 CPU 只有 2.6%（上面 60 分），所以對錄音本身影響小；錄音後的 SenseVoice／分說話人滿載時才會出現。待使用者現場分辨聲音從哪裡出來
   （/home/pi/ln_e2e/acoustic_gs3/load_ab.sh：滿載／閒置每 10 s 切換；gs3_demo.sh：播 30 s 原會議同時錄、立刻轉文字）。
+  16:17 跑過 load_ab.sh 與 gs3_demo.sh（30 s 播放錄音轉文字正常）；使用者 17:29：來源先不管，下次再注意。
 - 後續 #7 錯誤分類（30 分 GS3 實錄的 SenseVoice 逐字稿 vs fixture，去數字後 difflib 對齊，.cc_scratch/gs3/errs.py；Windows 沒有 OpenCC，所以這裡沒做 s2twp 正規化）：
   - 不是辨識錯：「台→臺」35、「台設備→臺裝置」7 —— 來自 to_taiwan_traditional 的 OpenCC s2twp（實測 s2twp：一台设备→一臺裝置；s2tw：一臺設備）。
     Pi 上 scoring.norm 兩邊都做 s2twp，所以表內 CER 不含這類差異；但使用者看到的逐字稿會把「設備」寫成「裝置」、「台」寫成「臺」。另「荧幕」三種設定都轉成「熒幕」（台灣用「螢幕」）。
