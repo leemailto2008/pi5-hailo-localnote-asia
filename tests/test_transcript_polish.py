@@ -99,8 +99,26 @@ def test_polish_fix_uses_cpu_first_and_strips_echoed_header(monkeypatch):
     res = _run(tp.polish_transcript("確認期", "fix", source="refine"))
     assert res["polished"] == "確認日期"
     assert res["source"] == "refine"
-    assert seen[0]["cpu_first"] is (tp.POLISH_BACKEND == "cpu")
+    assert seen[0]["cpu_first"] is True
     assert seen[0]["system"] == tp.FIX_SYSTEM
+
+
+def test_polish_rewrite_uses_hailo_first(monkeypatch):
+    # 11-11 量測：rewrite 用 CPU qwen2.5:3b 會改掉人名，Hailo qwen3:1.7b 不會（見檔頭）。
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 80, seen))
+    _run(tp.polish_transcript("一" * 100, "rewrite"))
+    assert seen[0]["cpu_first"] is False
+    assert seen[0]["system"] == tp.REWRITE_SYSTEM
+
+
+def test_polish_backend_is_chosen_per_mode(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tp, "POLISH_BACKENDS", {"fix": "hailo", "rewrite": "cpu"})
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of, seen))
+    _run(tp.polish_transcript("確認日期", "fix"))
+    _run(tp.polish_transcript("一" * 100, "rewrite"))
+    assert [s["cpu_first"] for s in seen] == [False, True]
 
 
 def test_polish_reports_progress_per_chunk(monkeypatch):

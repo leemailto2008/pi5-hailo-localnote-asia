@@ -12,9 +12,12 @@ transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11；2026-11
   - 新 fix（輸出全文）：Hailo qwen3:1.7b 照抄原文（0 處修改）；CPU qwen2.5:3b 只收同音字與 1 字補字時
     SenseVoice 稿 實錄 5 分 0.1791／0.0757 → 0.1761／0.0721、10 分 0.1890／0.0645 → 0.1825／0.0568，事實召回不變；
     Hailo 即時稿 5 分 0.2206／0.1442 → 0.2176／0.1407。
-  - rewrite（Hailo qwen3:1.7b）：即時稿 CER 不變（只改標點）。
-  → 潤稿改用 CPU Ollama 優先（llm_backend.cpu_first_backends），Hailo 為備援；只在錄音後執行，
-    錄音一開始就關掉串流（Ollama 隨即停止生成），剩下的段落保留原文。
+  - rewrite（同一版程式 9b73333，SenseVoice 稿去掉說話人標籤；CER／事實召回）：
+      CPU qwen2.5:3b   實錄 5 分 0.1802 → 0.1893、事實 0.896 → 0.866（把人名「李協理」改掉）；5 分第二次錄 0.1731 → 0.1751
+      Hailo qwen3:1.7b 實錄 5 分 0.1802 → 0.1781、事實不變；5 分第二次錄 0.1731 → 0.1680、事實不變
+    （Hailo 即時稿：CPU 0.2561 → 0.2480、Hailo → 0.2551，事實都不變；網頁預設來源是高精度稿，以它為準。）
+  → fix 用 CPU Ollama 優先（llm_backend.cpu_first_backends）、Hailo 備援；rewrite 用 Hailo 優先（CPU 零占用）、CPU 備援。
+    只在錄音後執行，錄音一開始就關掉串流（實測：開始錄音 1 秒內 Ollama 停止，CPU 0%），剩下的段落保留原文。
 
 處理方式：
   - 長逐字稿切成數段 (每段約 MAX_CHUNK_CHARS 字)，依序送 LLM，避免小模型上下文過長。
@@ -37,8 +40,11 @@ logger = logging.getLogger(__name__)
 
 MODES = ("fix", "rewrite")
 MAX_CHUNK_CHARS = 600
-# cpu = CPU Ollama (qwen2.5:3b) 優先、Hailo 備援；hailo = Hailo 優先。量測見檔頭。
-POLISH_BACKEND = os.environ.get("PI5_POLISH_BACKEND", "cpu").strip().lower()
+# 每種模式的後端：cpu = CPU Ollama (qwen2.5:3b) 優先、Hailo 備援；hailo = Hailo 優先。量測見檔頭。
+# 設了 PI5_POLISH_BACKEND 就兩種模式都用它（量測／除錯用）。
+_BACKEND_DEFAULT = {"fix": "cpu", "rewrite": "hailo"}
+_BACKEND_OVERRIDE = os.environ.get("PI5_POLISH_BACKEND", "").strip().lower()
+POLISH_BACKENDS = {mode: _BACKEND_OVERRIDE or default for mode, default in _BACKEND_DEFAULT.items()}
 FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
 OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
@@ -193,14 +199,14 @@ def _rewrite_numbers_ok(src: str, out: str) -> bool:
     return Counter(_NUMBER_RE.findall(src)) == Counter(_NUMBER_RE.findall(out))
 
 
-async def _complete(prompt: str, system: str, temperature: float, num_predict: int,
+async def _complete(mode: str, prompt: str, system: str, temperature: float, num_predict: int,
                     stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
-    """串流取得模型輸出。should_stop() 成立就關掉串流（Ollama 隨即停止生成）並回傳 None。"""
+    """串流取得模型輸出（後端依 POLISH_BACKENDS[mode]）。should_stop() 成立就關掉串流（Ollama 隨即停止生成）並回傳 None。"""
     parts: List[str] = []
     stream = aiter_chat_stream(
         prompt, system=system, temperature=temperature, num_predict=num_predict,
         timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / OUTPUT_MIN_TOKENS_PER_SEC),
-        hailo_retries=1, cpu_first=POLISH_BACKEND == "cpu",
+        hailo_retries=1, cpu_first=POLISH_BACKENDS[mode] == "cpu",
     )
     async with contextlib.aclosing(stream):
         async for token, _done, backend in stream:
@@ -217,7 +223,7 @@ def _strip_echoed_header(out: str) -> str:
 
 
 async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
-    raw = await _complete(build_fix_prompt(chunk), FIX_SYSTEM, 0.0, max(128, 2 * len(chunk)), stats, should_stop)
+    raw = await _complete("fix", build_fix_prompt(chunk), FIX_SYSTEM, 0.0, max(128, 2 * len(chunk)), stats, should_stop)
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
@@ -228,7 +234,7 @@ async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Call
 
 
 async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
-    raw = await _complete(build_rewrite_prompt(chunk), REWRITE_SYSTEM, 0.2, max(128, 2 * len(chunk)), stats, should_stop)
+    raw = await _complete("rewrite", build_rewrite_prompt(chunk), REWRITE_SYSTEM, 0.2, max(128, 2 * len(chunk)), stats, should_stop)
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
