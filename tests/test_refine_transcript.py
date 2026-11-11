@@ -239,3 +239,15 @@ def test_diarize_sentences_all_short_is_one_speaker(monkeypatch):
     sents = [Sentence(0.0, 0.3, "好"), Sentence(1.0, 1.2, "對")]
     assert rt.diarize_sentences(_samples([]), sents) is True
     assert [s.speaker for s in sents] == [0, 0]
+
+def test_merge_close_clusters_joins_split_speaker_but_keeps_distinct_ones():
+    # 群 0 與 1 中心幾乎同方向（同一人被拆開），群 2 方向不同
+    emb = [[1.0, 0.0, 0.0], [0.98, 0.2, 0.0], [0.97, 0.1, 0.1], [0.0, 1.0, 0.0], [0.1, 0.99, 0.0]]
+    labels = [0, 0, 1, 2, 2]
+    assert rt.merge_close_clusters(labels, emb, 0.8) == [0, 0, 0, 2, 2]
+
+
+def test_merge_close_clusters_leaves_dissimilar_and_single_cluster_alone():
+    emb = [[1.0, 0.0], [0.0, 1.0]]
+    assert rt.merge_close_clusters([0, 1], emb, 0.8) == [0, 1]
+    assert rt.merge_close_clusters([3, 3], emb, 0.8) == [3, 3]

@@ -38,14 +38,21 @@ NUM_THREADS = int(os.environ.get("PI5_SHERPA_THREADS", "4"))
 # SenseVoice 語言：auto 每句自動判斷。2026-11-11 實測：中文合成會議 CER 與 zh 相當（5／10／15 分：auto 0.166／0.179／0.1858，zh 0.166／0.177／0.1875）；
 # 英文新聞夾中文廣告，zh 把英文段辨成亂碼中文，auto 英文段正常、中文廣告也正確。見 claude_context/BIG_CHANGE_STATUS.md。
 ASR_LANGUAGE = os.environ.get("PI5_SENSEVOICE_LANGUAGE", "auto")
+# VAD 切句的最短靜音（秒）。2026-11-11 GS3 實錄 5／10 分：0.25 → CER 0.181／0.1915，0.4 → 0.170／0.184，0.6 → 0.169／0.1815；
+# 乾淨音檔 0.163／0.164／0.162（不變）。調大會讓停頓短於它的換人併成同一句，逐句分說話人就分不開；
+# 合成資料換人停頓都 ≥ 0.8 s，量不到這個風險，真人會議驗證前維持 0.25。
+VAD_MIN_SILENCE_S = float(os.environ.get("PI5_VAD_MIN_SILENCE", "0.25"))
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
 # pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
-# 2026-11-11 逐句正確率（門檻 0.6、MIN_EMBED_S 1.0）：合成會議 5／15／30 分 100%（4 人；pyannote 86／76／93%）；
-# GS3 喇叭→麥克風實錄 5／10 分 100%／96.6%（pyannote 90.0%／84.1%）。門檻 0.5 實錄會分太多人，0.65 起合成會議兩個相近女聲會併成一人。
-# Pi 上分說話人耗時：5 分鐘 6.5 s（pyannote 67 s）、60 分鐘 74 s（pyannote 824 s）。
+# 分群後再把「群中心餘弦相似度 ≥ CENTROID_MERGE_COS」的群合併（同一人被拆成兩群時中心很近）。
+# 2026-11-11 量測（CAM++ 嵌入）：不同人的群中心最高 0.70（兩個相近的 TTS 女聲），同一人被拆開的兩群 0.875。
+# 逐句正確率（門檻 0.55、合併 0.8、MIN_EMBED_S 1.0）：合成會議 5／15／30 分 100%（4 人；pyannote 86／76／93%）；
+# GS3 喇叭→麥克風實錄 5／10 分 100%／100%（4 人；pyannote 90.0%／84.1%）。不合併時門檻 0.5 實錄分太多人，0.65 起合成會議兩個相近女聲併成一人。
+# Pi 上分說話人耗時：5 分鐘 5.4 s（pyannote 67 s）、60 分鐘 74 s（pyannote 824 s）。
 # 逐句法無法切開同一句內換人（VAD 停頓 < 0.25 s 的搶話），必要時用環境變數切回 pyannote。
 DIARIZE_METHOD = os.environ.get("PI5_DIARIZE_METHOD", "sentence")
-SENTENCE_CLUSTER_THRESHOLD = 0.6
+SENTENCE_CLUSTER_THRESHOLD = 0.55
+CENTROID_MERGE_COS = 0.8
 MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。」、實錄的殘響），借時間上最近的長句的說話人
 # pyannote 流程的分群門檻：sherpa 預設 0.5 在 15 分鐘合成會議切出 8–10 人（實際 4 人）；0.7 在 5／10／15／30 分鐘都找到 4–5 人。
 CLUSTER_THRESHOLD = 0.7
@@ -131,7 +138,7 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     )
     cfg = sherpa_onnx.VadModelConfig()
     cfg.silero_vad.model = model_path("vad")
-    cfg.silero_vad.min_silence_duration = 0.25
+    cfg.silero_vad.min_silence_duration = VAD_MIN_SILENCE_S
     cfg.silero_vad.min_speech_duration = 0.25
     cfg.silero_vad.max_speech_duration = 20
     cfg.sample_rate = SAMPLE_RATE
@@ -202,6 +209,28 @@ def diarize(samples, should_stop: StopFn = None, on_progress: ProgressFn = None)
     return [(r.start, r.end, r.speaker) for r in result]
 
 
+def merge_close_clusters(labels: Sequence[int], embeddings, min_cos: float) -> List[int]:
+    """群中心（正規化嵌入的平均再正規化）兩兩餘弦相似度最高的一對若 ≥ min_cos 就合併，重複到沒有為止。"""
+    import numpy as np
+
+    lab = np.asarray(labels, dtype=int).copy()
+    unit = np.asarray(embeddings, dtype=np.float64)
+    unit = unit / np.maximum(np.linalg.norm(unit, axis=1, keepdims=True), 1e-12)
+    while True:
+        ids = sorted(set(lab.tolist()))
+        if len(ids) < 2:
+            break
+        cen = np.stack([unit[lab == k].mean(axis=0) for k in ids])
+        cen = cen / np.maximum(np.linalg.norm(cen, axis=1, keepdims=True), 1e-12)
+        sim = cen @ cen.T
+        np.fill_diagonal(sim, -1.0)
+        a, b = np.unravel_index(int(np.argmax(sim)), sim.shape)
+        if sim[a, b] < min_cos:
+            break
+        lab[lab == ids[b]] = ids[a]
+    return lab.tolist()
+
+
 def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = None,
                       on_progress: ProgressFn = None) -> bool:
     """逐句分說話人：每句（≥ MIN_EMBED_S）算一個 CAM++ 嵌入，FastClustering 分群後寫入 sentence.speaker；
@@ -232,7 +261,8 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
         embeddings.append(extractor.compute(stream))
     clustering = sherpa_onnx.FastClustering(
         sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SENTENCE_CLUSTER_THRESHOLD))
-    labels = clustering(np.ascontiguousarray(np.array(embeddings, dtype=np.float32)))
+    emb = np.ascontiguousarray(np.array(embeddings, dtype=np.float32))
+    labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
     for i, label in zip(long_idx, labels):
         sentences[i].speaker = int(label)
     mids = np.array([(sentences[i].start + sentences[i].end) / 2 for i in long_idx])
