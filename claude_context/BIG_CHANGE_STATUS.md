@@ -123,13 +123,15 @@
   | 10 分（m_1794367149） | 0.2555／0.807 | 0.1915／0.864 | 0.833／1.0 | 80 s |
   錄音相對原檔延遲 1.62–1.64 s（互相關估計，/home/pi/ln_e2e/acoustic_gs3/shift_fixture.py），說話人評分用平移後的 fixture。
 - ASR 比較（5 分會議，Pi 5，compare_asr.py；faster-whisper 參數同 voice_pipeline 的 CPU 路徑，beam 5 另加）：
-  | 引擎 | 乾淨 WAV CER | GS3 聲學 CER | RTF |
+  | 引擎 | 乾淨 CER（不計數字） | GS3 聲學 CER（不計數字） | RTF |
   |---|---|---|---|
-  | SenseVoice small int8 | 0.163 | 0.181 | 0.05 |
-  | faster-whisper small int8 beam 5 | 0.178 | 0.182 | 0.65 |
-  | faster-whisper small int8 beam 1 | 0.266 | 0.212 | 0.44 |
-  | Hailo Whisper-Small 即時（NPU） | 未量（11-10 數位 10 分 0.2265） | 0.221 | CPU 0 |
-  結論：SenseVoice 準確度最好或持平、速度快 9–13 倍；維持「錄音中 Hailo Whisper、錄音後 SenseVoice」。
+  | SenseVoice small int8 | 0.163（0.056） | 0.181（0.078） | 0.05 |
+  | faster-whisper small int8 beam 5 | 0.178（0.083） | 0.182（0.083） | 0.65 |
+  | faster-whisper small int8 beam 1 | 0.266（0.181） | 0.212（0.119） | 0.44 |
+  | Hailo Whisper-Small 即時（NPU） | 0.2277（0.145）* | 0.221（0.144） | CPU 0 |
+  *12:22 數位 e2e 5 分（/home/pi/ln_e2e/digital_1111/5min，PASS，紀要延遲 91.7 s）。「不計數字」去掉阿拉伯與中文數字，排除 ITN 格式差異
+  （/home/pi/ln_e2e/acoustic_gs3/cer_table.py）。
+  結論：SenseVoice 準確度最好（不計數字：乾淨 5.6% vs Whisper beam 5 8.3%、Hailo 即時 14.5%），速度快 9–13 倍；維持「錄音中 Hailo Whisper、錄音後 SenseVoice」。
 - 分說話人改為逐句法（DIARIZE_METHOD=sentence）：每句（SenseVoice VAD 句子，≥ 1.0 s）算 CAM++ 嵌入、sherpa FastClustering 門檻 0.6；短句借時間上最近的長句。
   句子級正確率（一對一對應，.cc_scratch 外的 /home/pi/ln_e2e/sec_test、acoustic_gs3 腳本）：
   | 音訊 | pyannote（舊） | 逐句法 0.6／1.0 s |
@@ -143,6 +145,21 @@
   其他嵌入模型（逐句法，同資料）：ERes2Net base 合成 ≤ 0.7 正確、實錄 10 分需 ≥ 0.75，沒有共同區間；ERes2NetV2、ERes2Net large、CAM++ zh_en advanced 合成區間不比 CAM++ 寬；
   WeSpeaker ResNet34-LM 實錄 74–77%。嵌入先減會議平均再分群：實錄大幅變差，不採用。小群併入大群（< 5% 時長）：會把只講一行的第 4 人併掉，不採用。
   限制：逐句法切不開同一句內換人（VAD 停頓 < 0.25 s）；合成資料沒有搶話，真人會議未驗證。PI5_DIARIZE_METHOD=pyannote 可切回。
+  - 3fcf849（門檻 0.6、無合併）部署 .228 11:38（備份 20261111_113813）；/api/refine 對 m_1794367149：done、diarize_method=sentence、96.6%、5 人。推送 gitlab／origin 9fa2ef8..a643cf0。
+  - 實錄 10 分多出的第 5 群：HsiaoChen 的 6 句（全是同一人，群都純）。群中心餘弦（CAM++）：同一人被拆開 0.875；不同人最高 0.700（HsiaoChen~HsiaoYu，兩段實錄），乾淨 0.641。
+    → 加「群中心 cos ≥ 0.8 就合併」並把門檻改 0.55：實錄 5／10 分 100%／100%（4 人），合成 5／15／30（x86）、60（Pi）全 100%（4 人）。
+    合併的掃描（門檻 0.5／0.55／0.6 × 合併 0.75／0.8／0.85）：實錄 10 分只有門檻 0.5 為 99.4%（5 人），其餘 100%；合成全部 100%。
+  - 240 分（Pi，meeting_240min.wav，2647 句）：門檻 0.6 無合併（3fcf849 的完整 CLI）100%、4 人，分說話人 283.7 s（pyannote 3258 s、94.0%、8 人）；
+    同一批句子用門檻 0.55＋合併 0.8 也是 100%、4 人（門檻 0.5 為 99.96%、多 1 個 1 句的群）。此輪 ASR 1547.7 s 是與其他測試同時跑的值（單獨跑約 653 s）。
+  - b4c9140（門檻 0.55＋合併 0.8＋PI5_VAD_MIN_SILENCE）部署 .228 12:21（備份 20261111_122107）；/api/refine 對 m_1794367149：100%、4 人，asr 28.6 s、diarize 10.6 s。
+- SenseVoice VAD 掃描（/home/pi/ln_e2e/sec_test/vad_sweep.py，min_silence × max_speech × 門檻）：
+  | min_silence | 實錄 5 分 CER（句數） | 實錄 10 分 CER（句數） | 乾淨 5 分 CER（句數） |
+  |---|---|---|---|
+  | 0.25（現行） | 0.181（90） | 0.1915（176） | 0.163（59） |
+  | 0.4 | 0.170（64） | 0.184（126） | 0.164（55） |
+  | 0.6 | 0.169（59） | 0.1815（118） | 0.162（49） |
+  max_speech 12 與 20 結果相同；VAD 門檻 0.35 乾淨音檔句數掉到 37／28（-55 dBFS 底噪讓 VAD 不斷開，跨人風險），不採用。
+  min_silence 調大會把停頓短於它的換人併成同一句（逐句分說話人分不開），合成資料換人停頓 ≥ 0.8 s 量不到 → 維持 0.25，加 PI5_VAD_MIN_SILENCE 供真人會議 A/B；已請使用者決定。
 
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
@@ -255,4 +272,10 @@
   - #1 聲學實測：白天（07:00–19:00）不做，GS3 白天條款只在 Pi 非錄音時才適用；本輪未呼叫 /api/bt、未放音、未用耳麥。
   - 數位工作：清單 #2–#4 已完成，#5 待使用者決定，無剩餘可做的數位改善；本輪未改程式、未跑 pytest、未部署、未 commit。
   - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
+
+- 2026-11-11 12:24 排程輪次（台北 12:24，白天窗）：互動鎖無（標頭無該行）。Pi /api/status state=recording（job m_1794370929，錄音進度 45%，elapsed 142.7 s／total 316 s，非本輪啟動，來源未查證）→ 本輪不在 Pi 上跑評估、不部署、不重啟；未呼叫 /api/bt、未 SSH。
+  - #1 聲學實測：白天不做（須待 19:00 後）；耳麥連線狀態本輪未查。
+  - 數位工作：清單 #2–#4 已完成，#5 待使用者決定，無剩餘可做的數位改善；本輪未改程式、未跑 pytest、未部署、未 commit。
+  - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 讀取 Pi /api/status。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
   - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。

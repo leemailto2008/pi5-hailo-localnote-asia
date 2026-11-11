@@ -46,9 +46,10 @@ VAD_MIN_SILENCE_S = float(os.environ.get("PI5_VAD_MIN_SILENCE", "0.25"))
 # pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
 # 分群後再把「群中心餘弦相似度 ≥ CENTROID_MERGE_COS」的群合併（同一人被拆成兩群時中心很近）。
 # 2026-11-11 量測（CAM++ 嵌入）：不同人的群中心最高 0.70（兩個相近的 TTS 女聲），同一人被拆開的兩群 0.875。
-# 逐句正確率（門檻 0.55、合併 0.8、MIN_EMBED_S 1.0）：合成會議 5／15／30 分 100%（4 人；pyannote 86／76／93%）；
-# GS3 喇叭→麥克風實錄 5／10 分 100%／100%（4 人；pyannote 90.0%／84.1%）。不合併時門檻 0.5 實錄分太多人，0.65 起合成會議兩個相近女聲併成一人。
-# Pi 上分說話人耗時：5 分鐘 5.4 s（pyannote 67 s）、60 分鐘 74 s（pyannote 824 s）。
+# 逐句正確率（門檻 0.55、合併 0.8、MIN_EMBED_S 1.0）：合成會議 5／15／30／60／240 分 100%（4 人；pyannote 86／76／93／96.5／94.0%，
+# 60、240 分分出 6、8 人）；GS3 喇叭→麥克風實錄 5／10 分 100%／100%（4 人；pyannote 90.0%／84.1%）。
+# 不合併時門檻 0.5 實錄分太多人，0.65 起合成會議兩個相近女聲併成一人。
+# Pi 上分說話人耗時：5 分鐘 5.4 s（pyannote 67 s）、60 分鐘 74 s（824 s）、240 分鐘約 284 s（3258 s）。
 # 逐句法無法切開同一句內換人（VAD 停頓 < 0.25 s 的搶話），必要時用環境變數切回 pyannote。
 DIARIZE_METHOD = os.environ.get("PI5_DIARIZE_METHOD", "sentence")
 SENTENCE_CLUSTER_THRESHOLD = 0.55
