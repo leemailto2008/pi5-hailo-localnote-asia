@@ -225,6 +225,47 @@ def test_polish_rewrite_accepts_when_numbers_are_kept(monkeypatch):
     assert res["fact_rejected_chunks"] == 0
 
 
+LABELLED = "說話人1：負責人是許經理。第三個議題是行銷活動。\n說話人2：攤位費15萬元。\n說話人1：週五回報。"
+
+
+def test_split_labels_separates_speaker_labels():
+    labels, bodies = tp.split_labels("說話人1：你好。\n沒有標籤\n說話人12：嗯。")
+    assert labels == ["說話人1：", "", "說話人12："]
+    assert bodies == ["你好。", "沒有標籤", "嗯。"]
+
+
+def test_cut_like_restores_line_count_when_model_splits_a_line():
+    src = ["負責人是許經理。第三個議題是行銷活動。", "攤位費15萬元。", "週五回報。"]
+    out = "負責人是許經理。\n第三個議題是行銷活動。\n攤位費15萬元。\n週五回報。"
+    assert tp.cut_like(src, out) == src
+
+
+def test_cut_like_follows_edits_and_merged_lines():
+    src = ["行成4天。", "預算抓12萬元。"]
+    out = "行程4天。預算抓12萬元。"
+    assert tp.cut_like(src, out) == ["行程4天。", "預算抓12萬元。"]
+
+
+def test_polish_rewrite_keeps_speaker_labels_out_of_the_model(monkeypatch):
+    seen = []
+    # 模型照實錄行為：沒有標籤、在議題轉換處把一行拆成兩行、順手修錯字。
+    reply = lambda p: "負責人是許經理。\n第三個議題是行銷活動。\n攤位費十五萬元。\n週五回報。".replace("十五", "15")
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply, seen))
+    res = _run(tp.polish_transcript(LABELLED.replace("議題", "議體"), "rewrite", source="refine"))
+    assert "說話人" not in _chunk_of(seen[0]["prompt"])
+    assert res["polished"] == LABELLED
+    assert res["rejected_lines"] == 0 and res["fact_rejected_chunks"] == 0
+
+
+def test_polish_rewrite_keeps_only_the_line_whose_number_changed(monkeypatch):
+    reply = lambda p: "負責人是許經理，第三個議題是行銷活動。\n攤位費16萬元。\n週五前回報。"
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply))
+    res = _run(tp.polish_transcript(LABELLED, "rewrite", source="refine"))
+    assert res["polished"].split("\n") == [
+        "說話人1：負責人是許經理，第三個議題是行銷活動。", "說話人2：攤位費15萬元。", "說話人1：週五前回報。"]
+    assert res["rejected_lines"] == 1
+
+
 def test_output_timeout_grows_with_output_budget(monkeypatch):
     seen = []
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 500, seen))

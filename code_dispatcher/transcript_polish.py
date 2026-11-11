@@ -112,6 +112,16 @@ def build_rewrite_prompt(chunk: str) -> str:
     )
 
 
+def build_rewrite_lines_prompt(lines_text: str) -> str:
+    """高精度逐字稿（每行一位說話人）用：說話人標籤不送模型，只送每行的內容。"""
+    return (
+        "以下是會議逐字稿片段，每一行是一個人說的一段話。請在不增加資訊的前提下，把每一行的口語贅詞與明顯錯字整理成通順的書面語。\n"
+        "規則：輸出的行數必須和原文相同，一行對一行，不要合併或拆開行；保留所有人名、數字、日期、專有名詞與決議內容；"
+        "使用原文的語言，不要翻譯；只輸出整理後的文字。\n\n"
+        f"逐字稿片段：\n{lines_text}"
+    )
+
+
 def protected_spans(text: str) -> List[Tuple[int, int]]:
     """說話人標籤（「說話人1：」）的位置；潤稿的修改碰到就不收。"""
     return [(m.start(), m.end()) for m in _LABEL_RE.finditer(text)]
@@ -181,6 +191,38 @@ def diff_segments(src: str, dst: str) -> List[List[str]]:
     return out
 
 
+def split_labels(chunk: str) -> Tuple[List[str], List[str]]:
+    """每行拆成（說話人標籤, 內容）；沒有標籤的行，標籤為空字串。"""
+    labels: List[str] = []
+    bodies: List[str] = []
+    for line in chunk.split("\n"):
+        m = _LABEL_RE.match(line)
+        labels.append(m.group(0) if m else "")
+        bodies.append(line[m.end():] if m else line)
+    return labels, bodies
+
+
+def cut_like(src_lines: Sequence[str], out: str) -> List[str]:
+    """把模型輸出 out 切回和 src_lines 一樣的行數：用 difflib 對齊（原文各行接起來 ↔ 輸出去掉換行），
+    在原文換行處對應的位置下刀，切點靠向 ±6 字內最近的標點後面。
+    小模型重寫時會自己拆開或合併行（11-11 實測 Hailo qwen3:1.7b 18 行變 20 行，在議題轉換處拆開），只照輸出的換行對不起來。"""
+    src = "".join(src_lines)
+    dst = "".join(part.strip() for part in out.split("\n"))
+    amap = [0] * (len(src) + 1)
+    for _tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+        for k in range(i1, i2 + 1):
+            amap[k] = j1 + (round((k - i1) * (j2 - j1) / (i2 - i1)) if i2 > i1 else 0)
+    cuts = [0]
+    pos = 0
+    for line in src_lines[:-1]:
+        pos += len(line)
+        c = max(amap[pos], cuts[-1])
+        near = [j for j in range(max(cuts[-1] + 1, c - 6), min(len(dst), c + 6) + 1) if dst[j - 1] in _CUT_CHARS]
+        cuts.append(min(near, key=lambda j: abs(j - c)) if near else c)
+    cuts.append(len(dst))
+    return [dst[a:b] for a, b in zip(cuts, cuts[1:])]
+
+
 def _rewrite_length_ok(src: str, out: str) -> bool:
     """擋掉模型截斷或亂加內容：輸出長度須落在原文的 0.5 倍到 1.5 倍 (+20 字) 之間。"""
     return 0.5 * len(src) <= len(out) <= 1.5 * len(src) + 20
@@ -234,17 +276,33 @@ async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Call
 
 
 async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
-    raw = await _complete("rewrite", build_rewrite_prompt(chunk), REWRITE_SYSTEM, 0.2, max(128, 2 * len(chunk)), stats, should_stop)
+    labels, bodies = split_labels(chunk)
+    labelled = any(labels)
+    # 有說話人標籤（高精度逐字稿）：標籤不送模型。11-11 實測（實錄 5 分第二次錄，帶標籤送 Hailo qwen3:1.7b／CPU qwen2.5:3b）：
+    # 3 段全被數字檢查擋下，網頁重新潤稿等於沒作用；原始輸出顯示模型拿掉標籤、整段跳過 6 行（589 → 422 字）。
+    src = "\n".join(bodies) if labelled else chunk
+    prompt = build_rewrite_lines_prompt(src) if labelled else build_rewrite_prompt(chunk)
+    raw = await _complete("rewrite", prompt, REWRITE_SYSTEM, 0.2, max(128, 2 * len(src)), stats, should_stop)
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
-    if not _rewrite_length_ok(chunk, out):
+    if not _rewrite_length_ok(src, out):
         stats["rejected_chunks"] += 1
         return chunk
-    if not _rewrite_numbers_ok(chunk, out):
-        stats["fact_rejected_chunks"] += 1
-        return chunk
-    return out
+    if not labelled:
+        if not _rewrite_numbers_ok(chunk, out):
+            stats["fact_rejected_chunks"] += 1
+            return chunk
+        return out
+    # 輸出切回原本各行、接回標籤；數字被改或長度異常的那一行保留原文（不拖累同段其他行）。
+    lines: List[str] = []
+    for label, body, new in zip(labels, bodies, cut_like(bodies, out)):
+        new = new.strip()
+        if not new or not _rewrite_length_ok(body, new) or not _rewrite_numbers_ok(body, new):
+            stats["rejected_lines"] += 1
+            new = body
+        lines.append(label + new)
+    return "\n".join(lines)
 
 
 async def polish_transcript(
@@ -274,6 +332,7 @@ async def polish_transcript(
         "failed_chunks": 0,
         "rejected_chunks": 0,
         "fact_rejected_chunks": 0,
+        "rejected_lines": 0,
         "accepted_edits": 0,
         "rejected_edits": 0,
         "stopped": False,
