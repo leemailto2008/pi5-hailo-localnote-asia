@@ -1,5 +1,5 @@
 #!/bin/bash
-# 在 Pi 上安裝高精度逐字稿（code_dispatcher/refine_transcript.py）需要的 sherpa-onnx 與模型。
+# 在 Pi 上安裝高精度逐字稿（code_dispatcher/refine_transcript.py）需要的 sherpa-onnx 與模型，以及潤稿用的 pypinyin。
 #   bash tools/ci/setup_sherpa_models.sh [模型目錄，預設 /home/pi/models/sherpa]
 # - sherpa-onnx 裝在 pi 使用者的 site-packages（服務用 /usr/bin/python3）。
 # - 模型共約 275 MB；已存在且 md5 正確的檔案不重抓。
@@ -19,6 +19,11 @@ if ! python3 -c 'import sherpa_onnx' 2>/dev/null; then
   python3 -m pip install --user --break-system-packages sherpa-onnx
 fi
 python3 -c 'import sherpa_onnx; print("sherpa-onnx", sherpa_onnx.__version__)'
+# 潤稿「修同音字與漏字」用 pypinyin 判斷同音（code_dispatcher/transcript_polish.py，2026-11-11）
+if ! python3 -c 'import pypinyin' 2>/dev/null; then
+  python3 -m pip install --user --break-system-packages pypinyin
+fi
+python3 -c 'import pypinyin; print("pypinyin", pypinyin.__version__)'
 
 mkdir -p "$DIR"
 cd "$DIR"

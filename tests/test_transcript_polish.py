@@ -46,28 +46,30 @@ def test_split_chunks_skips_blank_lines():
     assert tp.split_chunks("\n\n  \n", max_chars=600) == []
 
 
-def test_accept_small_edits_keeps_short_fixes_and_rejects_rewrites():
-    src = "請李協里確認期，然後我們今天就先討論到這裡"
-    dst = "請李協理確認日期，然後今天的會議到此結束"
-    out, st = tp.accept_small_edits(src, dst)
-    assert out.startswith("請李協理確認日期，")          # 同音字（替換 1 字）與漏字（補 1 字）收
-    assert out.endswith("我們今天就先討論到這裡")       # 整句改寫（被 difflib 拆成幾個小修改）不收，保留原文
-    assert st == {"accepted": 1, "rejected": 1}
+def test_accept_homophone_edits_keeps_homophones_and_one_char_insertions():
+    out, st = tp.accept_homophone_edits("請李協里確認期，行成三天", "請李協理確認日期，行程三天")
+    assert out == "請李協理確認日期，行程三天"     # 里→理、成→程（同音）、補「日」
+    assert st == {"accepted": 3, "rejected": 0}
 
 
-def test_accept_small_edits_limits_deletions():
-    out, _ = tp.accept_small_edits("好好的，開始", "好的，開始")
-    assert out == "好的，開始"                            # 刪 1 字（口吃）收
-    out, _ = tp.accept_small_edits("我們我們我們來看第一項", "來看第一項")
-    assert out == "我們我們我們來看第一項"                # 刪一大段不收
+def test_accept_homophone_edits_rejects_rewrites_deletions_and_number_changes():
+    out, _ = tp.accept_homophone_edits("我們今天就先討論到這裡", "今天的會議到此結束")
+    assert out == "我們今天就先討論到這裡"           # 刪字、非同音的改寫都不收
+    out, _ = tp.accept_homophone_edits("庫存。第十二個，吳副理", "庫存管理。第12個，吳部長")
+    assert out == "庫存。第十二個，吳副理"           # 補 2 字、數字寫法、非同音（副理→部長）都不收
 
 
-def test_accept_small_edits_never_touches_speaker_labels():
+def test_accept_homophone_edits_never_touches_speaker_labels():
     src = "說話人1：大家好\n說話人2：李協里好"
     dst = "說話人3：大家好\n說話人2：李協理好"
-    out, st = tp.accept_small_edits(src, dst, tp.protected_spans(src))
+    out, st = tp.accept_homophone_edits(src, dst, tp.protected_spans(src))
     assert out == "說話人1：大家好\n說話人2：李協理好"
     assert st == {"accepted": 1, "rejected": 1}
+
+
+def test_accept_homophone_edits_keeps_original_layout():
+    out, st = tp.accept_homophone_edits("第一行\n第二行", "第一行第二行")
+    assert out == "第一行\n第二行" and st == {"accepted": 0, "rejected": 0}
 
 
 def test_polish_fix_applies_per_chunk_and_keeps_original_on_llm_error(monkeypatch):
@@ -77,17 +79,17 @@ def test_polish_fix_applies_per_chunk_and_keeps_original_on_llm_error(monkeypatc
         calls.append(prompt)
         if len(calls) == 2:
             raise LLMError("boom")
-        return _chunk_of(prompt).replace("改報", "改善")
+        return _chunk_of(prompt).replace("行成", "行程")
 
-    text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590])
+    text = "\n".join(["行成" + "甲" * 590, "行成" + "乙" * 590])
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply))
     res = _run(tp.polish_transcript(text, "fix"))
     assert res["chunks"] == 2 and res["failed_chunks"] == 1
     assert res["backend"] == "CPU Ollama qwen2.5:3b-opt"
-    assert res["polished"] == "改善" + "甲" * 590 + "\n\n" + "改報" + "乙" * 590
+    assert res["polished"] == "行程" + "甲" * 590 + "\n\n" + "行成" + "乙" * 590
     assert res["accepted_edits"] == 1
     assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
-    assert ["rep", "善", "報"] in res["segments"]
+    assert ["rep", "程", "成"] in res["segments"]
     assert res["diff_counts"] == {"rep": 1, "ins": 0, "del": 0}
 
 
@@ -115,16 +117,16 @@ def test_polish_stops_between_chunks_and_keeps_rest_original(monkeypatch):
 
     def reply(prompt):
         calls.append(prompt)
-        return _chunk_of(prompt).replace("改報", "改善")
+        return _chunk_of(prompt).replace("行成", "行程")
 
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply))
-    text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
+    text = "\n".join(["行成" + "甲" * 590, "行成" + "乙" * 590, "行成" + "丙" * 590])
     # 第一段做完後「開始錄音」：第二段開始前就要停。
     done = []
     res = _run(tp.polish_transcript(text, "fix", on_progress=lambda d, t: done.append(d), should_stop=lambda: len(done) >= 1))
     assert len(calls) == 1
     assert res["stopped"] is True
-    assert res["polished"] == "\n\n".join(["改善" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
+    assert res["polished"] == "\n\n".join(["行程" + "甲" * 590, "行成" + "乙" * 590, "行成" + "丙" * 590])
     assert res["diff_counts"]["rep"] == 1   # 沒處理的段落不標
 
 

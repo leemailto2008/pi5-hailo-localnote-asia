@@ -3,14 +3,15 @@
 transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11；2026-11-11 改版)。
 
 兩種模式：
-  fix      修同音字與漏字。模型輸出校對後的全文，程式用 difflib 對齊原文，只接受小幅修改
-           （替換、補字 ≤ FIX_MAX_SPAN 字，刪字 ≤ FIX_MAX_DELETE 字，說話人標籤不動），其餘一律保留原文。
+  fix      修同音字與漏字。模型輸出校對後的全文，程式用 difflib 對齊原文，只收同音字替換（pypinyin 拼音相同）
+           與 1 字補字，其餘一律保留原文（見 accept_homophone_edits）。
   rewrite  整段重新潤稿。模型輸出整段改寫後文字，較完整，但較容易改掉原意，只能手動觸發。
 
 2026-11-11 GS3 實錄量測（tools：.cc_scratch/pe/polish_eval.py；CER／不計數字 CER，台灣用字修正後的稿為基準）：
   - 舊 fix（模型輸出 [{"from","to"}] 修改清單）：Hailo qwen3:1.7b 與 CPU qwen2.5:3b 幾乎都回空清單，CER 不變。
-  - 新 fix（輸出全文、只收小幅修改）：Hailo qwen3:1.7b 照抄原文（0 處修改）；CPU qwen2.5:3b
-    實錄 5 分 Hailo 即時稿 0.2206／0.1442 → 0.2146／0.1371、事實 0.896 → 0.910；SenseVoice 稿 0.1791／0.0757 → 0.1781／0.0721。
+  - 新 fix（輸出全文）：Hailo qwen3:1.7b 照抄原文（0 處修改）；CPU qwen2.5:3b 只收同音字與 1 字補字時
+    SenseVoice 稿 實錄 5 分 0.1791／0.0757 → 0.1761／0.0721、10 分 0.1890／0.0645 → 0.1825／0.0568，事實召回不變；
+    Hailo 即時稿 5 分 0.2206／0.1442 → 0.2176／0.1407。
   - rewrite（Hailo qwen3:1.7b）：即時稿 CER 不變（只改標點）。
   → 潤稿改用 CPU Ollama 優先（llm_backend.cpu_first_backends），Hailo 為備援；只在錄音後執行，
     錄音一開始就關掉串流（Ollama 隨即停止生成），剩下的段落保留原文。
@@ -38,14 +39,13 @@ MODES = ("fix", "rewrite")
 MAX_CHUNK_CHARS = 600
 # cpu = CPU Ollama (qwen2.5:3b) 優先、Hailo 備援；hailo = Hailo 優先。量測見檔頭。
 POLISH_BACKEND = os.environ.get("PI5_POLISH_BACKEND", "cpu").strip().lower()
-FIX_MAX_SPAN = 4      # fix 只接受這麼短的替換／補字（同音字、漏字）；更長的視為改寫，保留原文
-FIX_MAX_DELETE = 2    # fix 只接受這麼短的刪字
-FIX_MERGE_GAP = 2     # 兩處修改中間相同的字不超過這麼多就算同一處
+FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
 OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
 
 _CUT_CHARS = "。！？!?.；;，,"
 _LABEL_RE = re.compile(r"^說話人\d+：", re.M)   # 高精度逐字稿每段開頭的說話人標籤，潤稿不能動
+_CJK_RE = re.compile(r"^[\u4e00-\u9fff]+$")
 
 FIX_SYSTEM = "你是逐字稿校對工具。只輸出校對後的逐字稿全文，不輸出任何說明。"
 REWRITE_SYSTEM = "你是會議逐字稿整理工具。只輸出整理後的文字，不輸出任何說明或標題。"
@@ -118,32 +118,41 @@ def _touches(i1: int, i2: int, spans: Sequence[Tuple[int, int]]) -> bool:
     return any(a < i1 < b for a, b in spans)
 
 
-def accept_small_edits(src: str, dst: str, protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
-    """把模型的校對全文 dst 對齊原文 src（difflib），只收小幅修改，其餘位置保留原文。
-    相鄰的修改（中間相同的字 ≤ FIX_MERGE_GAP）併成一處再判斷，避免整句改寫被拆成幾個小修改混過去。
-    一處修改的原文與新文字都 ≤ FIX_MAX_SPAN 字（純刪字 ≤ FIX_MAX_DELETE 字），且不碰 protected 範圍才收。
+def sounds_alike(a: str, b: str) -> bool:
+    """兩段中文字數相同、每個字的拼音（不計聲調，pypinyin）都一樣 → 同音字。"""
+    from pypinyin import Style, lazy_pinyin
+    return len(a) == len(b) and lazy_pinyin(a, style=Style.NORMAL) == lazy_pinyin(b, style=Style.NORMAL)
+
+
+def accept_homophone_edits(src: str, dst: str,
+                           protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
+    """把模型的校對全文 dst 對齊原文 src（difflib），只收「修同音字與漏字」，其餘位置保留原文：
+      - 替換：兩邊都是中文、字數相同、拼音（不計聲調）相同；
+      - 補字：≤ FIX_MAX_INSERT 個中文字；
+      - 刪字、改數字或標點、改寫一律不收；protected 範圍（說話人標籤）不動。
+    11-11 量測（CPU qwen2.5:3b 的校對全文；SenseVoice 稿）：只收 ≤ 4 字的小修改時，實錄 10 分事實召回 0.879 → 0.871
+    （「吳副理→吳部長」「週五前→週前」這類改錯）；改成只收同音字與 1 字補字，0.879 不變、CER 0.189 → 0.1825。
     回傳 (新文字, {"accepted": 處數, "rejected": 處數})。"""
-    regions: List[List[int]] = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
-        if tag == "equal":
-            continue
-        if regions and i1 - regions[-1][1] <= FIX_MERGE_GAP:
-            regions[-1][1], regions[-1][3] = i2, j2
-        else:
-            regions.append([i1, i2, j1, j2])
     out: List[str] = []
     stats = {"accepted": 0, "rejected": 0}
     pos = 0
-    for i1, i2, j1, j2 in regions:
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
         out.append(src[pos:i1])
-        n_src, n_dst = i2 - i1, j2 - j1
-        small = n_src <= FIX_MAX_DELETE if n_dst == 0 else (n_src <= FIX_MAX_SPAN and n_dst <= FIX_MAX_SPAN)
-        if small and not _touches(i1, i2, protected):
-            out.append(dst[j1:j2])
-            stats["accepted"] += 1
+        old, new = src[i1:i2], dst[j1:j2]
+        if not old.strip() and not new.strip():
+            ok = False                      # 只差空白／換行：保留原文排版
+        elif tag == "replace":
+            ok = bool(_CJK_RE.match(old) and _CJK_RE.match(new)) and sounds_alike(old, new)
+        elif tag == "insert":
+            ok = len(new) <= FIX_MAX_INSERT and bool(_CJK_RE.match(new))
         else:
-            out.append(src[i1:i2])
-            stats["rejected"] += 1
+            ok = False
+        ok = ok and not _touches(i1, i2, protected)
+        out.append(new if ok else old)
+        if old.strip() or new.strip():
+            stats["accepted" if ok else "rejected"] += 1
         pos = i2
     out.append(src[pos:])
     return "".join(out), stats
@@ -212,7 +221,7 @@ async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Call
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
-    new_chunk, edits = accept_small_edits(chunk, out, protected_spans(chunk))
+    new_chunk, edits = accept_homophone_edits(chunk, out, protected_spans(chunk))
     stats["accepted_edits"] += edits["accepted"]
     stats["rejected_edits"] += edits["rejected"]
     return new_chunk
@@ -248,6 +257,11 @@ async def polish_transcript(
     """
     if mode not in MODES:
         raise ValueError(f"unknown polish mode: {mode}")
+    if mode == "fix":
+        try:
+            import pypinyin  # noqa: F401  同音判斷要用
+        except ImportError as e:
+            raise RuntimeError("缺少 pypinyin（python3 -m pip install --user --break-system-packages pypinyin）") from e
     chunks = split_chunks(text)
     stats: Dict[str, Any] = {
         "chunks": len(chunks),
