@@ -373,6 +373,11 @@
   /api/polish fix 1587 s（13 段）：0.2007 → 0.1968、事實不變、標籤 246／246 同序（改 19 字、補 1 字）。
   CSC 對照（csc_stack.py）：CSC 0.1987（24.7 s）、LLM fix 0.1968、LLM 後再 CSC 0.1961，事實都不變。
   rewrite（Hailo）1165 s：0.2007 → 0.1994、事實不變、標籤 246／246 同序、rejected_lines 2。e2e junit 20 項 0 失敗。
+- 00:52 25d946a（feat：修同音字可選 MacBERT4CSC，PI5_POLISH_FIX_ENGINE=csc；預設仍是 llm，行為不變）部署 .228（備份 20261112_005200）。
+  tools/ci/setup_csc_model.sh 在 .228 重跑：套件已有、model.onnx／tokenizer.json sha256 相符。
+  正式程式路徑整合驗證（csc_integ.py，PI5_POLISH_FIX_ENGINE=csc）：實錄 5 分 0.1802 → 0.1781、第二次錄 0.1731 → 0.1690、
+  10 分 0.1905 → 0.1875（與 csc_eval.py 相同），事實不變、標籤同序，含載入 5.3／5.4／8.7 s。
+  要切換：在 pi5-dispatcher-api.service 加 Environment=PI5_POLISH_FIX_ENGINE=csc 後重啟（待使用者決定）。
   Windows pytest：tests 617 passed，3 個既有的 Windows 限定失敗（stt_worker／npu_share 子行程 socket），test_bt_link_stats 需 fcntl 略過。
 
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
