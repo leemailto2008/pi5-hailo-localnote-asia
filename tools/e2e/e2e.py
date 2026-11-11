@@ -5,8 +5,10 @@
 → POST /api/record (預設 bypass_summary=false，只作用於本次，不改全域設定) → ffmpeg -re 即時播放測試音檔
 → 輪詢狀態至 done/error → 以 scoring.py 評分；mon.py 1 Hz 取樣資源。結束一定清除注入檔與 null sink。
 
+聲學模式 (--play-sink + --source)：不建 null sink，從實體喇叭播、app 錄實體麥克風 (例：USB 音效卡 GS3 放在關門的小房間)。
+
 usage:
-  e2e.py <wav> <fixture.json> [label] [--allow-bypass] [--out /tmp]
+  e2e.py <wav> <fixture.json> [label] [--allow-bypass] [--out /tmp] [--play-sink SINK --source SOURCE]
 """
 import argparse
 import datetime
@@ -117,7 +119,19 @@ def someone_else_using(st, now=None):
     return job not in own and (now or time.time()) - int(m.group(1)) < USER_IDLE_S
 
 
-def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp"):
+def routing(play_sink=None, source=None):
+    """回傳 (app 要錄的來源, 播放的 sink, 是否建立 null sink)。
+    預設數位直送：播進 null sink、app 錄它的 monitor。給 play_sink 與 source 時是聲學模式
+    (例：USB 音效卡喇叭播、同一張卡的麥克風收)，不建立 null sink。兩者必須一起給。"""
+    if (play_sink is None) != (source is None):
+        raise ValueError("聲學模式要同時指定 play_sink 與 source")
+    if play_sink is None:
+        return SINK + ".monitor", SINK, True
+    return source, play_sink, False
+
+
+def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", play_sink=None, source=None):
+    force_source, play_device, use_null_sink = routing(play_sink, source)
     fixture = json.load(open(fixture_path, encoding="utf-8"))
     dur = float(sh(f"ffprobe -v error -show_entries format=duration -of csv=p=0 '{wav}'").strip())
     st = api("/api/status")
@@ -125,10 +139,11 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp"):
         raise RuntimeError(f"app busy: {st.get('state')}")
     if someone_else_using(st) and not os.environ.get("LN_E2E_IGNORE_USER"):
         raise RuntimeError(f"app in use by someone else (job {st.get('job')}); set LN_E2E_IGNORE_USER=1 to run anyway")
-    sh(f"pw-cli destroy {SINK} 2>/dev/null")
-    sh("pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=%s media.class=Audio/Sink "
-       "audio.position=[MONO] audio.rate=16000 object.linger=true }'" % SINK)
-    time.sleep(1)
+    if use_null_sink:
+        sh(f"pw-cli destroy {SINK} 2>/dev/null")
+        sh("pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=%s media.class=Audio/Sink "
+           "audio.position=[MONO] audio.rate=16000 object.linger=true }'" % SINK)
+        time.sleep(1)
     mon_path = os.path.join(out_dir, f"mon_{label}.jsonl")
     sh("rm -f /tmp/mon.stop")
     mon = subprocess.Popen([sys.executable, os.path.join(HERE, "mon.py"), mon_path])
@@ -139,12 +154,12 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp"):
     api_lat, api_gaps, api_timeouts = [], [], 0
     try:
         with open(FORCE, "w") as f:
-            f.write(SINK + ".monitor")
+            f.write(force_source)
         job = api("/api/record", {"seconds": int(dur + 4), "bypass_summary": bool(bypass_summary)}).get("job")
         with open(OWN_JOBS, "a") as f:
             f.write(f"{job}\n")
         time.sleep(1.5)
-        play = subprocess.Popen(["ffmpeg", "-nostdin", "-v", "error", "-re", "-i", wav, "-f", "pulse", "-device", SINK, "ln_e2e"])
+        play = subprocess.Popen(["ffmpeg", "-nostdin", "-v", "error", "-re", "-i", wav, "-f", "pulse", "-device", play_device, "ln_e2e"])
         last, last_ok, fail_since = None, time.time(), None
         while time.time() - t0 < dur + post_record_budget_s(dur):
             q0 = time.time()
@@ -177,7 +192,8 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp"):
             os.remove(FORCE)
         except FileNotFoundError:
             pass
-        sh(f"pw-cli destroy {SINK} 2>/dev/null")
+        if use_null_sink:
+            sh(f"pw-cli destroy {SINK} 2>/dev/null")
         time.sleep(3)
         open("/tmp/mon.stop", "w").close()
         mon.wait(timeout=15)
@@ -196,6 +212,7 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp"):
     m = s.get("metrics") or {}
     res = {
         "label": label, "job": job, "state": s.get("state"), "msg": s.get("msg"), "bypass_summary": bool(bypass_summary),
+        "route": {"record": force_source, "play": play_device, "acoustic": not use_null_sink},
         "minutes": fixture.get("minutes"), "audio_s": round(dur, 1), "total_s": total, "rec_end_s": rec_end, "phases_t": phases,
         "summary_latency_s": m.get("total_latency") if m.get("llm_status") == "done" else None,
         "metrics": {k: m.get(k) for k in ("first_chunk_time", "first_stt_latency", "stt_tail_wait", "stt_chars", "llm_status",
@@ -222,8 +239,11 @@ def main():
     ap.add_argument("wav"); ap.add_argument("fixture"); ap.add_argument("label", nargs="?", default="run")
     ap.add_argument("--allow-bypass", action="store_true", help="以 bypass_summary=true 執行 (只測錄音與 STT)")
     ap.add_argument("--out", default="/tmp")
+    ap.add_argument("--play-sink", default=None, help="聲學模式：播放用的 PipeWire sink (例 alsa_output.usb-…)")
+    ap.add_argument("--source", default=None, help="聲學模式：app 錄音用的 PipeWire source (例 alsa_input.usb-…)")
     a = ap.parse_args()
-    res = run_case(a.wav, a.fixture, a.label, bypass_summary=a.allow_bypass, out_dir=a.out)
+    res = run_case(a.wav, a.fixture, a.label, bypass_summary=a.allow_bypass, out_dir=a.out,
+                   play_sink=a.play_sink, source=a.source)
     print(json.dumps({k: v for k, v in res.items() if k not in ("transcript", "summary")}, ensure_ascii=False))
 
 

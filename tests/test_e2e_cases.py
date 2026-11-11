@@ -41,3 +41,22 @@ def test_numeric_then_english_keep_order(tmp_path):
     specs = run_suite.case_specs([1], ["en_long"], str(tmp_path), "/data")
     assert [s["label"] for s in specs] == ["1min", "en_long"]
     assert specs[1]["minutes"] == 5.65
+
+
+import e2e  # noqa: E402
+import pytest  # noqa: E402
+
+
+def test_routing_default_is_digital_null_sink():
+    assert e2e.routing() == (e2e.SINK + ".monitor", e2e.SINK, True)
+
+
+def test_routing_acoustic_records_given_source_and_plays_given_sink():
+    rec, play, null_sink = e2e.routing("alsa_output.usb-GS3", "alsa_input.usb-GS3")
+    assert (rec, play, null_sink) == ("alsa_input.usb-GS3", "alsa_output.usb-GS3", False)
+
+
+@pytest.mark.parametrize("play_sink, source", [("alsa_output.usb-GS3", None), (None, "alsa_input.usb-GS3")])
+def test_routing_rejects_half_acoustic(play_sink, source):
+    with pytest.raises(ValueError):
+        e2e.routing(play_sink, source)

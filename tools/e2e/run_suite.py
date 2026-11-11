@@ -6,6 +6,7 @@ usage (在 Pi 上，app 閒置時):
   run_suite.py --minutes 1 3 5 10 15 30           # full (nightly)
   run_suite.py --minutes 5 --allow-bypass         # 只測錄音 + STT
   run_suite.py --en en_short en_long              # 英文會議（fixtures/meeting_<name>.json）
+  run_suite.py --minutes 5 --play-sink alsa_output.usb-X --source alsa_input.usb-X   # 聲學：實體喇叭→麥克風
 exit code：任一門檻失敗 → 1 (--no-fail 時一律 0)
 """
 import argparse
@@ -103,7 +104,13 @@ def main():
     ap.add_argument("--allow-bypass", action="store_true")
     ap.add_argument("--no-fail", action="store_true")
     ap.add_argument("--gap", type=float, default=15.0, help="案例間等待秒數 (讓 NPU 釋放)")
+    ap.add_argument("--play-sink", default=None, help="聲學模式：播放用的 PipeWire sink (與 --source 一起給)")
+    ap.add_argument("--source", default=None, help="聲學模式：app 錄音用的 PipeWire source")
     a = ap.parse_args()
+    try:
+        e2e.routing(a.play_sink, a.source)
+    except ValueError as e:
+        ap.error(str(e))
     started = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     out = a.out or os.path.join(os.getcwd(), "e2e_reports", datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
     os.makedirs(out, exist_ok=True)
@@ -130,7 +137,8 @@ def main():
             if not e2e.wait_idle():
                 raise RuntimeError("app 一直處於 recording/processing")
             print(f"[suite] {label} ({meta_fx.get('audio', {}).get('duration_s')} s) ...", flush=True)
-            res = e2e.run_case(wav, fx, label, bypass_summary=a.allow_bypass, out_dir=out)
+            res = e2e.run_case(wav, fx, label, bypass_summary=a.allow_bypass, out_dir=out,
+                               play_sink=a.play_sink, source=a.source)
             case["result"], case["total_s"] = res, res.get("total_s", 0)
             case["checks"] = scoring.evaluate(res, th)
         except Exception as e:
