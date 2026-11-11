@@ -283,3 +283,43 @@ def test_continuation_pieces_join_without_extra_comma():
 def test_continuation_english_pieces_keep_word_spacing():
     sentences = [Sentence(0.0, 1.0, "Okay,", 1), Sentence(1.0, 2.0, "let's start", 1, cont=True)]
     assert rt.format_transcript(sentences)[0] == "說話人1：Okay, let's start"
+
+def test_window_runs_needs_two_consecutive_windows():
+    assert rt.window_runs([0, 0, 1, 1, 1, 0], 0) == [(2, 1)]
+    assert rt.window_runs([0, 1, 0, 0], 0) == []
+    assert rt.window_runs([1, 1, 2, 2], 0) == [(0, 1), (2, 2)]
+
+
+def test_split_by_windows_cuts_long_sentence_at_speaker_change():
+    import numpy as np
+
+    class Stream:
+        def accept_waveform(self, sr, x):
+            self.x = np.asarray(x)
+
+        def input_finished(self):
+            pass
+
+    class Extractor:
+        def create_stream(self):
+            return Stream()
+
+        def compute(self, stream):
+            return [1.0, 0.0] if stream.x[0] < 0.5 else [0.0, 1.0]
+
+    x = np.zeros(7 * rt.SAMPLE_RATE, dtype=np.float32)
+    x[int(3.0 * rt.SAMPLE_RATE):int(6.0 * rt.SAMPLE_RATE)] = 1.0
+    tokens = list("甲方先報告了乙方來補充")
+    times = [i * 0.5 for i in range(len(tokens))]
+    s = Sentence(0.0, 6.0, "".join(tokens), speaker=0, tokens=tokens, times=times)
+    out = rt.split_by_windows(x, [s], Extractor(), {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])})
+    assert [(o.speaker, o.cont, o.text) for o in out] == [(0, False, "甲方先報告了乙"), (1, True, "方來補充")]
+    assert out[0].end == out[1].start
+
+
+def test_split_by_windows_leaves_short_or_tokenless_sentences():
+    import numpy as np
+    s1 = Sentence(0.0, 2.0, "短句", speaker=0, tokens=["短", "句"], times=[0.0, 1.0])
+    s2 = Sentence(2.0, 8.0, "沒有token", speaker=1)
+    out = rt.split_by_windows(_samples([]), [s1, s2], None, {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])})
+    assert out == [s1, s2]

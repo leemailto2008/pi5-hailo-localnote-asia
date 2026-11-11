@@ -25,7 +25,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from summary_utils import to_taiwan_traditional
@@ -59,6 +59,12 @@ MIN_EMBED_S = 1.0   # 比這短的句子嵌入不可靠（「好。」「對。�
 # 在它的停頓處依 token 時間把句子切成小段再分說話人。2026-11-11 量測（合成會議重新拼接，換人停頓 0.05–0.3 s／0.3–0.6 s）：
 # 現行 VAD 只切開 6／79、28／79 個換人點，逐句法 frame 正確率 42%／46%；加切段後 77%／70.5%（另一份 15 分 44% → 70%）；
 # 原合成會議 5／15／30 分維持 100%（4 人）。改用 token 間隔 ≥ 0.35–0.45 s 也切，換人資料更好（82–94%）但原會議掉到 88–93%、分出 9–14 人，不採用。
+# 分群後再看長段（≥ WINDOW_SPLIT_MIN_S）：1.5 s 視窗、0.75 s 步進，每個視窗比對各群中心；連續 ≥ 2 個視窗屬於別人就在該處切開。
+# 同一批快速換人資料：77／70／70.5% → 92／90／95%（hop 0.5／need 3：90／91／96%；hop 1.0：89／89／94%）；原合成會議 5／15／30 分仍 100%。
+WINDOW_S = 1.5
+WINDOW_HOP_S = 0.75
+WINDOW_SPLIT_MIN_S = 3.0
+WINDOW_SPLIT_RUN = 2
 FINE_VAD_MIN_SILENCE_S = 0.1
 SPLIT_EDGE_S = 0.2           # 切點離句首、句尾至少這麼遠
 SPLIT_MAX_TOKEN_DIST_S = 0.6  # 切點附近 0.6 s 內要有 token 起點，才對得到字
@@ -101,6 +107,16 @@ class Sentence:
     text: str
     speaker: Optional[int] = None
     cont: bool = False   # 同一個 VAD 句子在短停頓處切開的後半段（接回時不加標點）
+    # SenseVoice 的 token 與起點時間（秒），切段用；不輸出（見 _public）
+    tokens: Optional[List[str]] = field(default=None, repr=False)
+    times: Optional[List[float]] = field(default=None, repr=False)
+
+
+def _public(s: Sentence) -> Dict[str, Any]:
+    d = asdict(s)
+    d.pop("tokens", None)
+    d.pop("times", None)
+    return d
 
 
 def model_path(key: str) -> str:
@@ -138,13 +154,13 @@ def load_audio(path: str):
     return samples
 
 
-def split_at_pauses(start: float, end: float, tokens: Sequence[str], times: Sequence[float],
-                    cuts: Sequence[float]) -> List[Tuple[float, float, str]]:
+def token_pieces(start: float, end: float, tokens: Sequence[str], times: Sequence[float],
+                 cuts: Sequence[float]) -> List[Tuple[float, float, int, int]]:
     """依 token 起點時間把一句切在 cuts（秒）附近：切點取最近的 token 起點與前一個 token 起點的中點。
     token 與時間數量不符、切點附近 SPLIT_MAX_TOKEN_DIST_S 內沒有 token、或離句首尾太近時不切。
-    只剩標點的片段併回前一段。回傳 [(start, end, text)]。"""
+    只剩標點的片段併回前一段。回傳 [(start, end, token 起索引, token 迄索引)]。"""
     if len(tokens) < 2 or len(tokens) != len(times):
-        return [(start, end, "".join(tokens).strip())]
+        return [(start, end, 0, len(tokens))]
     idx_bounds, t_bounds = [0], [start]
     for c in sorted(cuts):
         k = min(range(1, len(times)), key=lambda i: abs(times[i] - c))
@@ -156,15 +172,21 @@ def split_at_pauses(start: float, end: float, tokens: Sequence[str], times: Sequ
             t_bounds.append(b)
     idx_bounds.append(len(tokens))
     t_bounds.append(end)
-    pieces: List[Tuple[float, float, str]] = []
+    pieces: List[Tuple[float, float, int, int]] = []
     for i in range(len(idx_bounds) - 1):
-        text = "".join(tokens[idx_bounds[i]:idx_bounds[i + 1]]).strip()
-        if pieces and not any(ch.isalnum() for ch in text):
-            s0, _, t0 = pieces[-1]
-            pieces[-1] = (s0, t_bounds[i + 1], t0 + text)
+        i0, i1 = idx_bounds[i], idx_bounds[i + 1]
+        if pieces and not any(ch.isalnum() for ch in "".join(tokens[i0:i1])):
+            s0, _, j0, _ = pieces[-1]
+            pieces[-1] = (s0, t_bounds[i + 1], j0, i1)
             continue
-        pieces.append((t_bounds[i], t_bounds[i + 1], text))
+        pieces.append((t_bounds[i], t_bounds[i + 1], i0, i1))
     return pieces
+
+
+def split_at_pauses(start: float, end: float, tokens: Sequence[str], times: Sequence[float],
+                    cuts: Sequence[float]) -> List[Tuple[float, float, str]]:
+    """同 token_pieces，回傳 [(start, end, text)]。"""
+    return [(a, b, "".join(tokens[i0:i1]).strip()) for a, b, i0, i1 in token_pieces(start, end, tokens, times, cuts)]
 
 
 def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None) -> Optional[List[Sentence]]:
@@ -228,13 +250,15 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     pauses = [(a[1] + b[0]) / 2 for a, b in zip(fine_regions, fine_regions[1:])]
     sentences: List[Sentence] = []
     for start, end, text, tokens, times in raw:
+        # tokens 接起來要等於 text（ITN 後的文字）才能依 token 切，否則保留整句、不帶 token
+        if "".join(tokens).strip() != text or len(tokens) != len(times):
+            sentences.append(Sentence(start, end, text))
+            continue
         cuts = [p for p in pauses if start < p < end]
-        # tokens 接起來要等於 text（ITN 後的文字）才切，否則保留整句
-        pieces = split_at_pauses(start, end, tokens, times, cuts) \
-            if cuts and "".join(tokens).strip() == text else [(start, end, text)]
-        for j, (a, b, piece) in enumerate(pieces):
+        for j, (a, b, i0, i1) in enumerate(token_pieces(start, end, tokens, times, cuts)):
+            piece = "".join(tokens[i0:i1]).strip()
             if piece:
-                sentences.append(Sentence(a, b, piece, cont=j > 0))
+                sentences.append(Sentence(a, b, piece, cont=j > 0, tokens=tokens[i0:i1], times=times[i0:i1]))
     return sentences
 
 
@@ -316,7 +340,7 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
             if should_stop is not None and should_stop():
                 return False
             if on_progress is not None:
-                on_progress(k / len(long_idx))
+                on_progress(0.6 * k / len(long_idx))
         s = sentences[i]
         stream = extractor.create_stream()
         stream.accept_waveform(SAMPLE_RATE, samples[int(s.start * SAMPLE_RATE):int(s.end * SAMPLE_RATE)])
@@ -332,9 +356,90 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
     for s in sentences:
         if s.speaker is None:
             s.speaker = sentences[long_idx[int(np.argmin(np.abs(mids - (s.start + s.end) / 2)))]].speaker
+
+    unit = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-12)
+    lab_arr = np.asarray(labels)
+    centroids = {}
+    for k in sorted(set(labels)):
+        c = unit[lab_arr == k].mean(axis=0)
+        centroids[int(k)] = c / max(float(np.linalg.norm(c)), 1e-12)
+    if len(centroids) >= 2:
+        refined = split_by_windows(samples, sentences, extractor, centroids, should_stop,
+                                   None if on_progress is None else (lambda f: on_progress(0.6 + 0.4 * f)))
+        if refined is None:
+            for s in sentences:
+                s.speaker = None
+            return False
+        sentences[:] = refined
     if on_progress is not None:
         on_progress(1.0)
     return True
+
+
+def window_runs(labels: Sequence[int], current: int) -> List[Tuple[int, int]]:
+    """視窗標籤序列裡「連續 ≥ WINDOW_SPLIT_RUN 個視窗不是目前說話人」的換人點。回傳 [(視窗索引, 新說話人)]。"""
+    changes: List[Tuple[int, int]] = []
+    cur, i = current, 0
+    while i < len(labels):
+        if labels[i] != cur:
+            j = i
+            while j < len(labels) and labels[j] == labels[i]:
+                j += 1
+            if j - i >= WINDOW_SPLIT_RUN:
+                changes.append((i, labels[i]))
+                cur = labels[i]
+                i = j
+                continue
+        i += 1
+    return changes
+
+
+def split_by_windows(samples, sentences: List[Sentence], extractor, centroids: Dict[int, Any],
+                     should_stop: StopFn = None, on_progress: ProgressFn = None) -> Optional[List[Sentence]]:
+    """長段內用滑動視窗找換人點，依 token 時間切開並各自標上說話人。被中止時回傳 None。"""
+    import numpy as np
+
+    keys = list(centroids)
+    cen = np.stack([centroids[k] for k in keys])
+    out: List[Sentence] = []
+    n_windows = 0
+    for n, s in enumerate(sentences):
+        if on_progress is not None and n % 20 == 0:
+            on_progress(n / len(sentences))
+        if s.end - s.start < WINDOW_SPLIT_MIN_S or not s.tokens or s.speaker is None:
+            out.append(s)
+            continue
+        starts, labels = [], []
+        t = s.start
+        while t + WINDOW_S <= s.end + 1e-6:
+            n_windows += 1
+            if n_windows % 50 == 0 and should_stop is not None and should_stop():
+                return None
+            stream = extractor.create_stream()
+            stream.accept_waveform(SAMPLE_RATE, samples[int(t * SAMPLE_RATE):int((t + WINDOW_S) * SAMPLE_RATE)])
+            stream.input_finished()
+            v = np.asarray(extractor.compute(stream), dtype=np.float64)
+            v = v / max(float(np.linalg.norm(v)), 1e-12)
+            starts.append(t)
+            labels.append(keys[int(np.argmax(cen @ v))])
+            t += WINDOW_HOP_S
+        changes = window_runs(labels, s.speaker)
+        if not changes:
+            out.append(s)
+            continue
+        bounds = [(starts[i] + WINDOW_S / 2, k) for i, k in changes]
+        pieces = token_pieces(s.start, s.end, s.tokens, s.times, [b for b, _ in bounds])
+        for j, (a, b, i0, i1) in enumerate(pieces):
+            mid = (a + b) / 2
+            speaker = s.speaker
+            for cut, k in bounds:
+                if mid >= cut:
+                    speaker = k
+            text = to_taiwan_traditional("".join(s.tokens[i0:i1]).strip())
+            if text:
+                out.append(Sentence(a, b, text, speaker=speaker, cont=s.cont if j == 0 else True,
+                                    tokens=s.tokens[i0:i1], times=s.times[i0:i1]))
+    return out
 
 
 def assign_speakers(sentences: List[Sentence], turns: Sequence[Turn]) -> None:
@@ -441,7 +546,7 @@ def refine(path: str, should_stop: StopFn = None,
     if on_partial is not None:
         text, _ = format_transcript(sentences)
         on_partial({**out, "phase": "diarize", "transcript": text, "speakers": 0,
-                    "sentences": [asdict(s) for s in sentences]})
+                    "sentences": [_public(s) for s in sentences]})
 
     t1 = time.time()
     if DIARIZE_METHOD == "pyannote":
@@ -459,11 +564,11 @@ def refine(path: str, should_stop: StopFn = None,
             s.speaker = None
         text, _ = format_transcript(sentences)
         out.update(stopped=True, phase="diarize", transcript=text, speakers=0,
-                   sentences=[asdict(s) for s in sentences])
+                   sentences=[_public(s) for s in sentences])
         return out
 
     text, speakers = format_transcript(sentences)
-    out.update(transcript=text, speakers=speakers, sentences=[asdict(s) for s in sentences])
+    out.update(transcript=text, speakers=speakers, sentences=[_public(s) for s in sentences])
     logger.info("[refine] %.0f s audio: asr %.1f s, diarize %.1f s, %d sentences, %d speakers",
                 audio_s, out["asr_s"], out["diarize_s"], len(sentences), speakers)
     return out
