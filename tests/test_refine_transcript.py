@@ -64,14 +64,18 @@ def test_run_in_subprocess_relays_progress_and_returns_result():
 
 def test_run_in_subprocess_stops_child_and_returns_partial(monkeypatch):
     monkeypatch.setattr(rt, "STOP_POLL_S", 0.05)
-    script = _EMIT + "emit({'partial': {'transcript': '還沒分人', 'speakers': 0}})\ntime.sleep(30)\nemit({'result': {}})\n"
-    calls = {"n": 0}
+    # 子行程在 partial 之後送一行 progress；看到 progress 才要求停止，partial 一定已讀到。
+    # （原本第 3 次輪詢就停，Windows 上子行程 0.15 s 內還沒啟動完，partial 是空的，偶發失敗。）
+    script = _EMIT + ("emit({'partial': {'transcript': '還沒分人', 'speakers': 0}})\nemit({'progress': ['diarize', 0.0]})\n"
+                      "time.sleep(30)\nemit({'result': {}})\n")
+    seen = []
 
     def should_stop():
-        calls["n"] += 1
-        return calls["n"] >= 3
+        return bool(seen)
 
-    res = asyncio.run(asyncio.wait_for(rt.run_in_subprocess("x.ogg", should_stop=should_stop, cmd=_child(script)), 10))
+    res = asyncio.run(asyncio.wait_for(rt.run_in_subprocess(
+        "x.ogg", should_stop=should_stop, on_progress=lambda p, f: seen.append(p), cmd=_child(script)), 10))
+    assert seen == ["diarize"]
     assert res["stopped"] is True and res["transcript"] == "還沒分人"
 
 
