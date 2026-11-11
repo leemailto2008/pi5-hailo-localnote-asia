@@ -124,3 +124,18 @@ def test_merge_does_not_cross_speakers():
     sentences = [Sentence(0.0, 1.0, "同意。", 1), Sentence(1.1, 2.0, "反對。", 2)]
     text, _ = rt.format_transcript(sentences)
     assert text == "說話人1：同意。\n說話人2：反對。"
+
+
+def test_english_sentences_are_joined_with_spaces():
+    # 11-11：英文會議原本接成「meeting.，We have」。
+    sentences = [Sentence(0.0, 2.0, "Okay, let's start today's weekly meeting.", 1),
+                 Sentence(2.2, 3.5, "We have a few topics to cover", 1),
+                 Sentence(3.6, 5.0, "the first topic is training.", 1)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：Okay, let's start today's weekly meeting. We have a few topics to cover the first topic is training."
+
+
+def test_mixed_chinese_after_english_still_uses_fullwidth_comma():
+    sentences = [Sentence(0.0, 1.0, "這次 release 延後", 1), Sentence(3.0, 4.0, "QA 下週再測", 1)]
+    text, _ = rt.format_transcript(sentences)
+    assert text == "說話人1：這次 release 延後，QA 下週再測"

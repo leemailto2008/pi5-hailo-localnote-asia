@@ -56,6 +56,7 @@ MODEL_FILES = {
 }
 ENGINE_LABEL = "SenseVoiceSmall int8 + CAM++（sherpa-onnx，CPU）"
 _PUNCT = "。！？!?，,、；;：:…"
+_ASCII_PUNCT = ".!?,;:"
 
 Turn = Tuple[float, float, int]
 StopFn = Optional[Callable[[], bool]]
@@ -207,16 +208,25 @@ def assign_speakers(sentences: List[Sentence], turns: Sequence[Turn]) -> None:
             s.speaker = nearest
 
 
+def _is_ascii_word_char(ch: str) -> bool:
+    return ch.isascii() and ch.isalnum()
+
+
 def _join(parts: Sequence[Sentence]) -> str:
     """同一人的連續句子接成一段。前句結尾是「。」且與下一句的停頓很短（VAD 在句中切開）→ 「。」改「，」；
-    其他沒有標點的前句補「，」。"""
+    英文（前句以半形標點或英數字結尾，後句以英數字開頭）用空格接；其他沒有標點的前句補「，」。
+    11-11：英文會議原本會接成「meeting.，We have」。"""
     out = ""
     prev: Optional[Sentence] = None
     for s in parts:
-        if prev is not None:
+        if prev is not None and out:
+            last = out[-1]
+            first = s.text[:1]
             if prev.text.endswith("。") and s.start - prev.end <= MERGE_GAP_S:
                 out = out[:-1] + "，"
-            elif out and out[-1] not in _PUNCT:
+            elif last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first)):
+                out += " "
+            elif last not in _PUNCT:
                 out += "，"
         out += s.text
         prev = s
