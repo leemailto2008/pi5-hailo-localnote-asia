@@ -9,11 +9,24 @@ from llm_backend import LLMError
 
 
 class _FakeBackend:
-    label = "hailo"
+    label = "CPU Ollama qwen2.5:3b-opt"
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _stream(reply, seen=None):
+    """aiter_chat_stream 的假版本：reply(prompt) 回傳整段文字（或 raise），一次吐出。seen 收集呼叫參數。"""
+    async def fake(prompt, system=None, **kwargs):
+        if seen is not None:
+            seen.append({"prompt": prompt, "system": system, **kwargs})
+        yield reply(prompt), True, _FakeBackend()
+    return fake
+
+
+def _chunk_of(prompt):
+    return prompt.split("逐字稿片段：\n", 1)[1]
 
 
 def test_split_chunks_respects_limit_and_keeps_all_text():
@@ -33,124 +46,63 @@ def test_split_chunks_skips_blank_lines():
     assert tp.split_chunks("\n\n  \n", max_chars=600) == []
 
 
-def test_parse_fix_list_extracts_array_from_noisy_output():
-    raw = '好的，修改如下：\n[{"from": "外科呱瓜", "to": "外科瓜瓜"}]\n謝謝'
-    assert tp.parse_fix_list(raw) == [{"from": "外科呱瓜", "to": "外科瓜瓜"}]
+def test_accept_small_edits_keeps_short_fixes_and_rejects_rewrites():
+    src = "請李協里確認期，然後我們今天就先討論到這裡"
+    dst = "請李協理確認日期，然後今天的會議到此結束"
+    out, st = tp.accept_small_edits(src, dst)
+    assert out.startswith("請李協理確認日期，")          # 同音字（替換 1 字）與漏字（補 1 字）收
+    assert out.endswith("我們今天就先討論到這裡")       # 整句改寫（被 difflib 拆成幾個小修改）不收，保留原文
+    assert st == {"accepted": 1, "rejected": 1}
 
 
-def test_parse_fix_list_drops_invalid_items_only():
-    raw = '[{"from": "", "to": "x"}, {"from": "a", "to": "a"}, {"from": 1, "to": "b"}, {"from": "李協里", "to": "李協理"}]'
-    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
+def test_accept_small_edits_limits_deletions():
+    out, _ = tp.accept_small_edits("好好的，開始", "好的，開始")
+    assert out == "好的，開始"                            # 刪 1 字（口吃）收
+    out, _ = tp.accept_small_edits("我們我們我們來看第一項", "來看第一項")
+    assert out == "我們我們我們來看第一項"                # 刪一大段不收
 
 
-def test_parse_fix_list_returns_none_on_unparseable_output():
-    assert tp.parse_fix_list('[{"from": "a", "to": ') is None
-    assert tp.parse_fix_list("沒有陣列") is None
-    assert tp.parse_fix_list("") is None
-
-
-def test_parse_fix_list_accepts_empty_list():
-    assert tp.parse_fix_list("[]") == []
-
-
-def test_apply_fixes_only_exact_matches_and_counts():
-    text = "外科呱瓜很好，外科呱瓜也很好"
-    new_text, applied = tp.apply_fixes(
-        text, [{"from": "外科呱瓜", "to": "外科瓜瓜"}, {"from": "不存在", "to": "x"}]
-    )
-    assert new_text == "外科瓜瓜很好，外科瓜瓜也很好"
-    assert applied == [{"from": "外科呱瓜", "to": "外科瓜瓜", "count": 2}]
+def test_accept_small_edits_never_touches_speaker_labels():
+    src = "說話人1：大家好\n說話人2：李協里好"
+    dst = "說話人3：大家好\n說話人2：李協理好"
+    out, st = tp.accept_small_edits(src, dst, tp.protected_spans(src))
+    assert out == "說話人1：大家好\n說話人2：李協理好"
+    assert st == {"accepted": 1, "rejected": 1}
 
 
 def test_polish_fix_applies_per_chunk_and_keeps_original_on_llm_error(monkeypatch):
     calls = []
 
-    async def fake_achat(prompt, system=None, **kwargs):
+    def reply(prompt):
         calls.append(prompt)
         if len(calls) == 2:
             raise LLMError("boom")
-        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
+        return _chunk_of(prompt).replace("改報", "改善")
 
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
     text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590])
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply))
     res = _run(tp.polish_transcript(text, "fix"))
-
-    assert res["chunks"] == 2
-    assert res["failed_chunks"] == 1
-    assert res["backend"] == "hailo"
-    assert res["changes"] == [{"from": "改報", "to": "改善", "count": 1}]
+    assert res["chunks"] == 2 and res["failed_chunks"] == 1
+    assert res["backend"] == "CPU Ollama qwen2.5:3b-opt"
     assert res["polished"] == "改善" + "甲" * 590 + "\n\n" + "改報" + "乙" * 590
+    assert res["accepted_edits"] == 1
+    assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
+    assert ["rep", "善", "報"] in res["segments"]
+    assert res["diff_counts"] == {"rep": 1, "ins": 0, "del": 0}
 
 
-def test_polish_fix_counts_parse_errors_and_keeps_text(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "亂碼 [[[", _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
-    text = "一二三四五"
-    res = _run(tp.polish_transcript(text, "fix"))
-    assert res["polished"] == text
-    assert res["parse_errors"] == 1
-    assert res["changes"] == []
-
-
-def test_polish_rewrite_rejects_suspicious_length(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "短", _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
-    text = "一" * 100
-    res = _run(tp.polish_transcript(text, "rewrite"))
-    assert res["polished"] == text
-    assert res["rejected_chunks"] == 1
-
-
-def test_polish_rewrite_accepts_reasonable_output(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "二" * 80, _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
-    res = _run(tp.polish_transcript("一" * 100, "rewrite"))
-    assert res["polished"] == "二" * 80
-    assert res["rejected_chunks"] == 0
-
-
-def test_polish_rejects_unknown_mode():
-    with pytest.raises(ValueError):
-        _run(tp.polish_transcript("abc", "summarize"))
-
-
-def test_parse_fix_list_drops_single_char_from():
-    # 單字替換 (例如「的」→「得」) 會套用到全文每一處，風險太高，直接略過。
-    raw = '[{"from": "的", "to": "得"}, {"from": "外科呱瓜", "to": "外科瓜瓜"}]'
-    assert tp.parse_fix_list(raw) == [{"from": "外科呱瓜", "to": "外科瓜瓜"}]
-
-
-def test_parse_fix_list_rejects_deletion_and_semantic_rewrite():
-    raw = ('[{"from": "週五回報", "to": ""}, {"from": "涼率", "to": "合格率"}, '
-           '{"from": "使用者", "to": "用戶"}, {"from": "李協里", "to": "李協理"}]')
-    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
-
-
-def test_parse_fix_list_rejects_length_explosion_and_collapse():
-    raw = '[{"from": "好", "to": "很好很好很好很好很好"}, {"from": "劉課長送預算表", "to": "預算書"}]'
-    assert tp.parse_fix_list(raw) == []
-
-
-def test_parse_fix_list_salvages_items_from_truncated_output():
-    # num_predict 用完時陣列沒有收尾；已完整的項目仍要採用，未完成的那筆丟掉。
-    raw = '[\n  {"from": "李協里", "to": "李協理"},\n  {"from": "辛光材料", "to": "新光材料"},\n  {"from": "涼'
-    assert tp.parse_fix_list(raw) == [
-        {"from": "李協里", "to": "李協理"},
-        {"from": "辛光材料", "to": "新光材料"},
-    ]
+def test_polish_fix_uses_cpu_first_and_strips_echoed_header(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "逐字稿片段：" + _chunk_of(p).replace("期", "日期"), seen))
+    res = _run(tp.polish_transcript("確認期", "fix", source="refine"))
+    assert res["polished"] == "確認日期"
+    assert res["source"] == "refine"
+    assert seen[0]["cpu_first"] is (tp.POLISH_BACKEND == "cpu")
+    assert seen[0]["system"] == tp.FIX_SYSTEM
 
 
 def test_polish_reports_progress_per_chunk(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "[]", _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of))
     seen = []
     text = "\n".join(["甲" * 590, "乙" * 590, "丙" * 590])
     res = _run(tp.polish_transcript(text, "fix", on_progress=lambda done, total: seen.append((done, total))))
@@ -161,18 +113,56 @@ def test_polish_reports_progress_per_chunk(monkeypatch):
 def test_polish_stops_between_chunks_and_keeps_rest_original(monkeypatch):
     calls = []
 
-    async def fake_achat(prompt, system=None, **kwargs):
+    def reply(prompt):
         calls.append(prompt)
-        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
+        return _chunk_of(prompt).replace("改報", "改善")
 
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(reply))
     text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
     # 第一段做完後「開始錄音」：第二段開始前就要停。
-    res = _run(tp.polish_transcript(text, "fix", should_stop=lambda: len(calls) >= 1))
+    done = []
+    res = _run(tp.polish_transcript(text, "fix", on_progress=lambda d, t: done.append(d), should_stop=lambda: len(done) >= 1))
     assert len(calls) == 1
     assert res["stopped"] is True
     assert res["polished"] == "\n\n".join(["改善" + "甲" * 590, "改報" + "乙" * 590, "改報" + "丙" * 590])
-    assert res["changes"] == [{"from": "改報", "to": "改善", "count": 1}]
+    assert res["diff_counts"]["rep"] == 1   # 沒處理的段落不標
+
+
+def test_polish_stops_mid_generation_and_closes_the_stream(monkeypatch):
+    state = {"tokens": 0, "closed": False}
+
+    async def slow_stream(prompt, system=None, **kwargs):
+        try:
+            for tok in ["改", "善", "甲"]:
+                state["tokens"] += 1
+                yield tok, False, _FakeBackend()
+        finally:
+            state["closed"] = True
+
+    monkeypatch.setattr(tp, "aiter_chat_stream", slow_stream)
+    res = _run(tp.polish_transcript("改報甲", "fix", should_stop=lambda: state["tokens"] >= 1))
+    assert res["stopped"] is True
+    assert res["polished"] == "改報甲"            # 生成中被打斷的那段保留原文
+    assert state["closed"] is True and state["tokens"] == 1
+
+
+def test_polish_rewrite_rejects_suspicious_length(monkeypatch):
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "短"))
+    res = _run(tp.polish_transcript("一" * 100, "rewrite"))
+    assert res["polished"] == "一" * 100
+    assert res["rejected_chunks"] == 1
+
+
+def test_polish_rewrite_accepts_reasonable_output(monkeypatch):
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 80))
+    res = _run(tp.polish_transcript("一" * 100, "rewrite"))
+    assert res["polished"] == "二" * 80
+    assert res["rejected_chunks"] == 0
+
+
+def test_polish_rejects_unknown_mode():
+    with pytest.raises(ValueError):
+        _run(tp.polish_transcript("abc", "summarize"))
 
 
 class _FakeCC:
@@ -182,45 +172,25 @@ class _FakeCC:
         return text.translate(str.maketrans({"没": "沒", "伤": "傷", "协": "協", "员": "員"}))
 
 
-def test_parse_fix_list_drops_script_only_changes(monkeypatch):
-    # 模型把繁體「修」成簡體：轉回台灣繁體後與原文相同，必須丟棄；真正的修改仍保留且輸出為繁體。
+def test_polish_fix_ignores_script_only_changes(monkeypatch):
+    # 模型把繁體「修」成簡體：轉回台灣繁體後與原文相同，不算修改；真正的修改仍保留且為繁體。
     monkeypatch.setattr(summary_utils, "_CC", _FakeCC())
-    raw = '[{"from": "沒有人受傷", "to": "没有人受伤"}, {"from": "李協里", "to": "李协理"}]'
-    assert tp.parse_fix_list(raw) == [{"from": "李協里", "to": "李協理"}]
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "没有人受伤，李协理"))
+    res = _run(tp.polish_transcript("沒有人受傷，李協里", "fix"))
+    assert res["polished"] == "沒有人受傷，李協理"
+    assert res["diff_counts"] == {"rep": 1, "ins": 0, "del": 0}
 
 
 def test_polish_rewrite_output_is_taiwan_traditional(monkeypatch):
     monkeypatch.setattr(summary_utils, "_CC", _FakeCC())
-
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "全员" + "二" * 80, _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "全员" + "二" * 80))
     res = _run(tp.polish_transcript("一" * 100, "rewrite"))
     assert res["polished"] == "全員" + "二" * 80
 
 
-def test_apply_fixes_insertion_leaves_already_correct_text_alone():
-    # 補字修改：原本已經正確的「第138個議題」不能再被補一次，變成「第138個議題個議題」。
-    text = "第138個議題是預算，第138已經面試"
-    new_text, applied = tp.apply_fixes(text, [{"from": "第138", "to": "第138個議題"}])
-    assert new_text == "第138個議題是預算，第138個議題已經面試"
-    assert applied == [{"from": "第138", "to": "第138個議題", "count": 1}]
-
-
-def test_apply_fixes_insertion_skips_when_everything_is_already_correct():
-    text = "第138個議題是預算"
-    new_text, applied = tp.apply_fixes(text, [{"from": "第138", "to": "第138個議題"}])
-    assert new_text == text
-    assert applied == []
-
-
 def test_polish_rewrite_keeps_original_when_numbers_change(monkeypatch):
     # 日期、數量被改掉 (或中文化) 的段落保留原文。
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "修正版預計十月十二日上線，先在一百臺裝置上試跑三天" + "。" * 10, _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "修正版預計十月十二日上線，先在一百臺裝置上試跑三天" + "。" * 10))
     text = "修正版 預記 10月11日上線，先在100臺裝置上市跑三天"
     res = _run(tp.polish_transcript(text, "rewrite"))
     assert res["polished"] == text
@@ -228,27 +198,19 @@ def test_polish_rewrite_keeps_original_when_numbers_change(monkeypatch):
 
 
 def test_polish_rewrite_accepts_when_numbers_are_kept(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return "修正版預計10月11日上線，先在100臺裝置上試跑三天", _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "修正版預計10月11日上線，先在100臺裝置上試跑三天"))
     text = "修正版 預記 10月11日上線，先在100臺裝置上市跑三天"
     res = _run(tp.polish_transcript(text, "rewrite"))
     assert res["polished"] == "修正版預計10月11日上線，先在100臺裝置上試跑三天"
     assert res["fact_rejected_chunks"] == 0
 
 
-def test_rewrite_timeout_grows_with_output_budget(monkeypatch):
-    seen = {}
-
-    async def fake_achat(prompt, system=None, **kwargs):
-        seen.update(kwargs)
-        return "二" * 500, _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
+def test_output_timeout_grows_with_output_budget(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 500, seen))
     _run(tp.polish_transcript("一" * 590, "rewrite"))
-    assert seen["num_predict"] == 1180
-    assert seen["timeout"] >= 1180 / 4.5
+    assert seen[0]["num_predict"] == 1180
+    assert seen[0]["timeout"] >= 1180 / 4.5
 
 
 def test_diff_segments_marks_replacement_insertion_and_deletion():
@@ -258,30 +220,3 @@ def test_diff_segments_marks_replacement_insertion_and_deletion():
     # 去掉 del 後接起來就是新文字
     src, dst = "第一個議題是公安", "第一個議題是工安。"
     assert "".join(t for op, t, _ in tp.diff_segments(src, dst) if op != "del") == dst
-
-
-def test_polish_returns_segments_joined_like_polished_text(monkeypatch):
-    async def fake_achat(prompt, system=None, **kwargs):
-        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
-    text = "\n".join(["改報" + "甲" * 590, "沒有要改" + "乙" * 590])
-    res = _run(tp.polish_transcript(text, "fix"))
-    assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
-    assert ["rep", "善", "報"] in res["segments"]
-    assert res["diff_counts"] == {"rep": 1, "ins": 0, "del": 0}
-
-
-def test_polish_stopped_chunks_are_unmarked_segments(monkeypatch):
-    calls = []
-
-    async def fake_achat(prompt, system=None, **kwargs):
-        calls.append(prompt)
-        return '[{"from": "改報", "to": "改善"}]', _FakeBackend()
-
-    monkeypatch.setattr(tp, "achat_complete", fake_achat)
-    text = "\n".join(["改報" + "甲" * 590, "改報" + "乙" * 590])
-    res = _run(tp.polish_transcript(text, "fix", should_stop=lambda: len(calls) >= 1))
-    assert res["stopped"] is True
-    assert "".join(t for op, t, _ in res["segments"] if op != "del") == res["polished"]
-    assert res["diff_counts"]["rep"] == 1   # 沒處理的第二段不標

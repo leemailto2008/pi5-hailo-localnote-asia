@@ -1,46 +1,53 @@
 # -*- coding: utf-8 -*-
 """
-transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11)。
+transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11；2026-11-11 改版)。
 
 兩種模式：
-  fix      修同音字與漏字。模型只輸出 [{"from": ..., "to": ...}] 修改清單，由程式做精確字串替換。
-           模型看不到自由改寫的空間，風險較低，可以較常用。
+  fix      修同音字與漏字。模型輸出校對後的全文，程式用 difflib 對齊原文，只接受小幅修改
+           （替換、補字 ≤ FIX_MAX_SPAN 字，刪字 ≤ FIX_MAX_DELETE 字，說話人標籤不動），其餘一律保留原文。
   rewrite  整段重新潤稿。模型輸出整段改寫後文字，較完整，但較容易改掉原意，只能手動觸發。
 
+2026-11-11 GS3 實錄量測（tools：.cc_scratch/pe/polish_eval.py；CER／不計數字 CER，台灣用字修正後的稿為基準）：
+  - 舊 fix（模型輸出 [{"from","to"}] 修改清單）：Hailo qwen3:1.7b 與 CPU qwen2.5:3b 幾乎都回空清單，CER 不變。
+  - 新 fix（輸出全文、只收小幅修改）：Hailo qwen3:1.7b 照抄原文（0 處修改）；CPU qwen2.5:3b
+    實錄 5 分 Hailo 即時稿 0.2206／0.1442 → 0.2146／0.1371、事實 0.896 → 0.910；SenseVoice 稿 0.1791／0.0757 → 0.1781／0.0721。
+  - rewrite（Hailo qwen3:1.7b）：即時稿 CER 不變（只改標點）。
+  → 潤稿改用 CPU Ollama 優先（llm_backend.cpu_first_backends），Hailo 為備援；只在錄音後執行，
+    錄音一開始就關掉串流（Ollama 隨即停止生成），剩下的段落保留原文。
+
 處理方式：
-  - 長逐字稿切成數段 (每段約 MAX_CHUNK_CHARS 字)，依序送 LLM，避免小模型上下文過長與 NPU 排隊過久。
-  - 單段 LLM 失敗 → 保留該段原文；rewrite 輸出長度異常或數字被改 → 保留原文；fix 輸出格式錯誤 → 該段不套用修改。
-  - fix 輸出被 num_predict 截斷（陣列沒收尾）時，仍採用已完整的 {...} 項目。
-  - 每段開始前可由 should_stop() 中止（錄音開始時讓出 CPU/NPU），剩下的段落保留原文。
-  - 只透過 llm_backend.achat_complete 呼叫模型 (Hailo 優先，失敗退 CPU)。
+  - 長逐字稿切成數段 (每段約 MAX_CHUNK_CHARS 字)，依序送 LLM，避免小模型上下文過長。
+  - 單段 LLM 失敗 → 保留該段原文；rewrite 輸出長度異常或數字被改 → 保留原文。
+  - 只透過 llm_backend.aiter_chat_stream 呼叫模型。
 """
 
+import contextlib
 import difflib
-import json
 import logging
+import os
 import re
 from collections import Counter
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from llm_backend import LLMError, achat_complete
+from llm_backend import LLMError, aiter_chat_stream
 from summary_utils import to_taiwan_traditional
 
 logger = logging.getLogger(__name__)
 
 MODES = ("fix", "rewrite")
 MAX_CHUNK_CHARS = 600
-MAX_FIX_ITEMS_PER_CHUNK = 30
-MIN_FIX_FROM_CHARS = 2
-MAX_FIX_FROM_CHARS = 40
+# cpu = CPU Ollama (qwen2.5:3b) 優先、Hailo 備援；hailo = Hailo 優先。量測見檔頭。
+POLISH_BACKEND = os.environ.get("PI5_POLISH_BACKEND", "cpu").strip().lower()
+FIX_MAX_SPAN = 4      # fix 只接受這麼短的替換／補字（同音字、漏字）；更長的視為改寫，保留原文
+FIX_MAX_DELETE = 2    # fix 只接受這麼短的刪字
+FIX_MERGE_GAP = 2     # 兩處修改中間相同的字不超過這麼多就算同一處
 REQUEST_TIMEOUT_SEC = 120.0
-REWRITE_MIN_TOKENS_PER_SEC = 4.0  # 估 rewrite 逾時用：Hailo qwen3:1.7b 實測約 4.5 tok/s
-MIN_FIX_SIMILARITY = 0.5  # 修改前後相似度下限：低於此值視為語意改寫，略過
+OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
 
 _CUT_CHARS = "。！？!?.；;，,"
-_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
-_OBJECT_RE = re.compile(r"\{[^{}]*\}")
+_LABEL_RE = re.compile(r"^說話人\d+：", re.M)   # 高精度逐字稿每段開頭的說話人標籤，潤稿不能動
 
-FIX_SYSTEM = "你是逐字稿校對工具。只輸出 JSON，不輸出任何說明文字。"
+FIX_SYSTEM = "你是逐字稿校對工具。只輸出校對後的逐字稿全文，不輸出任何說明。"
 REWRITE_SYSTEM = "你是會議逐字稿整理工具。只輸出整理後的文字，不輸出任何說明或標題。"
 
 
@@ -84,12 +91,9 @@ def split_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
 
 def build_fix_prompt(chunk: str) -> str:
     return (
-        "以下是語音辨識 (ASR) 的逐字稿片段。請只找出明顯的錯誤，例如同音字誤認、專有名詞或術語誤寫、明顯漏字。\n"
-        "規則：\n"
-        "1. 只在有把握時才列出；不確定就不要列。不要改寫語句、不要潤飾、不要增刪內容。\n"
-        f"2. 每筆 from 必須是原文中逐字出現的子字串（標點與空白需一致），長度不超過 {MAX_FIX_FROM_CHARS} 字。\n"
-        "3. to 是修正後的文字。\n"
-        "4. 只輸出 JSON 陣列，格式為 [{\"from\": \"...\", \"to\": \"...\"}]；沒有需要修正的就輸出 []。\n\n"
+        "以下是語音辨識 (ASR) 的逐字稿片段，裡面有同音字誤認與漏字。\n"
+        "請輸出校對後的全文：只把錯字改成正確的字、補上明顯漏掉的字；其他文字與標點一律照抄。\n"
+        "不要刪減內容、不要改寫句子、不要加標題或說明。\n\n"
         f"逐字稿片段：\n{chunk}"
     )
 
@@ -102,84 +106,47 @@ def build_rewrite_prompt(chunk: str) -> str:
     )
 
 
-def _fix_is_sane(src: str, dst: str) -> bool:
-    """擋掉會傷害原意的修改：空字串（刪字）、長度暴增或暴減、相似度過低（語意改寫）。"""
-    if not dst or dst == src:
-        return False
-    if len(src) < MIN_FIX_FROM_CHARS or len(src) > MAX_FIX_FROM_CHARS:
-        return False
-    if len(dst) > 2 * len(src) + 4 or 2 * len(dst) < len(src):
-        return False
-    return difflib.SequenceMatcher(None, src, dst).ratio() >= MIN_FIX_SIMILARITY
+def protected_spans(text: str) -> List[Tuple[int, int]]:
+    """說話人標籤（「說話人1：」）的位置；潤稿的修改碰到就不收。"""
+    return [(m.start(), m.end()) for m in _LABEL_RE.finditer(text)]
 
 
-def _load_items(raw: str) -> Optional[List[Any]]:
-    """先整段解析 JSON 陣列；失敗時（常見於 num_predict 截斷、沒有收尾的 ]）改逐一解析已完整的 {...}。"""
-    match = _ARRAY_RE.search(raw)
-    if match:
-        try:
-            data = json.loads(match.group(0))
-        except ValueError:
-            data = None
-        if isinstance(data, list):
-            return data
-    items: List[Any] = []
-    for obj in _OBJECT_RE.findall(raw):
-        try:
-            items.append(json.loads(obj))
-        except ValueError:
-            logger.debug("[polish] skip malformed item: %s", obj[:80])
-    return items or None
+def _touches(i1: int, i2: int, spans: Sequence[Tuple[int, int]]) -> bool:
+    """原文 [i1, i2) 的修改是否碰到 spans；i1 == i2 是插入點，落在標籤內部才算。"""
+    if i2 > i1:
+        return any(i1 < b and a < i2 for a, b in spans)
+    return any(a < i1 < b for a, b in spans)
 
 
-def parse_fix_list(raw: str) -> Optional[List[Dict[str, str]]]:
-    """從模型輸出取出修改清單。無法解析回傳 None；解析成功但個別項目不合規則略過該項。"""
-    if not raw:
-        return None
-    data = _load_items(raw)
-    if data is None:
-        return None
-
-    fixes: List[Dict[str, str]] = []
-    for item in data[:MAX_FIX_ITEMS_PER_CHUNK]:
-        if not isinstance(item, dict):
+def accept_small_edits(src: str, dst: str, protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
+    """把模型的校對全文 dst 對齊原文 src（difflib），只收小幅修改，其餘位置保留原文。
+    相鄰的修改（中間相同的字 ≤ FIX_MERGE_GAP）併成一處再判斷，避免整句改寫被拆成幾個小修改混過去。
+    一處修改的原文與新文字都 ≤ FIX_MAX_SPAN 字（純刪字 ≤ FIX_MAX_DELETE 字），且不碰 protected 範圍才收。
+    回傳 (新文字, {"accepted": 處數, "rejected": 處數})。"""
+    regions: List[List[int]] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+        if tag == "equal":
             continue
-        src, dst = item.get("from"), item.get("to")
-        if not isinstance(src, str) or not isinstance(dst, str):
-            continue
-        # 小模型常把繁體「改」成簡體（11-10 實錄逐字稿：Hailo qwen3:1.7b 17 筆修改有 12 筆只是繁轉簡）。
-        # 先轉成與 STT 相同的台灣繁體 (OpenCC s2twp)，只換字體的項目就變成 from == to 而被丟棄。
-        dst = to_taiwan_traditional(dst)
-        if not _fix_is_sane(src, dst):
-            continue
-        fixes.append({"from": src, "to": dst})
-    return fixes
-
-
-_SHIELD = "\ue000"  # Unicode 私用區字元，逐字稿不會出現
-
-
-def apply_fixes(text: str, fixes: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
-    """逐筆做精確字串替換；原文找不到的項目略過。回傳 (新文字, 實際套用的紀錄)。
-
-    補字的修改（from 是 to 的一部分，例如「第138」→「第138個議題」）不能碰原本已經正確的地方，
-    否則「第138個議題」會變成「第138個議題個議題」(11-10 實錄逐字稿)。先把已正確的 to 暫時遮住再替換。
-    """
-    applied: List[Dict[str, Any]] = []
-    for fix in fixes:
-        src, dst = fix["from"], fix["to"]
-        shield = src in dst and dst in text
-        if shield and _SHIELD in text:
-            logger.warning("[polish] skip fix %r: text already contains the shield character", src)
-            continue
-        work = text.replace(dst, _SHIELD) if shield else text
-        count = work.count(src)
-        if count == 0:
-            continue
-        work = work.replace(src, dst)
-        text = work.replace(_SHIELD, dst) if shield else work
-        applied.append({"from": src, "to": dst, "count": count})
-    return text, applied
+        if regions and i1 - regions[-1][1] <= FIX_MERGE_GAP:
+            regions[-1][1], regions[-1][3] = i2, j2
+        else:
+            regions.append([i1, i2, j1, j2])
+    out: List[str] = []
+    stats = {"accepted": 0, "rejected": 0}
+    pos = 0
+    for i1, i2, j1, j2 in regions:
+        out.append(src[pos:i1])
+        n_src, n_dst = i2 - i1, j2 - j1
+        small = n_src <= FIX_MAX_DELETE if n_dst == 0 else (n_src <= FIX_MAX_SPAN and n_dst <= FIX_MAX_SPAN)
+        if small and not _touches(i1, i2, protected):
+            out.append(dst[j1:j2])
+            stats["accepted"] += 1
+        else:
+            out.append(src[i1:i2])
+            stats["rejected"] += 1
+        pos = i2
+    out.append(src[pos:])
+    return "".join(out), stats
 
 
 def diff_segments(src: str, dst: str) -> List[List[str]]:
@@ -217,36 +184,45 @@ def _rewrite_numbers_ok(src: str, out: str) -> bool:
     return Counter(_NUMBER_RE.findall(src)) == Counter(_NUMBER_RE.findall(out))
 
 
-async def _run_fix(chunk: str, stats: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
-    raw, backend = await achat_complete(
-        build_fix_prompt(chunk),
-        system=FIX_SYSTEM,
-        temperature=0.0,
-        num_predict=300,
-        timeout=REQUEST_TIMEOUT_SEC,
-        hailo_retries=1,
+async def _complete(prompt: str, system: str, temperature: float, num_predict: int,
+                    stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
+    """串流取得模型輸出。should_stop() 成立就關掉串流（Ollama 隨即停止生成）並回傳 None。"""
+    parts: List[str] = []
+    stream = aiter_chat_stream(
+        prompt, system=system, temperature=temperature, num_predict=num_predict,
+        timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / OUTPUT_MIN_TOKENS_PER_SEC),
+        hailo_retries=1, cpu_first=POLISH_BACKEND == "cpu",
     )
-    stats["backend"] = backend.label
-    fixes = parse_fix_list(raw)
-    if fixes is None:
-        stats["parse_errors"] += 1
-        return chunk, []
-    return apply_fixes(chunk, fixes)
+    async with contextlib.aclosing(stream):
+        async for token, _done, backend in stream:
+            stats["backend"] = backend.label
+            if should_stop is not None and should_stop():
+                return None
+            parts.append(token)
+    return "".join(parts)
 
 
-async def _run_rewrite(chunk: str, stats: Dict[str, Any]) -> str:
-    num_predict = max(128, 2 * len(chunk))
-    raw, backend = await achat_complete(
-        build_rewrite_prompt(chunk),
-        system=REWRITE_SYSTEM,
-        temperature=0.2,
-        num_predict=num_predict,
-        # 整段輸出：Hailo 約 4.5 tok/s，600 字的段落固定 120 s 會逾時退到 CPU。
-        timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / REWRITE_MIN_TOKENS_PER_SEC),
-        hailo_retries=1,
-    )
-    stats["backend"] = backend.label
-    out = to_taiwan_traditional((raw or "").strip())
+def _strip_echoed_header(out: str) -> str:
+    """模型偶爾把提示裡的「逐字稿片段：」也輸出來。"""
+    return re.sub(r"^\s*(逐字稿片段|校對後)[：:]\s*", "", out)
+
+
+async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
+    raw = await _complete(build_fix_prompt(chunk), FIX_SYSTEM, 0.0, max(128, 2 * len(chunk)), stats, should_stop)
+    if raw is None:
+        return None
+    out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
+    new_chunk, edits = accept_small_edits(chunk, out, protected_spans(chunk))
+    stats["accepted_edits"] += edits["accepted"]
+    stats["rejected_edits"] += edits["rejected"]
+    return new_chunk
+
+
+async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
+    raw = await _complete(build_rewrite_prompt(chunk), REWRITE_SYSTEM, 0.2, max(128, 2 * len(chunk)), stats, should_stop)
+    if raw is None:
+        return None
+    out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
     if not _rewrite_length_ok(chunk, out):
         stats["rejected_chunks"] += 1
         return chunk
@@ -261,12 +237,14 @@ async def polish_transcript(
     mode: str,
     on_progress: Optional[Callable[[int, int], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    source: str = "live",
 ) -> Dict[str, Any]:
     """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。
 
     on_progress(done, total)：每段處理完呼叫一次。
-    should_stop()：每段開始前檢查；回傳 True 就停下，剩下的段落保留原文，結果帶 stopped=True。
+    should_stop()：每段開始前與生成中都檢查；回傳 True 就停下（生成中的那段也保留原文），結果帶 stopped=True。
     （錄音一開始就要讓出 CPU/NPU，見 CLAUDE.md 重點一。）
+    source：潤稿來源（live＝完整逐字稿、refine＝高精度逐字稿），只記在結果裡給網頁顯示。
     """
     if mode not in MODES:
         raise ValueError(f"unknown polish mode: {mode}")
@@ -276,12 +254,12 @@ async def polish_transcript(
         "failed_chunks": 0,
         "rejected_chunks": 0,
         "fact_rejected_chunks": 0,
-        "parse_errors": 0,
+        "accepted_edits": 0,
+        "rejected_edits": 0,
         "stopped": False,
         "backend": None,
     }
     parts: List[str] = []
-    changes: List[Dict[str, Any]] = []
     segments: List[List[str]] = []
     counts = {"rep": 0, "ins": 0, "del": 0}
 
@@ -294,26 +272,27 @@ async def polish_transcript(
                 counts[seg[0]] += 1
 
     for idx, chunk in enumerate(chunks, start=1):
-        if should_stop is not None and should_stop():
-            logger.info("[polish] stopped before chunk %d/%d", idx, len(chunks))
+        new_chunk: Optional[str] = None
+        if not (should_stop is not None and should_stop()):
+            try:
+                if mode == "fix":
+                    new_chunk = await _run_fix(chunk, stats, should_stop)
+                else:
+                    new_chunk = await _run_rewrite(chunk, stats, should_stop)
+            except LLMError as e:
+                logger.warning("[polish] chunk %d/%d failed, keep original: %s", idx, len(chunks), e)
+                stats["failed_chunks"] += 1
+                new_chunk = chunk
+        if new_chunk is None:
+            logger.info("[polish] stopped at chunk %d/%d", idx, len(chunks))
             stats["stopped"] = True
             parts.extend(chunks[idx - 1:])
             for rest in chunks[idx - 1:]:
                 add_segments(rest, rest)
             break
-        try:
-            if mode == "fix":
-                new_chunk, applied = await _run_fix(chunk, stats)
-                changes.extend(applied)
-            else:
-                new_chunk = await _run_rewrite(chunk, stats)
-        except LLMError as e:
-            logger.warning("[polish] chunk %d/%d failed, keep original: %s", idx, len(chunks), e)
-            stats["failed_chunks"] += 1
-            new_chunk = chunk
         parts.append(new_chunk)
         add_segments(chunk, new_chunk)
         if on_progress is not None:
             on_progress(idx, len(chunks))
-    return {"mode": mode, "polished": "\n\n".join(parts), "changes": changes,
+    return {"mode": mode, "source": source, "polished": "\n\n".join(parts), "changes": [],
             "segments": segments, "diff_counts": counts, **stats}

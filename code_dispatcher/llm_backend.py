@@ -212,6 +212,15 @@ def backends_in_order(force_refresh: bool = False) -> List[LLMBackend]:
     return order
 
 
+def cpu_first_backends(force_refresh: bool = False) -> List[LLMBackend]:
+    """CPU Ollama 優先、Hailo 備援：錄音後才跑、需要較好中文能力的工作 (潤稿) 用。
+    2026-11-11 GS3 實錄潤稿量測：Hailo qwen3:1.7b 幾乎照抄原文 (CER 不變)，CPU qwen2.5:3b 有改善 (見 transcript_polish.py)。"""
+    order: List[LLMBackend] = [CPU_BACKEND, CPU_FALLBACK_BACKEND]
+    if PREFERRED_BACKEND == "hailo" and is_backend_healthy(HAILO_BACKEND, force_refresh):
+        order.append(HAILO_BACKEND)
+    return order
+
+
 def get_backend() -> LLMBackend:
     return backends_in_order()[0]
 
@@ -390,14 +399,17 @@ async def aiter_chat_stream(
     hailo_retries: int = 0,
     hailo_retry_wait: float = 5.0,
     hailo_only: bool = False,
+    cpu_first: bool = False,
 ) -> AsyncIterator[Tuple[str, bool, LLMBackend]]:
     """hailo_retries：Hailo 在第一個 token 前就失敗時，先等 hailo_retry_wait 秒重試幾次，再換下一個後端。
     2026-11-02 228 容錯測試：長會議整理途中重啟 hailo-ollama，原本立刻改用 CPU Ollama (qwen2.5:3b)，
     那一段要 81 s (Hailo 約 35 s)，RAM 峰值 3.9 GB；hailo-ollama 重啟到能回應約需 10 s。
-    hailo_only：只用 Hailo、不退回 CPU (錄音中禁止 CPU 推論，見 CLAUDE.md；錄音中預先整理用)。"""
+    hailo_only：只用 Hailo、不退回 CPU (錄音中禁止 CPU 推論，見 CLAUDE.md；錄音中預先整理用)。
+    cpu_first：CPU Ollama 優先 (cpu_first_backends)；呼叫端要在錄音開始時中止串流 (關閉串流 Ollama 就停止生成)。"""
     last_err: Optional[Exception] = None
     messages = build_messages(prompt, system)
-    for backend in ([HAILO_BACKEND] if hailo_only else backends_in_order()):
+    order = [HAILO_BACKEND] if hailo_only else (cpu_first_backends() if cpu_first else backends_in_order())
+    for backend in order:
         attempts = 1 + (hailo_retries if backend.is_hailo else 0)
         for attempt in range(attempts):
             if backend.is_hailo:

@@ -140,6 +140,9 @@ details[open] summary::after{content:"收起 ▴"}
 .asr-info:empty{display:none}
 /* 潤稿標色：同音字（替換）、漏字（補上）、整段潤稿的改寫、刪掉的字 */
 .pl-zone{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.pl-src{font-size:13px;color:var(--fg);gap:14px}
+.pl-src label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.pl-src label.off{color:var(--muted);cursor:not-allowed}
 .pl-title{font-size:14px;color:var(--fg)}
 .pl-status{font-size:13px;color:var(--muted);margin-top:6px}
 .pl-legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);margin-top:6px}
@@ -493,6 +496,11 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
           <details id="polishBox" hidden>
             <summary>潤稿 Polish (LLM)</summary>
             <div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
+              <div class="row pl-src" id="polishSrcRow">
+                <b>潤稿來源</b>
+                <label id="polishSrcRefineLabel"><input type="radio" name="polishSrc" value="refine" id="polishSrcRefine"> 高精度逐字稿（SenseVoice）</label>
+                <label><input type="radio" name="polishSrc" value="live" id="polishSrcLive" checked> 完整逐字稿（即時 ASR）</label>
+              </div>
               <div class="pl-zone" id="polishFixZone">
                 <div class="row">
                   <b class="pl-title">① 修同音字與漏字</b>
@@ -664,6 +672,7 @@ const el = {
   polishBox: $('polishBox'), polishFixBtn: $('polishFixBtn'), polishRewriteBtn: $('polishRewriteBtn'),
   polishFixInfo: $('polishFixInfo'), polishFixStatus: $('polishFixStatus'), polishFixText: $('polishFixText'),
   polishRewriteInfo: $('polishRewriteInfo'), polishRewriteStatus: $('polishRewriteStatus'), polishRewriteText: $('polishRewriteText'),
+  polishSrcRefine: $('polishSrcRefine'), polishSrcLive: $('polishSrcLive'), polishSrcRefineLabel: $('polishSrcRefineLabel'),
   refineBox: $('refineBox'), refineBtn: $('refineBtn'), refineStatus: $('refineStatus'), refineText: $('refineText'), refineInfo: $('refineInfo'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
@@ -2180,9 +2189,26 @@ function clearPolishZone(z) {
   z.info.innerHTML = '';
   z.status.textContent = '';
 }
+// 潤稿來源：有高精度逐字稿時預設用它（11-11 量測：SenseVoice 稿 CER 比即時稿低 4–8 個百分點，小模型從錯很多的稿猜不回原意）；
+// 使用者自己點過就照他選的。
+let polishSrcTouched = false;
+const POLISH_SRC_LABEL = { refine: '高精度逐字稿（SenseVoice）', live: '完整逐字稿（即時 ASR）' };
+function refinePlainText() { return (el.refineText && el.refineText.innerText || '').trim(); }
+function polishSource() { return el.polishSrcRefine.checked && refinePlainText() ? 'refine' : 'live'; }
+function syncPolishSource() {
+  const hasRefine = !!refinePlainText();
+  el.polishSrcRefine.disabled = !hasRefine || polishBusy;
+  el.polishSrcLive.disabled = polishBusy;
+  el.polishSrcRefineLabel.classList.toggle('off', !hasRefine);
+  if (!hasRefine && el.polishSrcRefine.checked) el.polishSrcLive.checked = true;
+  if (hasRefine && !polishSrcTouched) el.polishSrcRefine.checked = true;
+}
+el.polishSrcRefine.addEventListener('change', () => { polishSrcTouched = true; });
+el.polishSrcLive.addEventListener('change', () => { polishSrcTouched = true; });
 function syncPolishBox() {
   const has = !!(el.transcript && el.transcript.innerText.trim());
   el.polishBox.hidden = !has;
+  syncPolishSource();
   const blocked = !has || polishBusy || !!meetingBusyHint();
   for (const z of Object.values(POLISH_UI)) {
     z.btn.disabled = blocked;
@@ -2193,6 +2219,9 @@ function syncPolishBox() {
 document.addEventListener('ln-state', syncPolishBox);
 if (el.transcript) {
   new MutationObserver(syncPolishBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
+}
+if (el.refineText) {
+  new MutationObserver(syncPolishBox).observe(el.refineText, { childList: true, characterData: true, subtree: true });
 }
 
 // 後端回的 segments：[[op, text, orig]]，op = eq／rep（替換）／ins（補上）／del（刪掉）。
@@ -2220,7 +2249,7 @@ function renderPolishResult(job, mode) {
   const res = job.result;
   if (res.segments) renderPolishSegments(z.text, res.segments, res.mode);
   else z.text.textContent = res.polished || '';
-  z.info.innerHTML = res.backend ? `<b>LLM</b>：${esc(res.backend)}` : '';
+  renderInfo(z.info, [['來源', POLISH_SRC_LABEL[res.source] || ''], ['LLM', res.backend]]);
   const c = res.diff_counts || {};
   const marks = res.mode === 'fix'
     ? `同音字 ${c.rep || 0} 處、漏字 ${c.ins || 0} 處、刪字 ${c.del || 0} 處`
@@ -2230,7 +2259,7 @@ function renderPolishResult(job, mode) {
   if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
   if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);
   if (res.fact_rejected_chunks) notes.push(`${res.fact_rejected_chunks} 段改到數字，已保留原文`);
-  if (res.parse_errors) notes.push(`${res.parse_errors} 段輸出格式錯誤，已略過`);
+  if (res.rejected_edits) notes.push(`模型另有 ${res.rejected_edits} 處較大的改動未採用（只收短的替換與補字）`);
   const secs = job.elapsed ? `，${Math.round(job.elapsed)} 秒` : '';
   z.status.textContent = `完成：${res.chunks} 段${secs}；${res.segments ? marks : '（舊版結果沒有標色資料）'}` + (notes.length ? `；${notes.join('；')}` : '');
 }
@@ -2257,7 +2286,8 @@ async function pollJob(path, onRunning) {
 
 // mode：這次要啟動的模式；null = 頁面重新整理時接著顯示後端還在跑的工作（runningMode 是它的模式）。
 async function runPolish(mode, runningMode) {
-  const src = (el.transcript.innerText || '').trim();
+  const source = polishSource();
+  const src = source === 'refine' ? refinePlainText() : (el.transcript.innerText || '').trim();
   if (mode && !src) { toast('沒有逐字稿可潤稿'); return; }
   const z = POLISH_UI[mode || runningMode] || POLISH_UI.fix;
   const label = z.btn.textContent;
@@ -2268,7 +2298,7 @@ async function runPolish(mode, runningMode) {
     if (mode) {
       clearPolishZone(z);
       z.status.textContent = z.start;
-      await api(API.polish, { text: src, mode });
+      await api(API.polish, { text: src, mode, source });
     }
     const job = await pollJob(API.polish, j => {
       z.status.textContent = `潤稿中：已完成 ${j.done}/${j.total} 段（${Math.round(j.elapsed || 0)} 秒）…`;
@@ -2802,7 +2832,7 @@ function mock(path, body) {
   }
   if (path === API.result) return { job: 'j' + M.job, title: '客戶會議', started_at: new Date().toISOString(), duration: 90, summary: ['客戶要 200 台樣機，11 月前交貨', '對單價有異議，要求降 8%', '同意先簽 50 台試單'], todos: [{ item: '發修訂報價', owner: '張三', due: '週五' }, { item: '確認樣機產能', owner: '李四', due: '下週一' }], decisions: ['先簽 50 台試單，價格按新報價'], transcript: '[00:00] 發言人1：我們這邊希望 11 月前能拿到 200 台樣機……\n[00:21] 發言人2：單價還是偏高，能不能降 8%……', transcript_live: '[00:00] 發言人1：我們這邊希望 11 月前能拿到 200 台樣機……\n[00:21] 發言人2：單價還是偏高，能不能將 8%……', stt_engine: 'Hailo-10H Whisper-Small（NPU）', stt_vad: 'Silero VAD 語音閘門（faster-whisper，最短語音 250 ms；沒有語音的切片不送 NPU）；停頓處切片 4–9.5 秒（能量最低點下刀）＋能量快篩（峰值 < 0.035 且 RMS < 0.0025 的切片不送 STT）', stt_post: 'OpenCC s2twp＋規則修正 fix_meeting_terms（日期、職稱、人名…）＋解碼迴圈清理', markdown: '# 客戶會議 · 10-07 10:50 · 1 分 30 秒\n\n## 摘要\n- 客戶要 200 台樣機，11 月前交貨\n- 對單價有異議，要求降 8%\n- 同意先簽 50 台試單\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 發修訂報價 | 張三 | 週五 |\n| 確認樣機產能 | 李四 | 下週一 |\n\n## 決議\n先簽 50 台試單，價格按新報價' };
   if (path === API.polish) {
-    if (body) { M.polish = { mode: body.mode, t0: now }; return { state: 'running', mode: body.mode, done: 0, total: 1 }; }
+    if (body) { M.polish = { mode: body.mode, t0: now, source: body.source }; return { state: 'running', mode: body.mode, done: 0, total: 1 }; }
     if (!M.polish) return { state: 'idle' };
     const pe = (now - M.polish.t0) / 1000;
     if (pe < 1.5) return { state: 'running', mode: M.polish.mode, done: 0, total: 1, elapsed: pe };
@@ -2811,7 +2841,7 @@ function mock(path, body) {
       ? [['eq', '[00:00] 發言人1：我們這邊希望 11 月前能拿到 200 台樣機', ''], ['ins', '。', ''], ['eq', '……\n[00:21] 發言人2：單價還是偏高，能不能', ''], ['rep', '降', '將'], ['eq', ' 8%……', '']]
       : [['eq', '[00:00] 發言人1：', ''], ['rep', '希望在 11 月前拿到 200 台樣機。', '我們這邊希望 11 月前能拿到 200 台樣機……'], ['eq', '\n[00:21] 發言人2：單價', ''], ['del', '還是', ''], ['eq', '偏高，', ''], ['rep', '希望能降 8%。', '能不能降 8%……']];
     return { state: 'done', mode: M.polish.mode, done: 1, total: 1, elapsed: 1.5, result: {
-      mode: M.polish.mode, chunks: 1, backend: 'Hailo-10H NPU qwen3:1.7b', segments,
+      mode: M.polish.mode, chunks: 1, backend: 'CPU Ollama qwen2.5:3b-opt', source: M.polish.source, segments,
       polished: segments.filter(x => x[0] !== 'del').map(x => x[1]).join(''),
       diff_counts: fix ? { rep: 1, ins: 1, del: 0 } : { rep: 2, ins: 0, del: 1 }, changes: [] } };
   }

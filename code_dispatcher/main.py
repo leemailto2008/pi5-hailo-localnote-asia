@@ -1814,6 +1814,7 @@ async def post_demo_translate(req: DemoTranslateRequest) -> Dict[str, Any]:
 class DemoPolishRequest(BaseModel):
     text: str = Field(..., max_length=200000, description="完整逐字稿")
     mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
+    source: str = Field(default="live", description="'live' 完整逐字稿（即時 ASR）/ 'refine' 高精度逐字稿（SenseVoice）")
 
 
 # 潤稿、高精度逐字稿都是背景工作（single_job.SingleJob）：一小時的會議潤稿約 22 段，Hailo 每段 60–95 秒，
@@ -1839,6 +1840,8 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=busy)
     if req.mode not in MODES:
         raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
+    if req.source not in ("live", "refine"):
+        raise HTTPException(status_code=400, detail="source 必須是 live 或 refine")
     if not (req.text or "").strip():
         raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
     if _polish_job.running:
@@ -1849,6 +1852,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
             req.text, req.mode,
             on_progress=lambda done, total: job.update(done=done, total=total),
             should_stop=is_any_recording_active,
+            source=req.source,
         )
 
     return _polish_job.start(runner, mode=req.mode, done=0, total=len(split_chunks(req.text)))
