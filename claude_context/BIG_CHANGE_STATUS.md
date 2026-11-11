@@ -87,6 +87,11 @@
 - 2026-11-10 21:35 122051e 部署（備份 .deploy_backup/20261110_213534；py_compile、健康檢查通過）。POST /api/refine 冒煙（最後一場 m_1794309254，音訊 75.3 s）：完成，22.5 s，3 位說話人；同一說話人短停頓已見逗號（例：「好，我們開始今天的週會，今天有幾個議題要討論。」）。/health 回 status=degraded、redis_connected=false（觀察）。本次部署只改 refine_transcript.py，與 redis 判定無關（推論，非已查證）；是否為既有狀態尚未查證。
 - 2026-11-10 21:37 #4 rewrite 實測啟動（Pi，/tmp/rewrite_real_check.py，實錄 22 段 12554 字，/api/polish mode=rewrite）：結果（22:14 完成）：state=done，wall 2291.4 s（服務內 elapsed 2290.8 s，約每段 104 s），fact_rejected_chunks 5、rejected_chunks 0、failed_chunks 0，backend Hailo-10H NPU qwen3:1.7b，輸入 12554 字、輸出 12578 字。原始結果 Pi 上 /tmp/rewrite_real.json、日誌 /tmp/rewrite_real.log；只記錄上述數值，未與人工參考文字比對品質。
 
+- 2026-11-11 09:03 使用者手動測試（耳麥已重新連線，5 分鐘 Podcast 內容，m_1794358697）：紀要 09:03:23 開始用 NPU，09:03:54 按「修同音字與漏字」→ 潤稿請求在 hailo-ollama 排在紀要後面，120 s 逾時；hailo-ollama 不取消已送出的請求，重試又排在被放棄的請求後面，2 段共 300 s。日誌只印「failed (attempt 1):」。
+  - 修正 bedd4e3（部署 09:11，備份 .deploy_backup/20261111_091108，LN_DEPLOY_FORCE=1：使用者的會議在 15 分鐘內，部署腳本預設擋下）：錄音中或 processing 時 POST /api/polish、/api/refine 回 409；前端停用按鈕並顯示原因；LLM 失敗日誌印例外類型。
+  - Pi 實測（09:16 e2e 1 分鐘，數位注入，PASS）：processing 期間 POST /api/polish、/api/refine 皆 409「會議紀要還在生成，完成後再試」；PC Playwright 看到 recording／processing 時按鈕停用、狀態列顯示原因，done 後恢復。
+  - 同一次潤稿結果（Podcast，無真值）：7 筆修改，至少 3 筆明顯有害（「節目開始前讓我們」→「節目前讓讓我們」、「主客觀條」→「主客觀」、「我們就組成了」→「我們就這樣」）。離線比較「只允許同長度換字與補字」的過濾（.cc_scratch/eval_real.py s2t+struct）：60 分鐘實錄三組有害 15 → 7 筆，但有益 10 → 4 筆、淨編輯距離 +2 → +7，沒有比現行好，未採用。fix 模式維持「效果接近零」的結論。
+
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
 - 後續 #2 長會議：60 分鐘完成（見上方量測紀錄，未 OOM）。240 分鐘：2026-11-10 20:28 起在 Pi 背景跑（.cc_scratch/sv/run_240.sh，音檔 /home/pi/ln_e2e/data/meeting_240min.wav，nice 10）；腳本會在 state 為 recording／processing 時自行 pkill。輸出 /tmp/refine_240min.jsonl、/tmp/refine_240min.err（結束行 EXIT n；ABORT／KILL 行表示沒跑完）。結果見量測紀錄（21:33）。120 分鐘未單獨跑。
