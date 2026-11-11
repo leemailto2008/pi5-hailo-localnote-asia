@@ -323,3 +323,12 @@ def test_split_by_windows_leaves_short_or_tokenless_sentences():
     s2 = Sentence(2.0, 8.0, "沒有token", speaker=1)
     out = rt.split_by_windows(_samples([]), [s1, s2], None, {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])})
     assert out == [s1, s2]
+
+def test_short_piece_borrows_from_its_own_vad_sentence_first(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    # 乙說完（0.0–0.9），甲的句子 1.0–2.0（長）＋短尾巴 2.4–2.7（cont）；尾巴時間上離乙的下一句 2.75–3.75 更近
+    x = _samples([(0.0, 0.9, 1.0), (1.0, 2.0, 0.0), (2.4, 2.7, 2.0), (2.75, 3.75, 1.0)])
+    sents = [Sentence(0.0, 1.0, "乙說"), Sentence(1.0, 2.0, "甲說"), Sentence(2.4, 2.7, "完", cont=True),
+             Sentence(2.75, 3.75, "乙又說")]
+    assert rt.diarize_sentences(x, sents) is True
+    assert [s.speaker for s in sents] == [1, 0, 0, 1]

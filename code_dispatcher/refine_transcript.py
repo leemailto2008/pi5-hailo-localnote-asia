@@ -352,10 +352,25 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
     labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
     for i, label in zip(long_idx, labels):
         sentences[i].speaker = int(label)
-    mids = np.array([(sentences[i].start + sentences[i].end) / 2 for i in long_idx])
+    # 太短的片段：同一個 VAD 句子切出來的（cont 串在一起）先借同句裡時間上最近的已分群片段；
+    # 同句沒有才借全場時間上最近的長句。（GS3 實錄上，切出來的短尾巴借全場最近的長句會借到下一個人，11-11。）
+    group, groups = -1, []
     for s in sentences:
+        group += 0 if s.cont else 1
+        groups.append(group)
+    long_in_group: Dict[int, List[int]] = {}
+    for i in long_idx:
+        long_in_group.setdefault(groups[i], []).append(i)
+    mids = np.array([(sentences[i].start + sentences[i].end) / 2 for i in long_idx])
+    for n, s in enumerate(sentences):
         if s.speaker is None:
-            s.speaker = sentences[long_idx[int(np.argmin(np.abs(mids - (s.start + s.end) / 2)))]].speaker
+            mid = (s.start + s.end) / 2
+            same = long_in_group.get(groups[n])
+            if same:
+                j = min(same, key=lambda i: abs((sentences[i].start + sentences[i].end) / 2 - mid))
+            else:
+                j = long_idx[int(np.argmin(np.abs(mids - mid)))]
+            s.speaker = sentences[j].speaker
 
     unit = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-12)
     lab_arr = np.asarray(labels)
