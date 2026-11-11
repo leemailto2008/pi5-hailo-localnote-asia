@@ -11,7 +11,7 @@ import time
 import asyncio
 import subprocess
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import threading
 import collections
 import requests
@@ -413,6 +413,8 @@ class MeetingJobManager:
         self._premap_prefix: str = ""          # 錄音中已預先整理的逐字稿前段 (tidy_live_transcript 後)
         self._premap_notes: List[str] = []     # 對應的各段重點 (compact_notes 後)
         self._hailo_pinned: bool = False   # map 階段讓 hailo-ollama 模型常駐 NPU 中
+        # 一場會議整理完成 (state=done) 後呼叫 on_meeting_done(job_id)：main.py 用來自動跑高精度逐字稿
+        self.on_meeting_done: Optional[Callable[[str], None]] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.offline_detector = OfflineDetector(check_interval=10.0)
         self._last_cpu_time: float = 0.0
@@ -448,6 +450,15 @@ class MeetingJobManager:
             metrics=(payload.get("status") or {}).get("metrics") or {},
         )
         print(f"[MeetingMinutes] 已載入最後一場會議 {job}（音檔{'在' if audio_ok else '已不在'} RAM 快取）")
+
+    def _meeting_done(self, job_id: str) -> None:
+        """通知 on_meeting_done；它的錯誤只記 log，不影響已完成的會議。"""
+        if self.on_meeting_done is None:
+            return
+        try:
+            self.on_meeting_done(job_id)
+        except Exception as e:  # 掛勾是附加功能 (自動高精度逐字稿)，失敗不能讓會議變成 error
+            print(f"[MeetingMinutes] on_meeting_done({job_id}) 失敗: {e}")
 
     def _save_last_meeting(self) -> None:
         if self.result:
@@ -1120,6 +1131,7 @@ class MeetingJobManager:
                 self.status.metrics["total_elapsed"] = total_stt_sec
                 self.notify_status_update()
                 self._save_last_meeting()
+                self._meeting_done(job_id)
 
                 try:
                     from ws_manager import ws_manager
@@ -1224,6 +1236,7 @@ class MeetingJobManager:
             self.status.msg = "會議紀要已生成完畢。"
             self.notify_status_update()
             self._save_last_meeting()
+            self._meeting_done(job_id)
 
         except asyncio.CancelledError:
             self.status.state = "idle"

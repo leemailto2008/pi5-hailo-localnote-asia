@@ -129,6 +129,7 @@ async def startup_event():
 
     try:
         from meeting_minutes import minutes_manager
+        minutes_manager.on_meeting_done = _auto_refine
         asyncio.create_task(minutes_manager.offline_detector.start())
         print("[Startup] OfflineDetector background watchdog started.")
     except Exception as e:
@@ -1868,13 +1869,13 @@ class RefineRequest(BaseModel):
     job: Optional[str] = Field(default=None, description="會議 job id；省略 = 目前這場會議")
 
 
-@app.post("/api/refine", tags=["Demo UI"])
-async def post_refine(req: RefineRequest) -> Dict[str, Any]:
-    """高精度逐字稿 (大改第 2、3 項)：錄音結束後用 SenseVoice 重新辨識整段錄音並分說話人 (CPU，背景工作)。
+# 會議紀要完成後自動跑高精度逐字稿 (SenseVoice＋分說話人)：潤稿也預設用它當來源 (11-11 量測：CER 比即時稿低 4–8 個百分點)。
+# 只在 state=done 之後跑 (紀要生成中不跑)；錄音一開始就停。PI5_AUTO_REFINE=0 關閉。
+AUTO_REFINE = os.environ.get("PI5_AUTO_REFINE", "1").strip() != "0"
 
-    錄音中或會議紀要生成中回 409；sherpa-onnx 或模型不在回 503；錄音檔不在 (例如服務重啟後 RAM 磁碟已清空) 回 404。
-    處理中一開始錄音就停下 (state=stopped)。進度與結果用 GET /api/refine 查詢。
-    """
+
+def _start_refine(job_id: str) -> Dict[str, Any]:
+    """啟動高精度逐字稿背景工作；不能啟動就丟 HTTPException (409 忙碌／503 不可用／400、404 沒有錄音)。"""
     from voice_streaming import is_any_recording_active
     from meeting_minutes import minutes_manager
     import refine_transcript
@@ -1886,8 +1887,7 @@ async def post_refine(req: RefineRequest) -> Dict[str, Any]:
     reason = refine_transcript.check_available()
     if reason:
         raise HTTPException(status_code=503, detail=f"高精度逐字稿無法使用：{reason}")
-    job_id = req.job or (minutes_manager.status.job or "")
-    if not _JOB_ID_RE.fullmatch(job_id):
+    if not _JOB_ID_RE.fullmatch(job_id or ""):
         raise HTTPException(status_code=400, detail="沒有可處理的會議")
     path = os.path.join(AUDIO_CACHE_DIR, f"{job_id}.ogg")
     if not os.path.isfile(path):
@@ -1904,6 +1904,28 @@ async def post_refine(req: RefineRequest) -> Dict[str, Any]:
         return await refine_transcript.run_in_subprocess(path, is_any_recording_active, on_progress)
 
     return _refine_job.start(runner, job=job_id, phase="load", progress=0)
+
+
+def _auto_refine(job_id: str) -> None:
+    """minutes_manager.on_meeting_done：會議整理完自動啟動高精度逐字稿；不能啟動 (已在跑、沒裝模型…) 只記 log。"""
+    if not AUTO_REFINE:
+        return
+    try:
+        _start_refine(job_id)
+        print(f"[AutoRefine] 開始自動高精度逐字稿：{job_id}")
+    except HTTPException as e:
+        print(f"[AutoRefine] 略過 {job_id}：{e.detail}")
+
+
+@app.post("/api/refine", tags=["Demo UI"])
+async def post_refine(req: RefineRequest) -> Dict[str, Any]:
+    """高精度逐字稿 (大改第 2、3 項)：錄音結束後用 SenseVoice 重新辨識整段錄音並分說話人 (CPU，背景工作)。
+
+    錄音中或會議紀要生成中回 409；sherpa-onnx 或模型不在回 503；錄音檔不在 (例如服務重啟後 RAM 磁碟已清空) 回 404。
+    處理中一開始錄音就停下 (state=stopped)。進度與結果用 GET /api/refine 查詢。會議整理完成後也會自動啟動 (AUTO_REFINE)。
+    """
+    from meeting_minutes import minutes_manager
+    return _start_refine(req.job or (minutes_manager.status.job or ""))
 
 
 @app.get("/api/refine", tags=["Demo UI"])

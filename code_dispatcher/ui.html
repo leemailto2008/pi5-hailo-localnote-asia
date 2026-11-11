@@ -2345,6 +2345,15 @@ function syncRefineBox() {
   if (has && !refineUnavailable) showBusyHint(el.refineStatus, refineBusy);
 }
 document.addEventListener('ln-state', syncRefineBox);
+// 會議整理完成後後端會自動跑高精度逐字稿 (AUTO_REFINE)：狀態變成 done 時看一下，在跑就接著顯示進度。
+document.addEventListener('ln-state', ev => {
+  if (MOCK || ev.detail !== 'done' || refineBusy) return;
+  setTimeout(() => {
+    api(API.refine).then(job => {
+      if (job && job.state === 'running' && !refineBusy) runRefine(false);
+    }).catch(err => console.warn('auto refine check failed', err));
+  }, 1500);
+});
 if (el.transcript) {
   new MutationObserver(syncRefineBox).observe(el.transcript, { childList: true, characterData: true, subtree: true });
 }
