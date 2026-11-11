@@ -153,8 +153,8 @@ def accept_homophone_edits(src: str, dst: str,
             ok = bool(_CJK_RE.match(old) and _CJK_RE.match(new)) and sounds_alike(old, new)
         elif tag == "insert":
             # 補字只收「同一行兩個字之間」：行尾／段尾的補字是模型往下接或把下一行的字搬上來
-            # （11-11 使用者實錄 m_1794389683：「在運」行尾補「動」與下一行「動激」重複、全文最後補「還」，2／2 錯；
-            #  實錄 5／10 分 5 份 fix 輸出的 16 處補字都在行中間，這條規則不影響它們）。
+            # （11-11 使用者實錄 m_1794389683：「在運」行尾補「動」與下一行開頭「動激」重複，行尾補字 1 處、錯 1 處；
+            #  同份的「畢竟還是老師」是行中間補字，照收。實錄 5／10 分 5 份 fix 輸出的 16 處補字都在行中間，不受影響）。
             mid_line = 0 < i1 < len(src) and src[i1 - 1] != "\n" and src[i1] != "\n"
             ok = mid_line and len(new) <= FIX_MAX_INSERT and bool(_CJK_RE.match(new))
         else:
