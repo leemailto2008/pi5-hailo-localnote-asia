@@ -295,6 +295,47 @@ def test_polish_rewrite_reverts_byte_slips(monkeypatch):
     assert res["reverted_chars"] == 1
 
 
+def test_csc_apply_predictions_takes_confident_single_char_swaps_only():
+    import csc_corrector as cc
+    trad = "行成4天，協理"
+    piece = "行成4天，协理"                       # t2s 後的視窗
+    offsets = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)]
+    preds = [("行", 0.99), ("程", 0.95), ("4", 0.9), ("天", 0.9), ("，", 0.9), ("协", 0.9), ("利", 0.68)]
+    out = list(trad)
+    n = cc.apply_predictions(trad, 0, piece, offsets, preds, lambda s: {"程": "程", "利": "利"}.get(s, s), out)
+    assert "".join(out) == "行程4天，協理"       # 協理→協利 機率 0.68 < 0.7，不收；数字、標點不動
+    assert n == 1
+
+
+class _FakeCsc:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def correct(self, text, should_stop=None):
+        if should_stop is not None and should_stop():
+            return None
+        return text.replace("行成", "行程").replace("確認", "確定")
+
+
+def test_polish_fix_with_csc_engine_keeps_only_homophones(monkeypatch):
+    import csc_corrector as cc
+    monkeypatch.setattr(tp, "FIX_ENGINE", "csc")
+    monkeypatch.setattr(cc, "CscCorrector", _FakeCsc)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: pytest.fail("LLM 不該被呼叫")))
+    res = _run(tp.polish_transcript("說話人1：行成4天，請協理確認。", "fix", source="refine"))
+    assert res["polished"] == "說話人1：行程4天，請協理確認。"   # 認→定 不同音，同音過濾擋下
+    assert res["backend"] == cc.LABEL
+    assert res["accepted_edits"] == 1 and res["rejected_edits"] == 1
+
+
+def test_polish_fix_with_csc_engine_stops_when_recording_starts(monkeypatch):
+    import csc_corrector as cc
+    monkeypatch.setattr(tp, "FIX_ENGINE", "csc")
+    monkeypatch.setattr(cc, "CscCorrector", _FakeCsc)
+    res = _run(tp.polish_transcript("行成4天", "fix", should_stop=lambda: True))
+    assert res["stopped"] is True and res["polished"] == "行成4天"
+
+
 def test_output_timeout_grows_with_output_budget(monkeypatch):
     seen = []
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 500, seen))

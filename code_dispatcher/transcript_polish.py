@@ -25,6 +25,7 @@ transcript_polish.py — 逐字稿 LLM 潤稿 (2026-11-10，待辦 #11；2026-11
   - 只透過 llm_backend.aiter_chat_stream 呼叫模型。
 """
 
+import asyncio
 import contextlib
 import difflib
 import logging
@@ -45,6 +46,9 @@ MAX_CHUNK_CHARS = 600
 _BACKEND_DEFAULT = {"fix": "cpu", "rewrite": "hailo"}
 _BACKEND_OVERRIDE = os.environ.get("PI5_POLISH_BACKEND", "").strip().lower()
 POLISH_BACKENDS = {mode: _BACKEND_OVERRIDE or default for mode, default in _BACKEND_DEFAULT.items()}
+# 修同音字的引擎：llm = 上面的 LLM 校對全文（預設，較準）；csc = csc_corrector 的 MacBERT4CSC（快 50～80 倍、CER 稍差，
+# 量測見 csc_corrector.py 檔頭）。兩者都經過同一道 accept_homophone_edits。
+FIX_ENGINE = os.environ.get("PI5_POLISH_FIX_ENGINE", "llm").strip().lower()
 FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
 OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
@@ -293,6 +297,20 @@ async def _run_fix(chunk: str, stats: Dict[str, Any], should_stop: Optional[Call
     return new_chunk
 
 
+async def _run_fix_csc(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]],
+                       corrector: Any) -> Optional[str]:
+    """MacBERT4CSC 引擎：在背景執行緒跑（onnxruntime 是同步的，不能卡住 API 的事件迴圈）。"""
+    from csc_corrector import LABEL
+    stats["backend"] = LABEL
+    out = await asyncio.to_thread(corrector.correct, chunk, should_stop)
+    if out is None:
+        return None
+    new_chunk, edits = accept_homophone_edits(chunk, out, protected_spans(chunk))
+    stats["accepted_edits"] += edits["accepted"]
+    stats["rejected_edits"] += edits["rejected"]
+    return new_chunk
+
+
 async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
     labels, bodies = split_labels(chunk)
     labelled = any(labels)
@@ -372,11 +390,21 @@ async def polish_transcript(
             if seg[0] in counts:
                 counts[seg[0]] += 1
 
+    corrector = None
+    if mode == "fix" and FIX_ENGINE == "csc":
+        try:
+            from csc_corrector import CscCorrector
+            corrector = await asyncio.to_thread(CscCorrector)   # 載入約 4 s；這次潤稿用完就釋放
+        except ImportError as e:
+            raise RuntimeError("中文糾錯引擎缺少套件（onnxruntime、tokenizers、opencc）：" + str(e)) from e
+
     for idx, chunk in enumerate(chunks, start=1):
         new_chunk: Optional[str] = None
         if not (should_stop is not None and should_stop()):
             try:
-                if mode == "fix":
+                if corrector is not None:
+                    new_chunk = await _run_fix_csc(chunk, stats, should_stop, corrector)
+                elif mode == "fix":
                     new_chunk = await _run_fix(chunk, stats, should_stop)
                 else:
                     new_chunk = await _run_rewrite(chunk, stats, should_stop)
