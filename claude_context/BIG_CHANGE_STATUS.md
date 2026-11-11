@@ -92,6 +92,24 @@
   - Pi 實測（09:16 e2e 1 分鐘，數位注入，PASS）：processing 期間 POST /api/polish、/api/refine 皆 409「會議紀要還在生成，完成後再試」；PC Playwright 看到 recording／processing 時按鈕停用、狀態列顯示原因，done 後恢復。
   - 同一次潤稿結果（Podcast，無真值）：7 筆修改，至少 3 筆明顯有害（「節目開始前讓我們」→「節目前讓讓我們」、「主客觀條」→「主客觀」、「我們就組成了」→「我們就這樣」）。離線比較「只允許同長度換字與補字」的過濾（.cc_scratch/eval_real.py s2t+struct）：60 分鐘實錄三組有害 15 → 7 筆，但有益 10 → 4 筆、淨編輯距離 +2 → +7，沒有比現行好，未採用。fix 模式維持「效果接近零」的結論。
 
+- 2026-11-11 英文會議：14473f1 高精度逐字稿英文句子改用空格接（原本接成「meeting.，We have」），中英混排仍用「，」；新增 2 個單測。
+- 2026-11-11 SenseVoice 語言設定（.cc_scratch/sv/sv_eval.py --language，x86）：
+  | 音訊 | zh | en | auto |
+  |---|---|---|---|
+  | 中文合成會議 5／10／15 分 CER | 0.166／0.177／0.1875 | — | 0.166／0.179／0.1858 |
+  | 英文 TTS en_short CER | 0.028 | 0.032 | 0.030 |
+  | 英文 TTS en_long CER | 0.073 | 0.074 | 0.075 |
+  .229 真實英文新聞（夾一段中文廣告，無真值）輸出的 CJK 字數：zh 1125、en 3、auto 1102。zh 把英文段辨成中文亂碼；en 把中文廣告辨成英文亂碼；auto 英文段正常、中文廣告正確。
+  → 5fb7473：refine_transcript.ASR_LANGUAGE 預設 auto（環境變數 PI5_SENSEVOICE_LANGUAGE 可覆寫），新增單測；Windows pytest 563 passed。
+  部署 raspi678（10:18，備份 .deploy_backup/20261111_101830，健康檢查通過）。Pi 實測 python3 -m refine_transcript meeting_en_short.wav（127 s 英文 TTS）：asr 7.2 s、diarize 26.1 s，3 位說話人，逐字稿 CJK 字 0（不含說話人標籤）、英文詞 257。
+  部署注意：Windows 上 git archive 要加 -c core.autocrlf=false，否則 deploy_on_pi.sh 變 CRLF，在 set -euo pipefail 就失敗（rc=2，未安裝任何檔案）。
+- 2026-11-11 raspi543（.229）更新到 14473f1，tools/ci/setup_sherpa_models.sh 直接從 HF／GitHub 下載模型（scp 239 MB 太慢，約 0.1 MB/s，已放棄）；/api/refine 回 unavailable=null（可用）。.229 給其他人測試，之後部署不加 LN_DEPLOY_FORCE。
+- 2026-11-11 .228 接 USB 音訊 Plextone GS3（ALSA card 2；sink alsa_output.usb-GS3_GS3_20180508-00.analog-stereo，source alsa_input.usb-GS3_GS3_20180508-00.analog-stereo）：硬體 PCM 音量原本 0%，PipeWire sink 音量設 1.0 後 PCM 100%。GS3 喇叭播放、同時錄音的電平：藍牙耳麥 −39.7 dBFS、GS3 麥克風 −53 dBFS；示範錄音逐字稿只出現「×.」，已取消。
+  - 10:06–10:26 多次播放（ffmpeg→pulse、pw-play、aplay plughw:2,0 44.1 kHz 直送），使用者現場都聽不到。數位端正常：pcm0p status RUNNING、hw_ptr 前進；sink monitor mean −26.4 dB／max −10.6 dB，與原檔相同。
+  - ALSA 只有 PCM Playback Switch／Volume、Mic Capture Switch／Volume。USB ID 8888:1234（非正式廠商 ID）；核心警告「Unlikely big volume range (=999), cval->res is probably wrong」，PCM 原始值 0–999、Mic 0–3996。插上時預設 PCM 0、Mic 3932/3780，WirePlumber 隨即設為 999／3996。
+  - 喇叭→GS3 麥克風自測：PCM {0,250,500,750,999} × Mic {0,1000,2000,3000,3996}，1 kHz 測試音全部偵測不到（1 kHz 相對鄰頻 −2.2～+1.1 dB）。Mic 0 為數位靜音；Mic 1000–3000 底噪都是 −76.7 dBFS（不隨增益變）。使用者敲麥克風、講話時峰值只到 −39／−45 dBFS。結論：類比輸入幾乎沒有訊號；喇叭端無法用麥克風自測。
+  - 推測（未驗證）：兩支 3.5 mm 插頭插反，或插在 4 極孔；或 GS3 機身的喇叭／麥克風靜音鍵、音量轉盤（產品資料有，Pi 看不到）。已請使用者現場檢查。10:25:44 起循環播放語音最多 30 分鐘，麥克風每秒記錄於 Pi /tmp/gs3_meter_cont.log；停止：touch /dev/shm/gs3_stop 後 pkill -x pw-play。
+
 ## 排程輪次紀錄（2026-11-10 20:24 起，台北時間）
 - 互動鎖：本輪 20:24 已過 19:50，忽略。Pi state=done、無 real_exp.py，允許評估；後續 #1（喇叭／耳麥）依排程指示不做。
 - 後續 #2 長會議：60 分鐘完成（見上方量測紀錄，未 OOM）。240 分鐘：2026-11-10 20:28 起在 Pi 背景跑（.cc_scratch/sv/run_240.sh，音檔 /home/pi/ln_e2e/data/meeting_240min.wav，nice 10）；腳本會在 state 為 recording／processing 時自行 pkill。輸出 /tmp/refine_240min.jsonl、/tmp/refine_240min.err（結束行 EXIT n；ABORT／KILL 行表示沒跑完）。結果見量測紀錄（21:33）。120 分鐘未單獨跑。
@@ -187,4 +205,10 @@
   - 數位工作：清單 #2–#4 已完成，#5 待使用者決定；本輪未改程式、未跑 pytest、未部署。
   - git：工作區有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入本次 commit。
   - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 執行 SSH 與 Pi HTTP。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
+
+- 2026-11-11 10:24 排程輪次（台北，白天窗）：互動鎖無（標頭無該行）。Pi /api/status state=done（job m_1794359755，無錄音／處理）；SSH pgrep real_exp、refine_transcript、run_suite、speaker_selftest、run_240、run_with_rss 無評估程序。
+  - #1 聲學實測：白天不做（須待 19:00 後）；本輪未呼叫 /api/bt、未放音、未用耳麥。#2–#4 已完成，#5 待使用者決定；清單內無剩餘可做的數位改善，本輪未改程式、未跑 pytest、未部署。
+  - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 執行 curl 與 SSH。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
+  - git：工作區另有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入；本輪只記錄本檔。
   - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
