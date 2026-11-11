@@ -112,16 +112,6 @@ def build_rewrite_prompt(chunk: str) -> str:
     )
 
 
-def build_rewrite_lines_prompt(lines_text: str) -> str:
-    """高精度逐字稿（每行一位說話人）用：說話人標籤不送模型，只送每行的內容。"""
-    return (
-        "以下是會議逐字稿片段，每一行是一個人說的一段話。請在不增加資訊的前提下，把每一行的口語贅詞與明顯錯字整理成通順的書面語。\n"
-        "規則：輸出的行數必須和原文相同，一行對一行，不要合併或拆開行；保留所有人名、數字、日期、專有名詞與決議內容；"
-        "使用原文的語言，不要翻譯；只輸出整理後的文字。\n\n"
-        f"逐字稿片段：\n{lines_text}"
-    )
-
-
 def protected_spans(text: str) -> List[Tuple[int, int]]:
     """說話人標籤（「說話人1：」）的位置；潤稿的修改碰到就不收。"""
     return [(m.start(), m.end()) for m in _LABEL_RE.finditer(text)]
@@ -280,9 +270,10 @@ async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[
     labelled = any(labels)
     # 有說話人標籤（高精度逐字稿）：標籤不送模型。11-11 實測（實錄 5 分第二次錄，帶標籤送 Hailo qwen3:1.7b／CPU qwen2.5:3b）：
     # 3 段全被數字檢查擋下，網頁重新潤稿等於沒作用；原始輸出顯示模型拿掉標籤、整段跳過 6 行（589 → 422 字）。
+    # 提示詞不另外要求「一行對一行」：那樣 Hailo 幾乎照抄（真實頁面 0 處、實錄 5 分 0.1791／0.1700），
+    # 用同一個提示詞再以 cut_like 切回各行較好（離線重放 0.1781／0.1680，與不切相同，標籤同序、0 行擋下）。
     src = "\n".join(bodies) if labelled else chunk
-    prompt = build_rewrite_lines_prompt(src) if labelled else build_rewrite_prompt(chunk)
-    raw = await _complete("rewrite", prompt, REWRITE_SYSTEM, 0.2, max(128, 2 * len(src)), stats, should_stop)
+    raw = await _complete("rewrite", build_rewrite_prompt(src), REWRITE_SYSTEM, 0.2, max(128, 2 * len(src)), stats, should_stop)
     if raw is None:
         return None
     out = to_taiwan_traditional(_strip_echoed_header((raw or "").strip()))
