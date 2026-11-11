@@ -622,6 +622,61 @@ class NoMicrophoneError(RuntimeError):
     """PipeWire 沒有任何可錄音的來源 (藍牙耳麥未連線／已關機，也沒有其他麥克風)。"""
 
 
+# 錄音麥克風偏好 (2026-11-11 接 USB 音效卡 GS3)：bluetooth = 藍牙耳麥優先 (原行為)；usb = USB 麥克風優先。
+# 偏好的那種不在時改用另一種；兩種都沒有才走 default／NoMicrophoneError。存檔，重啟後保留。
+MIC_PREFERENCES = ("bluetooth", "usb")
+MIC_PREF_PATH = os.path.join(DATA_DIR, "mic_preference.json")
+
+
+def load_mic_preference() -> str:
+    try:
+        import json
+        with open(MIC_PREF_PATH, encoding="utf-8") as f:
+            pref = json.load(f).get("prefer", "bluetooth")
+    except FileNotFoundError:
+        return "bluetooth"
+    except (OSError, ValueError, AttributeError) as e:
+        print(f"[VoicePipeline] mic preference unreadable ({e}); using bluetooth")
+        return "bluetooth"
+    return pref if pref in MIC_PREFERENCES else "bluetooth"
+
+
+def save_mic_preference(pref: str) -> str:
+    if pref not in MIC_PREFERENCES:
+        raise ValueError(f"prefer 必須是 {'/'.join(MIC_PREFERENCES)}")
+    import json
+    os.makedirs(os.path.dirname(MIC_PREF_PATH), exist_ok=True)
+    tmp = MIC_PREF_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"prefer": pref}, f)
+    os.replace(tmp, MIC_PREF_PATH)
+    return pref
+
+
+def pick_usb_source(nodes: List[Dict[str, Any]]) -> Optional[str]:
+    """第一個 USB 音效卡的錄音節點 (ALSA、device.bus=usb、media.class 恰為 Audio/Source)。"""
+    for n in nodes:
+        props = n.get("info", {}).get("props", {}) or {}
+        if (props.get("media.class") == "Audio/Source" and props.get("device.api") == "alsa"
+                and props.get("device.bus") == "usb" and props.get("node.name")):
+            return props["node.name"]
+    return None
+
+
+def list_microphones(nodes: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """給前端顯示的麥克風清單：藍牙耳麥與 USB 麥克風 (不含 monitor／內部節點)。"""
+    mics = []
+    for n in nodes:
+        props = n.get("info", {}).get("props", {}) or {}
+        if props.get("media.class") != "Audio/Source" or not props.get("node.name"):
+            continue
+        name = props["node.name"]
+        kind = "bluetooth" if name.startswith("bluez") else ("usb" if props.get("device.bus") == "usb" else None)
+        if kind:
+            mics.append({"kind": kind, "node": name, "name": props.get("node.description") or name})
+    return mics
+
+
 async def ensure_bluetooth_recording_ready() -> str:
     """
     Ensure PipeWire/WirePlumber and Bluetooth process affinities are isolated to CPU 0,1.
@@ -658,6 +713,13 @@ async def ensure_bluetooth_recording_ready() -> str:
         )
         stdout, _ = await proc.communicate()
         nodes = json.loads(stdout.decode("utf-8", errors="ignore"))
+
+        if load_mic_preference() == "usb":
+            usb_source = pick_usb_source(nodes)
+            if usb_source:
+                print(f"[VoicePipeline] 🎯 偏好 USB 麥克風：{usb_source}")
+                return usb_source
+            print("[VoicePipeline] 偏好 USB 麥克風但沒有找到，改用藍牙耳麥")
 
         bt_device_id = None
 
@@ -734,6 +796,12 @@ async def ensure_bluetooth_recording_ready() -> str:
             # ffmpeg 若立刻開錄會錄到整段數位靜音 (2026-10-22 實測)。先以短探測確認有活音訊。
             await _wait_for_live_audio(bt_source_node)
             return bt_source_node
+
+        # 完全沒有藍牙耳麥時才改用 USB 麥克風；耳麥在但節點還沒出現 (profile 剛切換) 時維持下面的舊行為。
+        usb_source = pick_usb_source(nodes) if bt_device_id is None else None
+        if usb_source:
+            print(f"[VoicePipeline] 🎯 沒有藍牙耳麥，改用 USB 麥克風：{usb_source}")
+            return usb_source
 
         # 沒有連線中的藍牙耳麥，也沒有其他 Audio/Source 時，pulse 的 default 會落到 Dummy Output 的 monitor：
         # 錄下整段數位靜音，畫面卻顯示「正在進行耳麥錄音」(2026-10-29 228：耳麥 20:48 自動關機，

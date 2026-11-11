@@ -1416,6 +1416,42 @@ async def get_bypass_summary_config() -> Dict[str, Any]:
     return {"bypass_summary": getattr(minutes_manager, "bypass_summary", False)}
 
 
+class MicPreferenceRequest(BaseModel):
+    prefer: str = Field(..., description="bluetooth = 藍牙耳麥優先；usb = USB 麥克風優先 (偏好的不在時改用另一種)")
+
+
+async def _mic_config() -> Dict[str, Any]:
+    import json as _json
+    from voice_pipeline import list_microphones, load_mic_preference
+    try:
+        proc = await asyncio.create_subprocess_exec("pw-dump", stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        mics = list_microphones(_json.loads(out.decode("utf-8", errors="ignore")))
+    except (OSError, ValueError, asyncio.TimeoutError) as e:
+        logger.warning("pw-dump for microphone list failed: %s", e)
+        mics = []
+    return {"prefer": load_mic_preference(), "microphones": mics}
+
+
+@app.get("/api/config/mic", tags=["Demo UI"])
+async def get_mic_config() -> Dict[str, Any]:
+    """錄音麥克風偏好與目前接著的麥克風 (藍牙耳麥、USB 麥克風)。下一場錄音生效。"""
+    return await _mic_config()
+
+
+@app.post("/api/config/mic", tags=["Demo UI"])
+async def set_mic_config(req: MicPreferenceRequest) -> Dict[str, Any]:
+    from voice_pipeline import save_mic_preference
+    try:
+        save_mic_preference(req.prefer)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"無法儲存麥克風偏好：{e}")
+    return await _mic_config()
+
+
 # NPU 遙測 (2026-10-27 修正)：
 # - 舊版讀不到 hailortcli 輸出時不更新、也沒有時間戳，網頁會一直顯示舊值 (實測 12:27–13:48 凍結在 96.8% / 59.2 °C / 3734 MB)；
 #   推論中還會塞入假的 95%。改為只存真實取樣與取樣時間，超過 NPU_STALE_SEC 未更新即標示 stale，前端顯示「—」。

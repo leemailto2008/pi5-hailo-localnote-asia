@@ -243,6 +243,14 @@ details[open] summary::after{content:"收起 ▴"}
                 ✕ 跳過總結: 關 (完整總結)
               </button>
             </div>
+            <div class="row" style="margin-top:6px;padding:6px 10px;background:var(--set-bg);border-radius:8px;justify-content:space-between;align-items:center;">
+              <span style="font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;" id="micPrefLabel">
+                🎙️ 錄音麥克風
+              </span>
+              <button type="button" class="toggle-btn" id="btnToggleMicPref" title="點擊切換錄音麥克風偏好；偏好的不在時自動改用另一種，下一場錄音生效">
+                藍牙耳麥優先
+              </button>
+            </div>
             <p class="hint" id="hint">戴上耳麥，按下紅色按鈕開始說。時間到自動停，盒子接著整理成紀要。</p>
           </div>
           <div class="progress" id="progress" hidden>
@@ -1491,6 +1499,53 @@ if (btnToggleBypassSummary) {
   });
 }
 updateBypassSummaryUI();
+
+/* ---------- 錄音麥克風偏好 (藍牙耳麥／USB 麥克風)，存在伺服器端，下一場錄音生效 ---------- */
+let micPref = 'bluetooth';
+
+function renderMicPref(cfg) {
+  const btn = $('btnToggleMicPref'), label = $('micPrefLabel');
+  if (!btn || !cfg) return;
+  micPref = cfg.prefer === 'usb' ? 'usb' : 'bluetooth';
+  const mics = cfg.microphones || [];
+  const has = kind => mics.some(m => m.kind === kind);
+  btn.className = micPref === 'usb' ? 'toggle-btn active' : 'toggle-btn';
+  btn.textContent = micPref === 'usb' ? 'USB 麥克風優先' : '藍牙耳麥優先';
+  const now = micPref === 'usb' ? (has('usb') ? 'usb' : 'bluetooth') : (has('bluetooth') ? 'bluetooth' : 'usb');
+  const used = mics.find(m => m.kind === now);
+  if (label) label.textContent = '🎙️ 錄音麥克風：' + (used ? used.name : '未偵測到');
+  btn.title = '目前接著：' + (mics.length ? mics.map(m => m.name).join('、') : '沒有麥克風') +
+    '。偏好的不在時自動改用另一種，下一場錄音生效';
+}
+
+async function loadMicPref() {
+  try {
+    const r = await fetch('/api/config/mic');
+    if (r.ok) renderMicPref(await r.json());
+  } catch (e) {
+    console.warn('mic config load failed', e);
+  }
+}
+
+const btnToggleMicPref = $('btnToggleMicPref');
+if (btnToggleMicPref) {
+  btnToggleMicPref.addEventListener('click', async () => {
+    const next = micPref === 'usb' ? 'bluetooth' : 'usb';
+    try {
+      const r = await fetch('/api/config/mic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefer: next })
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      renderMicPref(await r.json());
+      toast(next === 'usb' ? '🎙️ 下一場錄音改用 USB 麥克風（沒接時用藍牙耳麥）' : '🎧 下一場錄音改用藍牙耳麥（沒連線時用 USB 麥克風）');
+    } catch (e) {
+      toast('切換麥克風失敗：' + e.message);
+    }
+  });
+}
+loadMicPref();
 
 /* ---------- 核心效能與耗時指標面板 (即時更新 & 手動切換開關，預設隱藏) ---------- */
 const btnToggleMetrics = $('btnToggleMetrics');
