@@ -1817,6 +1817,8 @@ class DemoPolishRequest(BaseModel):
     mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
     source: str = Field(default="live", description="'live' 完整逐字稿（即時 ASR）/ 'refine' 高精度逐字稿（SenseVoice）")
     engine: Optional[str] = Field(default=None, description="修同音字引擎 'llm'（較準、較慢）/ 'csc'（MacBERT4CSC，很快）；省略 = 服務預設")
+    glossary: Optional[str] = Field(default=None, max_length=5000,
+                                    description="會議詞彙：人名、公司、產品、術語，用逗號、頓號或換行分隔；同音的錯字改成這些詞")
 
 
 def _fix_engines() -> Dict[str, Any]:
@@ -1846,7 +1848,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
     """
     from voice_streaming import is_any_recording_active
     from meeting_minutes import minutes_manager
-    from transcript_polish import FIX_ENGINE, FIX_ENGINES, MODES, polish_transcript, split_chunks
+    from transcript_polish import FIX_ENGINE, FIX_ENGINES, MODES, parse_glossary, polish_transcript, split_chunks
     busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
     if busy:
         raise HTTPException(status_code=409, detail=busy)
@@ -1864,6 +1866,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
     if _polish_job.running:
         raise HTTPException(status_code=409, detail="已有潤稿在進行中，請稍候")
+    glossary = parse_glossary(req.glossary)
 
     async def runner(job: SingleJob) -> Dict[str, Any]:
         return await polish_transcript(
@@ -1872,6 +1875,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
             should_stop=is_any_recording_active,
             source=req.source,
             engine=req.engine,
+            glossary=glossary,
         )
 
     return _polish_job.start(runner, mode=req.mode, done=0, total=len(split_chunks(req.text)))

@@ -454,6 +454,39 @@ def test_rewrite_with_macbert_stops_when_recording_starts(monkeypatch):
     assert res["stopped"] is True and res["polished"] == "行成4天"
 
 
+def test_parse_glossary_splits_dedups_and_keeps_only_chinese_terms():
+    raw = "李協理、宏遠科技，韌體\n韌體; 新版 ERP / 甲 / A1區 /楊工程師"
+    assert tp.parse_glossary(raw) == ["李協理", "宏遠科技", "韌體", "新版", "楊工程師"]   # 「ERP」「甲」「A1區」不收
+    assert tp.parse_glossary(["工安", " 課長 ", "工安"]) == ["工安", "課長"]
+    assert tp.parse_glossary(None) == [] and len(tp.parse_glossary("、".join("甲乙" + chr(0x4e00 + i) for i in range(400)))) == 300
+
+
+def test_apply_glossary_fixes_homophones_of_terms_only():
+    terms = ["韌體", "楊工程師", "課長", "工程師"]
+    text = "說話人1：任體更新請羊工程師處理，劉科長負責。\n說話人2：韌體沒問題，工程師也到了。"
+    out, n = tp.apply_glossary(text, terms, tp.protected_spans(text))
+    assert out == "說話人1：韌體更新請楊工程師處理，劉課長負責。\n說話人2：韌體沒問題，工程師也到了。"
+    assert n == 3
+    assert tp.apply_glossary("請陽工程師", ["楊工程師", "陽工程師"]) == ("請陽工程師", 0)   # 兩個詞彙同音：不互換
+    assert tp.apply_glossary("任體", []) == ("任體", 0)
+    assert tp.apply_glossary("重新", ["蟲新"])[0] == "蟲新"     # 原文的字有破音（重：zhong／chong）也算同音
+    assert tp.apply_glossary("任題、議體", ["韌體", "議題"])[0] == "韌體、議題"   # 不計聲調（題 tí／體 tǐ 都算 ti）
+    assert tp.apply_glossary("任務完成", ["韌體"]) == ("任務完成", 0)          # 不同音不改
+
+
+def test_polish_applies_glossary_before_macbert_and_llm(monkeypatch):
+    _pre_csc_on(monkeypatch)
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of, seen))
+    res = _run(tp.polish_transcript("說話人1：任體行成4天，請協理確認。", "fix", source="refine", engine="llm",
+                                    glossary=["韌體", "說話"]))
+    assert "韌體行程4天" in _chunk_of(seen[0]["prompt"])             # LLM 拿到的是詞彙＋MacBERT 修過的
+    assert res["polished"] == "說話人1：韌體行程4天，請協理確認。"     # 標籤「說話人1：」不被詞彙「說話」動到
+    assert res["glossary_terms"] == 2 and res["glossary_edits"] == 1 and res["diff_counts"]["rep"] == 2
+    res = _run(tp.polish_transcript("任體更新", "fix", engine="csc", glossary=["韌體"]))
+    assert res["polished"] == "韌體更新" and res["glossary_edits"] == 1
+
+
 def test_polish_rejects_unknown_fix_engine():
     with pytest.raises(ValueError):
         _run(tp.polish_transcript("abc", "fix", engine="gpt"))

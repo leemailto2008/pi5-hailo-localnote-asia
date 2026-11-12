@@ -143,6 +143,74 @@ def sounds_alike(a: str, b: str) -> bool:
     return len(a) == len(b) and lazy_pinyin(a, style=Style.NORMAL) == lazy_pinyin(b, style=Style.NORMAL)
 
 
+# 會議詞彙（網頁上使用者自己填的人名、公司、產品、術語）：逐字稿裡跟詞彙同音、字不同的地方改成詞彙。
+# 剩下的錯字一半是專有名詞同音字（韌體→任體、課長→科長、楊工程師→羊工程師），MacBERT 與 LLM 都修不到；
+# 程式裡不放任何詞表，詞彙只來自使用者這次輸入。
+GLOSSARY_MAX_TERMS = 300
+GLOSSARY_MAX_LEN = 12
+_GLOSSARY_SPLIT_RE = re.compile(r"[\s,，、;；/|｜]+")
+_HANZI_RE = re.compile(r"[一-鿿]")
+
+
+def parse_glossary(raw: Any) -> List[str]:
+    """字串（逗號、頓號、分號、空白或換行分隔）或字串清單 → 詞彙清單。只收 2–GLOSSARY_MAX_LEN 個字、全是中文字的詞
+    （夾英文或數字的詞不收：拿掉之後剩下的字容易誤改），去重保留順序，最多 GLOSSARY_MAX_TERMS 個。"""
+    items = raw if isinstance(raw, (list, tuple)) else _GLOSSARY_SPLIT_RE.split(str(raw or ""))
+    out: List[str] = []
+    for item in items:
+        term = str(item).strip()
+        if 2 <= len(term) <= GLOSSARY_MAX_LEN and _CJK_RE.match(term) and term not in out:
+            out.append(term)
+    return out[:GLOSSARY_MAX_TERMS]
+
+
+def apply_glossary(text: str, terms: Sequence[str],
+                   protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, int]:
+    """把逐字稿裡跟詞彙同音（每個字的拼音都相同，不計聲調；原文的字有破音也算）但字不同的地方換成詞彙。
+    長詞先比、不重疊；原文已經是某個詞彙的地方不動（兩個詞彙同音時不會互換）；protected（說話人標籤）不動。
+    回傳 (新文字, 改了幾處)。"""
+    if not text or not terms:
+        return text, 0
+    from pypinyin import Style, lazy_pinyin, pinyin
+    readings: Dict[str, frozenset] = {}
+
+    def reads(ch: str) -> frozenset:
+        r = readings.get(ch)
+        if r is None:
+            r = frozenset(pinyin(ch, style=Style.NORMAL, heteronym=True)[0]) if _HANZI_RE.match(ch) else frozenset()
+            readings[ch] = r
+        return r
+
+    taken = [False] * len(text)
+    for a, b in protected:
+        for k in range(max(0, a), min(len(text), b)):
+            taken[k] = True
+    term_set = set(terms)
+    out = list(text)
+    changed = 0
+    for term in sorted(term_set, key=len, reverse=True):
+        want = lazy_pinyin(term, style=Style.NORMAL)
+        n = len(term)
+        i = 0
+        while i + n <= len(text):
+            span = text[i:i + n]
+            if any(taken[i:i + n]):
+                i += 1
+                continue
+            if span in term_set:                    # 已經是詞彙：保護起來，較短的詞彙不再動它
+                taken[i:i + n] = [True] * n
+                i += n
+                continue
+            if all(want[k] in reads(span[k]) for k in range(n)):
+                out[i:i + n] = list(term)
+                taken[i:i + n] = [True] * n
+                changed += 1
+                i += n
+                continue
+            i += 1
+    return "".join(out), changed
+
+
 def accept_homophone_edits(src: str, dst: str,
                            protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
     """把模型的校對全文 dst 對齊原文 src（difflib），只收「修同音字與漏字」，其餘位置保留原文：
@@ -360,9 +428,11 @@ async def polish_transcript(
     should_stop: Optional[Callable[[], bool]] = None,
     source: str = "live",
     engine: Optional[str] = None,
+    glossary: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。
     engine：修同音字的引擎（llm／csc）；省略 = FIX_ENGINE（服務預設）。rewrite 不看它。
+    glossary：會議詞彙（parse_glossary 的結果）；每段先用 apply_glossary 改同音的專有名詞，再跑 MacBERT／LLM。
 
     on_progress(done, total)：每段處理完呼叫一次。
     should_stop()：每段開始前與生成中都檢查；回傳 True 就停下（生成中的那段也保留原文），結果帶 stopped=True。
@@ -374,9 +444,9 @@ async def polish_transcript(
     fix_engine = (engine or FIX_ENGINE) if mode == "fix" else None
     if fix_engine is not None and fix_engine not in FIX_ENGINES:
         raise ValueError(f"unknown fix engine: {fix_engine}")
-    if mode == "fix":
+    if mode == "fix" or glossary:
         try:
-            import pypinyin  # noqa: F401  同音判斷要用
+            import pypinyin  # noqa: F401  同音判斷（與會議詞彙比對）要用
         except ImportError as e:
             raise RuntimeError("缺少 pypinyin（python3 -m pip install --user --break-system-packages pypinyin）") from e
     chunks = split_chunks(text)
@@ -414,23 +484,31 @@ async def polish_transcript(
     pre_corrector = await _load_pre_csc() if corrector is None else None     # LLM 潤稿（fix＋llm、rewrite）才先跑 MacBERT
     pre_stats: Dict[str, Any] = {"backend": None, "accepted_edits": 0, "rejected_edits": 0}
 
+    terms = list(glossary or [])
+    glossary_edits = 0
+
     for idx, chunk in enumerate(chunks, start=1):
         new_chunk: Optional[str] = None
-        base = chunk
+        work = chunk
+        base: Optional[str] = chunk
         if not (should_stop is not None and should_stop()):
+            if terms:
+                work, n_glossary = apply_glossary(chunk, terms, protected_spans(chunk))
+                glossary_edits += n_glossary
+            base = work
             try:
                 if corrector is not None:
-                    new_chunk = await _run_fix_csc(chunk, stats, should_stop, corrector)
+                    new_chunk = await _run_fix_csc(work, stats, should_stop, corrector)
                 else:
                     if pre_corrector is not None:
-                        base = await _run_fix_csc(chunk, pre_stats, should_stop, pre_corrector)
+                        base = await _run_fix_csc(work, pre_stats, should_stop, pre_corrector)
                     if base is not None:
                         run = _run_fix if mode == "fix" else _run_rewrite
                         new_chunk = await run(base, stats, should_stop)
             except LLMError as e:
                 logger.warning("[polish] chunk %d/%d failed, keep original: %s", idx, len(chunks), e)
                 stats["failed_chunks"] += 1
-                new_chunk = base if base is not None else chunk   # LLM 失敗：保留 MacBERT 修過的（或原文）
+                new_chunk = base if base is not None else work   # LLM 失敗：保留詞彙／MacBERT 修過的（或原文）
         if new_chunk is None:
             logger.info("[polish] stopped at chunk %d/%d", idx, len(chunks))
             stats["stopped"] = True
@@ -445,6 +523,7 @@ async def polish_transcript(
     return {"mode": mode, "source": source, "engine": fix_engine, "polished": "\n\n".join(parts), "changes": [],
             "segments": segments, "diff_counts": counts,
             "pre_fix_engine": "csc" if pre_corrector is not None else None, "pre_fix_edits": pre_stats["accepted_edits"],
+            "glossary_terms": len(terms), "glossary_edits": glossary_edits,
             **stats}
 
 

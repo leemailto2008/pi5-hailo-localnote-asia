@@ -501,6 +501,11 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                 <label id="polishSrcRefineLabel"><input type="radio" name="polishSrc" value="refine" id="polishSrcRefine"> 高精度逐字稿（SenseVoice）</label>
                 <label><input type="radio" name="polishSrc" value="live" id="polishSrcLive" checked> 完整逐字稿（即時 ASR）</label>
               </div>
+              <div class="row pl-src" id="polishGlossaryRow">
+                <b>會議詞彙</b>
+                <textarea id="polishGlossary" rows="2" style="flex:1;min-width:220px;font:inherit;resize:vertical"
+                  placeholder="人名、公司、產品、術語，用逗號或換行分隔（例：李協理、宏遠科技、韌體）。潤稿時把聽起來一樣的錯字改成這些詞；記在這個瀏覽器"></textarea>
+              </div>
               <div class="pl-zone" id="polishFixZone">
                 <div class="row">
                   <b class="pl-title">① 修同音字與漏字</b>
@@ -679,6 +684,7 @@ const el = {
   polishRewriteInfo: $('polishRewriteInfo'), polishRewriteStatus: $('polishRewriteStatus'), polishRewriteText: $('polishRewriteText'),
   polishSrcRefine: $('polishSrcRefine'), polishSrcLive: $('polishSrcLive'), polishSrcRefineLabel: $('polishSrcRefineLabel'),
   polishEngineLlm: $('polishEngineLlm'), polishEngineCsc: $('polishEngineCsc'), polishEngineCscLabel: $('polishEngineCscLabel'),
+  polishGlossary: $('polishGlossary'),
   refineBox: $('refineBox'), refineBtn: $('refineBtn'), refineStatus: $('refineStatus'), refineText: $('refineText'), refineInfo: $('refineInfo'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
@@ -2244,6 +2250,15 @@ function applyFixEngines(fe) {
 for (const r of [el.polishEngineLlm, el.polishEngineCsc]) {
   r.addEventListener('change', () => { try { localStorage.setItem(POLISH_ENGINE_KEY, polishEngine()); } catch (_) {} });
 }
+// 會議詞彙：使用者自己填（人名、公司、產品、術語），兩種潤稿都送給後端；記在這個瀏覽器。
+const POLISH_GLOSSARY_KEY = 'localnote_polish_glossary';
+if (el.polishGlossary) {
+  try { el.polishGlossary.value = localStorage.getItem(POLISH_GLOSSARY_KEY) || ''; } catch (_) {}
+  el.polishGlossary.addEventListener('input', () => {
+    try { localStorage.setItem(POLISH_GLOSSARY_KEY, el.polishGlossary.value); } catch (_) {}
+  });
+}
+function polishGlossary() { return el.polishGlossary ? el.polishGlossary.value.trim() : ''; }
 function syncPolishBox() {
   const has = !!transcriptPlainText();
   el.polishBox.hidden = !has;
@@ -2295,6 +2310,7 @@ function renderPolishResult(job, mode) {
     ? `同音字 ${c.rep || 0} 處、漏字 ${c.ins || 0} 處、刪字 ${c.del || 0} 處`
     : `改寫 ${(c.rep || 0) + (c.ins || 0)} 處、刪除 ${c.del || 0} 處`;
   const notes = [];
+  if (res.glossary_terms) notes.push(`依會議詞彙（${res.glossary_terms} 個）改 ${res.glossary_edits || 0} 處`);
   if (res.pre_fix_engine === 'csc') notes.push(`先用 MacBERT 修同音字 ${res.pre_fix_edits || 0} 處，再${res.mode === 'fix' ? '用 LLM 校對' : '重新潤稿'}（標色含這些修改）`);
   if (job.state === 'stopped') notes.push(`錄音開始，已中止（完成 ${job.done}/${job.total} 段，其餘保留原文）`);
   if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
@@ -2342,7 +2358,11 @@ async function runPolish(mode, runningMode) {
       clearPolishZone(z);
       const engine = mode === 'fix' ? polishEngine() : undefined;
       z.status.textContent = engine === 'csc' ? '用 MacBERT 修正同音字（約數秒到 1 分鐘）…' : z.start;
-      await api(API.polish, engine ? { text: src, mode, source, engine } : { text: src, mode, source });
+      const body = { text: src, mode, source };
+      if (engine) body.engine = engine;
+      const glossary = polishGlossary();
+      if (glossary) body.glossary = glossary;
+      await api(API.polish, body);
     }
     const job = await pollJob(API.polish, j => {
       z.status.textContent = `潤稿中：已完成 ${j.done}/${j.total} 段（${Math.round(j.elapsed || 0)} 秒）…`;
