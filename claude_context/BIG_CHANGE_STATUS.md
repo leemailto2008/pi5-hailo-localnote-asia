@@ -569,3 +569,4 @@
 - 依步驟 9：6–8 都完成、5 與 9 仍等使用者 → 本檔標記；推送 gitlab、origin；排程 trig_01XfezGs1zV3uroLZy1NZm4D 設 enabled=false（結果見下）。
 - 本輪未改程式、未部署、未重啟、未跑 pytest、未在 Pi 上跑評估。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。device_bash 仍回報「未連接資料夾」，改用 Desktop Commander 的 PowerShell 執行 SSH 與 curl。
 - 工作區另有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入本次 commit。
+- 排程停用未完成：update_trigger 將 trig_01XfezGs1zV3uroLZy1NZm4D 設 enabled=false 被自動權限分類器拒絕（Cowork Scheduled Task Delete，與 11-10 22:22 相同）。排程仍啟用；未以其他途徑繞過。請使用者手動停用（Claude 桌面 App 的排程任務設定）。停用前每輪只會讀到本檔「後續改善 6–8 DONE、5 與 9 等使用者」並回報，無可做的改善。
