@@ -2295,7 +2295,7 @@ function renderPolishResult(job, mode) {
     ? `同音字 ${c.rep || 0} 處、漏字 ${c.ins || 0} 處、刪字 ${c.del || 0} 處`
     : `改寫 ${(c.rep || 0) + (c.ins || 0)} 處、刪除 ${c.del || 0} 處`;
   const notes = [];
-  if (res.pre_fix_engine === 'csc') notes.push(`先用 MacBERT 修同音字 ${res.pre_fix_edits || 0} 處，再重新潤稿（標色含這些修改）`);
+  if (res.pre_fix_engine === 'csc') notes.push(`先用 MacBERT 修同音字 ${res.pre_fix_edits || 0} 處，再${res.mode === 'fix' ? '用 LLM 校對' : '重新潤稿'}（標色含這些修改）`);
   if (job.state === 'stopped') notes.push(`錄音開始，已中止（完成 ${job.done}/${job.total} 段，其餘保留原文）`);
   if (res.failed_chunks) notes.push(`${res.failed_chunks} 段失敗，已保留原文`);
   if (res.rejected_chunks) notes.push(`${res.rejected_chunks} 段長度異常，已保留原文`);

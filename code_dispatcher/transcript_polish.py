@@ -50,11 +50,14 @@ POLISH_BACKENDS = {mode: _BACKEND_OVERRIDE or default for mode, default in _BACK
 # 量測見 csc_corrector.py 檔頭）。兩者都經過同一道 accept_homophone_edits。網頁每次可選（polish_transcript 的 engine）。
 FIX_ENGINES = ("llm", "csc")
 FIX_ENGINE = os.environ.get("PI5_POLISH_FIX_ENGINE", "llm").strip().lower()
-# 重新潤稿前先用 MacBERT 修同音字（這台有裝才做；PI5_POLISH_REWRITE_PRE_CSC=0 關掉）。2026-11-12 量測（cer_num；
-# .cc_scratch/pe/csc_then_rw.py，先在實錄 5 分、第二次錄、10 分選，再用新錄 10／30 分確認）：
-#   單獨 MacBERT／單獨 rewrite／先 MacBERT 再 rewrite：三份平均 0.0463／0.0480／0.0459；新錄 10 分 0.0408／0.0413／0.0403、
-#   30 分 0.0413／0.0427／0.0402，事實都不掉、標籤同序；只多 MacBERT 的 4–16 s（rewrite 本身 200–1170 s）。
-REWRITE_PRE_CSC = os.environ.get("PI5_POLISH_REWRITE_PRE_CSC", "1").strip() != "0"
+# LLM 潤稿（rewrite，以及 fix 選 LLM 引擎）前先用 MacBERT 修同音字（這台有裝才做；PI5_POLISH_PRE_CSC=0 關掉）。
+# 2026-11-12 量測（cer_num；先在實錄 5 分、第二次錄、10 分選，再用新錄 10／30 分確認；事實都不掉、標籤同序）：
+#   rewrite（.cc_scratch/pe/csc_then_rw.py）單獨 MacBERT／單獨 rewrite／先 MacBERT 再 rewrite：三份平均 0.0463／0.0480／0.0459；
+#     新錄 10 分 0.0408／0.0413／0.0403、30 分 0.0413／0.0427／0.0402。
+#   fix LLM（.cc_scratch/pe/csc_then_fix.py）單獨 MacBERT／單獨 LLM／先 MacBERT 再 LLM：三份平均 0.0463／0.0480／0.0456；
+#     新錄 10 分 0.0408／0.0398／0.0383、30 分 0.0413／0.0397／0.0381。
+#   只多 MacBERT 的 4–16 s（LLM 本身 200–1530 s）。
+PRE_CSC = os.environ.get("PI5_POLISH_PRE_CSC", "1").strip() != "0"
 FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
 OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
@@ -408,7 +411,7 @@ async def polish_transcript(
             corrector = await asyncio.to_thread(CscCorrector)   # 載入約 4 s；這次潤稿用完就釋放
         except ImportError as e:
             raise RuntimeError("中文糾錯引擎缺少套件（onnxruntime、tokenizers、opencc）：" + str(e)) from e
-    pre_corrector = await _load_rewrite_pre_csc() if mode == "rewrite" else None
+    pre_corrector = await _load_pre_csc() if corrector is None else None     # LLM 潤稿（fix＋llm、rewrite）才先跑 MacBERT
     pre_stats: Dict[str, Any] = {"backend": None, "accepted_edits": 0, "rejected_edits": 0}
 
     for idx, chunk in enumerate(chunks, start=1):
@@ -418,16 +421,16 @@ async def polish_transcript(
             try:
                 if corrector is not None:
                     new_chunk = await _run_fix_csc(chunk, stats, should_stop, corrector)
-                elif mode == "fix":
-                    new_chunk = await _run_fix(chunk, stats, should_stop)
                 else:
                     if pre_corrector is not None:
                         base = await _run_fix_csc(chunk, pre_stats, should_stop, pre_corrector)
-                    new_chunk = None if base is None else await _run_rewrite(base, stats, should_stop)
+                    if base is not None:
+                        run = _run_fix if mode == "fix" else _run_rewrite
+                        new_chunk = await run(base, stats, should_stop)
             except LLMError as e:
                 logger.warning("[polish] chunk %d/%d failed, keep original: %s", idx, len(chunks), e)
                 stats["failed_chunks"] += 1
-                new_chunk = base if base is not None else chunk   # rewrite 失敗：保留 MacBERT 修過的（或原文）
+                new_chunk = base if base is not None else chunk   # LLM 失敗：保留 MacBERT 修過的（或原文）
         if new_chunk is None:
             logger.info("[polish] stopped at chunk %d/%d", idx, len(chunks))
             stats["stopped"] = True
@@ -445,17 +448,17 @@ async def polish_transcript(
             **stats}
 
 
-async def _load_rewrite_pre_csc() -> Any:
-    """重新潤稿前用的 MacBERT（見 REWRITE_PRE_CSC）；關掉、這台沒裝或載入失敗就回傳 None，照舊只跑 rewrite。"""
-    if not REWRITE_PRE_CSC:
+async def _load_pre_csc() -> Any:
+    """LLM 潤稿前用的 MacBERT（見 PRE_CSC）；關掉、這台沒裝或載入失敗就回傳 None，照舊只跑 LLM。"""
+    if not PRE_CSC:
         return None
     from csc_corrector import CscCorrector, unavailable_reason
     reason = unavailable_reason()
     if reason is not None:
-        logger.info("[polish] rewrite without MacBERT pre-fix: %s", reason)
+        logger.info("[polish] LLM polish without MacBERT pre-fix: %s", reason)
         return None
     try:
         return await asyncio.to_thread(CscCorrector)
     except (ImportError, RuntimeError, OSError) as e:
-        logger.warning("[polish] MacBERT pre-fix load failed, rewrite only: %s", e)
+        logger.warning("[polish] MacBERT pre-fix load failed, LLM only: %s", e)
         return None
