@@ -148,6 +148,14 @@
 - **殘餘限制:** CVSD 下仍有 10–20% 封包 `pkt_status=2`（無資料）→ 零值空洞最長可達 1s。這是該射頻鏈路的物理上限；要再改善只能換射頻路徑（USB 藍牙 dongle）或換耳麥。
 - **除錯工具:** `tools/pi_scostat` 系列腳本（btsnoop 解析 H2 標頭/CRC/旗標）、`/tmp/analyze.py`（零值統計）。
 
+### ⚠️ [重點九] 逐字稿品質量測與潤稿流程 (2026-11-12 實測，細節見 `claude_context/BIG_CHANGE_STATUS.md`)
+- **看 `cer_num` 不要只看 `cer`:** fixture 參考稿數字寫國字（十月十一日、一千五百台），ASR 寫阿拉伯數字，舊 `cer` 有 3/4 以上是寫法差異。`tools/e2e/scoring.cer_num` 用 cn2an 統一數字後再算（Pi 要 `pip install --user --break-system-packages cn2an==0.5.24`）。
+- **潤稿流程（`transcript_polish.polish_transcript`）:** 每段依序 → 會議詞彙（`apply_glossary`，使用者在網頁填的人名／公司／產品，同音就換）→ MacBERT4CSC（`PI5_POLISH_PRE_CSC=0` 可關）→ LLM（修同音字 CPU qwen2.5:3b／重新潤稿 Hailo）→ `accept_homophone_edits` 只收同音字與 1 字補字（對齊用 `edit_opcodes`）。
+- **程式裡不放測試詞表:** 專有名詞只來自使用者輸入的會議詞彙；`hailo_whisper/engine.fix_meeting_terms` 保留但不再往裡加測試資料的詞。
+- **實驗選法:** 先在實錄 5 分／第二次錄／10 分選，再用新錄 10／30（／60）分確認；確認不過或只是持平但更慢就不採用（例：LLM 提示詞帶詞彙，慢 30% 又沒變好）。
+- **高精度逐字稿結果**存在 `/dev/shm/localnote_state/refine_last.json`（RAM 磁碟），服務重啟後還在。
+- **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`。
+
 ---
 
 ## 5. 目錄與模組結構對照 (Module Directory Mapping)
