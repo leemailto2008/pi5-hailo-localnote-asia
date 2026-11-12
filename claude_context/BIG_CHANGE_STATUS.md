@@ -70,7 +70,8 @@
 5. 待使用者決定（不要自行實作）：錄音結束自動跑高精度逐字稿；紀要改用高精度逐字稿。
 6. （11-11 新增）GS3 聲學長會議：.228 上 /home/pi/ln_e2e/acoustic_gs3/run_acoustic.sh 30 與 60 分，記錄 Hailo 即時、SenseVoice、逐句分說話人、紀要數值。白天可做。【11-12 08:30：完成，見下方排程輪次】
 7. （11-11 新增）GS3 實錄上 SenseVoice 的「不計數字」錯誤（實錄 5 分 7.8%、乾淨 5.6%）逐字分類（同音字、漏字、斷句），只有通用、不針對測試詞彙的改善才實作。【11-12 08:30：完成（補齊漏字、斷句），見下方排程輪次】
-8. （11-11 新增）.229 更新到最新版：.229 連得上、閒置（非 recording／processing、15 分鐘內沒有別人的工作）才部署，不加 LN_DEPLOY_FORCE（.229 給其他人測）。【11-12 08:30：阻塞，.229 SSH 與 HTTP 皆無回應，見下方排程輪次】【11-12 09:41 完成：使用者要求，互動 session 部署 c2f81a7（程式同 25d946a），見下方】
+8. （11-11 新增；11-12 09:45 使用者改規則）.229 更新到最新版：使用者 11-12 09:45「.229 目前就是拿來要你協助 update 到最新（force）」→
+   .229 有新版就部署，可加 LN_DEPLOY_FORCE（不必等閒置）；可選模型也照裝（MacBERT4CSC 等，靠開關切換）。【11-12 08:30：阻塞，.229 SSH 與 HTTP 皆無回應，見下方排程輪次】【11-12 09:41 完成：使用者要求，互動 session 部署 c2f81a7（程式同 25d946a），見下方】
 9. 待使用者決定（不要自行實作）：SenseVoice VAD 最短靜音 0.25 → 0.4（PI5_VAD_MIN_SILENCE；見 VAD 掃描）。
 
 ## 2026-11-12 排程輪次（台北 08:23–08:30，白天窗）
@@ -104,7 +105,10 @@
   DEPLOY_RC=0，備份 20261112_094105，健康檢查通過。tools/ci/setup_sherpa_models.sh：裝 pypinyin 0.55.0，5 個模型 md5 相符。
 - 驗證：服務檔案與 deploy_c2f81a7 相同（transcript_polish.py、ui.html 含 plainText）；/api/refine unavailable=None；
   /api/polish fix 短句實測 done（CPU Ollama qwen2.5:3b-opt，80 s 含模型冷啟）：「行成」被改成「形成」（同音但不合語意，同音過濾的已知限制）、「議體」未改。
-- MacBERT4CSC 模型未裝在 .229（預設關閉，且磁碟只剩 5.7 G）；要用時再跑 tools/ci/setup_csc_model.sh（474 MB）。
+- 09:45 使用者：「.229 目前就是拿來要你協助 update 到最新（force）；模型的話，不是有開關可以切」→ 09:52 裝 MacBERT4CSC
+  （tools/ci/setup_csc_model.sh：model.onnx 474 MB、tokenizer.json，sha256 相符；磁碟剩 5.2 G）。
+  實測（/home/pi/code_dispatcher，PI5_POLISH_FIX_ENGINE=csc）：1.7 s，「行成→行程」（LLM 同句改成「形成」），「議體」未改，標籤不變。
+  服務預設仍是 llm（systemd 未設 PI5_POLISH_FIX_ENGINE）；要切到 csc：服務加 Environment=PI5_POLISH_FIX_ENGINE=csc 後重啟。
 
 ## 量測紀錄
 - 2026-11-10 16:43 fix 3min（Pi）：chunks=2，elapsed 16.6 s，changes=0，err 0.0133 → 0.0133。
