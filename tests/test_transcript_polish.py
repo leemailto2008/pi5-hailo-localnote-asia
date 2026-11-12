@@ -336,6 +336,36 @@ def test_polish_fix_with_csc_engine_stops_when_recording_starts(monkeypatch):
     assert res["stopped"] is True and res["polished"] == "行成4天"
 
 
+def test_polish_fix_engine_can_be_chosen_per_call(monkeypatch):
+    import csc_corrector as cc
+    monkeypatch.setattr(cc, "CscCorrector", _FakeCsc)
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of, seen))
+    monkeypatch.setattr(tp, "FIX_ENGINE", "llm")
+    res = _run(tp.polish_transcript("行成4天", "fix", engine="csc"))       # 預設 llm，這次選 csc
+    assert res["engine"] == "csc" and res["backend"] == cc.LABEL and not seen
+    monkeypatch.setattr(tp, "FIX_ENGINE", "csc")
+    res = _run(tp.polish_transcript("行成4天", "fix", engine="llm"))       # 預設 csc，這次選 llm
+    assert res["engine"] == "llm" and len(seen) == 1
+    res = _run(tp.polish_transcript("一" * 100, "rewrite", engine="csc"))  # rewrite 不看 engine
+    assert res["engine"] is None
+
+
+def test_polish_rejects_unknown_fix_engine():
+    with pytest.raises(ValueError):
+        _run(tp.polish_transcript("abc", "fix", engine="gpt"))
+
+
+def test_csc_unavailable_reason_reports_missing_model(monkeypatch, tmp_path):
+    import importlib.util
+    import csc_corrector as cc
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())   # 假裝套件都在
+    assert "model.onnx" in cc.unavailable_reason(str(tmp_path))
+    (tmp_path / "model.onnx").write_bytes(b"x")
+    (tmp_path / "tokenizer.json").write_text("{}")
+    assert cc.unavailable_reason(str(tmp_path)) is None
+
+
 def test_output_timeout_grows_with_output_budget(monkeypatch):
     seen = []
     monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: "二" * 500, seen))

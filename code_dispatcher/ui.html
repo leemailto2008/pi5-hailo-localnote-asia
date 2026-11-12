@@ -507,6 +507,11 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                   <span class="spacer"></span>
                   <button class="btn" id="polishFixBtn" disabled>修同音字與漏字</button>
                 </div>
+                <div class="row pl-src" id="polishEngineRow">
+                  <b>引擎</b>
+                  <label><input type="radio" name="polishEngine" value="llm" id="polishEngineLlm" checked> LLM（較準、較慢）</label>
+                  <label id="polishEngineCscLabel"><input type="radio" name="polishEngine" value="csc" id="polishEngineCsc"> MacBERT（很快、稍不準）</label>
+                </div>
                 <div class="pl-legend"><mark class="pl-rep">同音字（替換）</mark><mark class="pl-ins">漏字（補上）</mark><del class="pl-del">刪掉的字</del><span>滑過標色處看原字</span></div>
                 <div class="asr-info" id="polishFixInfo"></div>
                 <div class="pl-status" id="polishFixStatus"></div>
@@ -673,6 +678,7 @@ const el = {
   polishFixInfo: $('polishFixInfo'), polishFixStatus: $('polishFixStatus'), polishFixText: $('polishFixText'),
   polishRewriteInfo: $('polishRewriteInfo'), polishRewriteStatus: $('polishRewriteStatus'), polishRewriteText: $('polishRewriteText'),
   polishSrcRefine: $('polishSrcRefine'), polishSrcLive: $('polishSrcLive'), polishSrcRefineLabel: $('polishSrcRefineLabel'),
+  polishEngineLlm: $('polishEngineLlm'), polishEngineCsc: $('polishEngineCsc'), polishEngineCscLabel: $('polishEngineCscLabel'),
   refineBox: $('refineBox'), refineBtn: $('refineBtn'), refineStatus: $('refineStatus'), refineText: $('refineText'), refineInfo: $('refineInfo'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
@@ -2180,7 +2186,7 @@ let polishBusy = false;
 // 兩區各自保留結果：① 修同音字與漏字、② 整段重新潤稿（後端同時只跑一個潤稿工作）。
 const POLISH_UI = {
   fix: { btn: el.polishFixBtn, info: el.polishFixInfo, status: el.polishFixStatus, text: el.polishFixText,
-         start: '逐段修正同音字與漏字，請稍候…' },
+         start: '用 LLM 逐段修正同音字與漏字（較慢：10 分鐘會議約 10 分鐘），請稍候…' },
   rewrite: { btn: el.polishRewriteBtn, info: el.polishRewriteInfo, status: el.polishRewriteStatus, text: el.polishRewriteText,
              start: '逐段重新潤稿（較慢），請稍候…' },
 };
@@ -2215,10 +2221,34 @@ function syncPolishSource() {
 }
 el.polishSrcRefine.addEventListener('change', () => { polishSrcTouched = true; });
 el.polishSrcLive.addEventListener('change', () => { polishSrcTouched = true; });
+// 修同音字引擎（11-12）：LLM 較準（60 分鐘會議約 54 分鐘）；MacBERT4CSC 很快（60 分鐘約 49 秒），CER 高 0.1–0.3 個百分點。
+// 每次按之前自己選，記在這個瀏覽器；這台沒裝 MacBERT 就不能選（後端 GET /api/polish 的 fix_engines）。
+const POLISH_ENGINE_KEY = 'localnote_polish_fix_engine';
+let cscUnavailable = null;
+function polishEngine() { return el.polishEngineCsc.checked && !cscUnavailable ? 'csc' : 'llm'; }
+function syncPolishEngine() {
+  el.polishEngineLlm.disabled = polishBusy;
+  el.polishEngineCsc.disabled = !!cscUnavailable || polishBusy;
+  el.polishEngineCscLabel.classList.toggle('off', !!cscUnavailable);
+  el.polishEngineCscLabel.title = cscUnavailable ? '這台不能用：' + cscUnavailable : '';
+  if (cscUnavailable && el.polishEngineCsc.checked) el.polishEngineLlm.checked = true;
+}
+function applyFixEngines(fe) {
+  if (!fe) return;
+  cscUnavailable = fe.csc_unavailable || null;
+  let want = fe.default;
+  try { want = localStorage.getItem(POLISH_ENGINE_KEY) || want; } catch (_) {}
+  (want === 'csc' && !cscUnavailable ? el.polishEngineCsc : el.polishEngineLlm).checked = true;
+  syncPolishEngine();
+}
+for (const r of [el.polishEngineLlm, el.polishEngineCsc]) {
+  r.addEventListener('change', () => { try { localStorage.setItem(POLISH_ENGINE_KEY, polishEngine()); } catch (_) {} });
+}
 function syncPolishBox() {
   const has = !!transcriptPlainText();
   el.polishBox.hidden = !has;
   syncPolishSource();
+  syncPolishEngine();
   const blocked = !has || polishBusy || !!meetingBusyHint();
   for (const z of Object.values(POLISH_UI)) {
     z.btn.disabled = blocked;
@@ -2259,7 +2289,7 @@ function renderPolishResult(job, mode) {
   const res = job.result;
   if (res.segments) renderPolishSegments(z.text, res.segments, res.mode);
   else z.text.textContent = res.polished || '';
-  renderInfo(z.info, [['來源', POLISH_SRC_LABEL[res.source] || ''], ['LLM', res.backend]]);
+  renderInfo(z.info, [['來源', POLISH_SRC_LABEL[res.source] || ''], ['模型', res.backend]]);
   const c = res.diff_counts || {};
   const marks = res.mode === 'fix'
     ? `同音字 ${c.rep || 0} 處、漏字 ${c.ins || 0} 處、刪字 ${c.del || 0} 處`
@@ -2309,8 +2339,9 @@ async function runPolish(mode, runningMode) {
   try {
     if (mode) {
       clearPolishZone(z);
-      z.status.textContent = z.start;
-      await api(API.polish, { text: src, mode, source });
+      const engine = mode === 'fix' ? polishEngine() : undefined;
+      z.status.textContent = engine === 'csc' ? '用 MacBERT 修正同音字（約數秒到 1 分鐘）…' : z.start;
+      await api(API.polish, engine ? { text: src, mode, source, engine } : { text: src, mode, source });
     }
     const job = await pollJob(API.polish, j => {
       z.status.textContent = `潤稿中：已完成 ${j.done}/${j.total} 段（${Math.round(j.elapsed || 0)} 秒）…`;
@@ -2329,6 +2360,7 @@ el.polishRewriteBtn.addEventListener('click', () => runPolish('rewrite', null));
 // 重新整理頁面時，若後端還在潤稿就接著顯示進度。
 if (!MOCK) {
   api(API.polish).then(job => {
+    if (job) applyFixEngines(job.fix_engines);
     if (job && job.state === 'running') runPolish(null, job.mode || 'fix');
   }).catch(err => console.warn('polish status check failed', err));
 }

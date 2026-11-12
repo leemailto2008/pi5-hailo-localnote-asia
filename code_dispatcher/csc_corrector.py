@@ -12,7 +12,7 @@ PI5_CSC_MODEL_DIR，預設 /home/pi/models/macbert4csc）。模型以簡體訓�
   新錄 30 分 0.2007 → 0.1987（24.7 s），事實召回都不變；RSS 約 814 MB。
   同資料 CPU qwen2.5:3b 的 LLM fix：0.1771、0.1670、0.1845、0.1825、0.1968，但要 220–1587 s。
   MIN_PROB 在實錄 5 分調（0～0.7 並列，取 0.7）；第二次錄在 0.7 擋掉「協理→協利」(0.68)、「認→任」(0.52)。
-預設不用（transcript_polish.FIX_ENGINE 預設 llm）；PI5_POLISH_FIX_ENGINE=csc 才用。
+預設不用（transcript_polish.FIX_ENGINE 預設 llm，PI5_POLISH_FIX_ENGINE=csc 可改預設）；網頁「修同音字」區每次可自己選引擎。
 """
 
 import os
@@ -26,6 +26,18 @@ THREADS = 4
 LABEL = "MacBERT4CSC（ONNX，CPU 4 執行緒）"
 
 _CJK_RE = re.compile(r"^[一-鿿]$")
+
+
+def unavailable_reason(model_dir: str = MODEL_DIR) -> Optional[str]:
+    """不載入模型，只看套件與模型檔在不在（網頁用來決定能不能選這個引擎）；可用回傳 None。"""
+    import importlib.util
+    missing = [m for m in ("numpy", "onnxruntime", "tokenizers", "opencc") if importlib.util.find_spec(m) is None]
+    if missing:
+        return "缺少套件：" + "、".join(missing)
+    for name in ("model.onnx", "tokenizer.json"):
+        if not os.path.isfile(os.path.join(model_dir, name)):
+            return f"缺少模型檔 {name}（bash tools/ci/setup_csc_model.sh）"
+    return None
 
 
 def apply_predictions(trad: str, start: int, piece: str, offsets: Sequence[Tuple[int, int]],

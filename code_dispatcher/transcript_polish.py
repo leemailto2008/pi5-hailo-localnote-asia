@@ -47,7 +47,8 @@ _BACKEND_DEFAULT = {"fix": "cpu", "rewrite": "hailo"}
 _BACKEND_OVERRIDE = os.environ.get("PI5_POLISH_BACKEND", "").strip().lower()
 POLISH_BACKENDS = {mode: _BACKEND_OVERRIDE or default for mode, default in _BACKEND_DEFAULT.items()}
 # 修同音字的引擎：llm = 上面的 LLM 校對全文（預設，較準）；csc = csc_corrector 的 MacBERT4CSC（快 50～80 倍、CER 稍差，
-# 量測見 csc_corrector.py 檔頭）。兩者都經過同一道 accept_homophone_edits。
+# 量測見 csc_corrector.py 檔頭）。兩者都經過同一道 accept_homophone_edits。網頁每次可選（polish_transcript 的 engine）。
+FIX_ENGINES = ("llm", "csc")
 FIX_ENGINE = os.environ.get("PI5_POLISH_FIX_ENGINE", "llm").strip().lower()
 FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
@@ -350,8 +351,10 @@ async def polish_transcript(
     on_progress: Optional[Callable[[int, int], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
     source: str = "live",
+    engine: Optional[str] = None,
 ) -> Dict[str, Any]:
     """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。
+    engine：修同音字的引擎（llm／csc）；省略 = FIX_ENGINE（服務預設）。rewrite 不看它。
 
     on_progress(done, total)：每段處理完呼叫一次。
     should_stop()：每段開始前與生成中都檢查；回傳 True 就停下（生成中的那段也保留原文），結果帶 stopped=True。
@@ -360,6 +363,9 @@ async def polish_transcript(
     """
     if mode not in MODES:
         raise ValueError(f"unknown polish mode: {mode}")
+    fix_engine = (engine or FIX_ENGINE) if mode == "fix" else None
+    if fix_engine is not None and fix_engine not in FIX_ENGINES:
+        raise ValueError(f"unknown fix engine: {fix_engine}")
     if mode == "fix":
         try:
             import pypinyin  # noqa: F401  同音判斷要用
@@ -391,7 +397,7 @@ async def polish_transcript(
                 counts[seg[0]] += 1
 
     corrector = None
-    if mode == "fix" and FIX_ENGINE == "csc":
+    if fix_engine == "csc":
         try:
             from csc_corrector import CscCorrector
             corrector = await asyncio.to_thread(CscCorrector)   # 載入約 4 s；這次潤稿用完就釋放
@@ -423,5 +429,5 @@ async def polish_transcript(
         add_segments(chunk, new_chunk)
         if on_progress is not None:
             on_progress(idx, len(chunks))
-    return {"mode": mode, "source": source, "polished": "\n\n".join(parts), "changes": [],
+    return {"mode": mode, "source": source, "engine": fix_engine, "polished": "\n\n".join(parts), "changes": [],
             "segments": segments, "diff_counts": counts, **stats}

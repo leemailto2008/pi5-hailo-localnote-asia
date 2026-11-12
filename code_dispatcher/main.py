@@ -1816,6 +1816,14 @@ class DemoPolishRequest(BaseModel):
     text: str = Field(..., max_length=200000, description="完整逐字稿")
     mode: str = Field(default="fix", description="'fix' 修同音字與漏字 / 'rewrite' 整段重新潤稿")
     source: str = Field(default="live", description="'live' 完整逐字稿（即時 ASR）/ 'refine' 高精度逐字稿（SenseVoice）")
+    engine: Optional[str] = Field(default=None, description="修同音字引擎 'llm'（較準、較慢）/ 'csc'（MacBERT4CSC，很快）；省略 = 服務預設")
+
+
+def _fix_engines() -> Dict[str, Any]:
+    """網頁「修同音字」區的引擎選項：服務預設與 MacBERT4CSC 能不能用（不載入模型）。"""
+    from transcript_polish import FIX_ENGINE
+    from csc_corrector import unavailable_reason
+    return {"default": FIX_ENGINE, "csc_unavailable": unavailable_reason()}
 
 
 # 潤稿、高精度逐字稿都是背景工作（single_job.SingleJob）：一小時的會議潤稿約 22 段，Hailo 每段 60–95 秒，
@@ -1835,7 +1843,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
     """
     from voice_streaming import is_any_recording_active
     from meeting_minutes import minutes_manager
-    from transcript_polish import MODES, polish_transcript, split_chunks
+    from transcript_polish import FIX_ENGINE, FIX_ENGINES, MODES, polish_transcript, split_chunks
     busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
     if busy:
         raise HTTPException(status_code=409, detail=busy)
@@ -1843,6 +1851,12 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="mode 必須是 fix 或 rewrite")
     if req.source not in ("live", "refine"):
         raise HTTPException(status_code=400, detail="source 必須是 live 或 refine")
+    if req.engine is not None and req.engine not in FIX_ENGINES:
+        raise HTTPException(status_code=400, detail="engine 必須是 llm 或 csc")
+    if req.mode == "fix" and (req.engine or FIX_ENGINE) == "csc":
+        reason = _fix_engines()["csc_unavailable"]
+        if reason:
+            raise HTTPException(status_code=400, detail="MacBERT 引擎這台不能用：" + reason)
     if not (req.text or "").strip():
         raise HTTPException(status_code=400, detail="沒有可潤稿的逐字稿")
     if _polish_job.running:
@@ -1854,6 +1868,7 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
             on_progress=lambda done, total: job.update(done=done, total=total),
             should_stop=is_any_recording_active,
             source=req.source,
+            engine=req.engine,
         )
 
     return _polish_job.start(runner, mode=req.mode, done=0, total=len(split_chunks(req.text)))
@@ -1861,8 +1876,9 @@ async def post_demo_polish(req: DemoPolishRequest) -> Dict[str, Any]:
 
 @app.get("/api/polish", tags=["Demo UI"])
 async def get_demo_polish() -> Dict[str, Any]:
-    """潤稿工作狀態：state = idle / running / done / stopped / error；done 與 stopped 帶 result。"""
-    return _polish_job.snapshot()
+    """潤稿工作狀態：state = idle / running / done / stopped / error；done 與 stopped 帶 result。
+    fix_engines：修同音字引擎選項（服務預設、MacBERT4CSC 不能用的原因；能用為 null）。"""
+    return {**_polish_job.snapshot(), "fix_engines": _fix_engines()}
 
 
 class RefineRequest(BaseModel):
