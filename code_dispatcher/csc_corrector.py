@@ -3,15 +3,19 @@
 csc_corrector.py — 中文拼寫糾錯 (Chinese Spelling Correction) 引擎，給潤稿「修同音字與漏字」用（2026-11-12）。
 
 模型：shibing624/macbert4csc-base-chinese 的 ONNX 版（onnxruntime CPU；檔案由 tools/ci/setup_csc_model.sh 下載到
-PI5_CSC_MODEL_DIR，預設 /home/pi/models/macbert4csc）。模型以簡體訓練：每行先 OpenCC t2s，模型只做同長度的單字替換，
+PI5_CSC_MODEL_DIR，預設 /home/pi/models/macbert4csc）。模型以簡體訓練：先 OpenCC t2s，模型只做同長度的單字替換，
 只取「模型改到、且機率 ≥ MIN_PROB」的位置，該字再以 s2twp 轉回台灣繁體；最後仍由 transcript_polish.accept_homophone_edits
-只收同音字。
+只收同音字。說話人標籤不送模型；同一段的各行內容接起來、每 WINDOW_CHARS 字一個視窗（跨行，讓模型看到前後文）。
+
+2026-11-12 上下文實驗（.cc_scratch/pe/csc_ctx.py；先以實錄 5 分、第二次錄、10 分三份平均 CER 選版本，再用新錄 10／30／60 分確認）：
+  三份平均：每行各自送＠0.7（舊）0.1782 → 跨行 120 字＠0.5 0.1774（250、500 字或 0.7 都是 0.1782）。
+  確認：新錄 10 分 0.1835 → 0.1835、30 分 0.1987 → 0.1984、60 分 0.2137 → 0.2131，事實召回都不變；耗時 8.5→5.4、24.6→15.3、47.7→31.6 s。
 
 2026-11-11 量測（.cc_scratch/pe/csc_eval.py、csc_stack.py；高精度稿；CER）：
   實錄 5 分 0.1802 → 0.1781（4 s）；第二次錄 0.1731 → 0.1690；10 分 0.1905 → 0.1875（8 s）；新錄 10 分 0.1845 → 0.1835；
   新錄 30 分 0.2007 → 0.1987（24.7 s），事實召回都不變；RSS 約 814 MB。
   同資料 CPU qwen2.5:3b 的 LLM fix：0.1771、0.1670、0.1845、0.1825、0.1968，但要 220–1587 s。
-  MIN_PROB 在實錄 5 分調（0～0.7 並列，取 0.7）；第二次錄在 0.7 擋掉「協理→協利」(0.68)、「認→任」(0.52)。
+  （以上是 11-11 每行各自送＠0.7 的數字。當時 MIN_PROB 在實錄 5 分調：0～0.7 並列，取 0.7。）
 預設不用（transcript_polish.FIX_ENGINE 預設 llm，PI5_POLISH_FIX_ENGINE=csc 可改預設）；網頁「修同音字」區每次可自己選引擎。
 """
 
@@ -20,12 +24,13 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 MODEL_DIR = os.environ.get("PI5_CSC_MODEL_DIR", "/home/pi/models/macbert4csc")
-MIN_PROB = 0.7
+MIN_PROB = 0.5            # 跨行視窗下的門檻（11-12 上下文實驗，見檔頭）
 WINDOW_CHARS = 120        # 每次送模型的字數（遠低於 BERT 的 512 token 上限）
 THREADS = 4
 LABEL = "MacBERT4CSC（ONNX，CPU 4 執行緒）"
 
 _CJK_RE = re.compile(r"^[一-鿿]$")
+_LABEL_RE = re.compile(r"^說話人\d+：")
 
 
 def unavailable_reason(model_dir: str = MODEL_DIR) -> Optional[str]:
@@ -110,10 +115,29 @@ class CscCorrector:
         return "".join(out)
 
     def correct(self, text: str, should_stop: Optional[Callable[[], bool]] = None) -> Optional[str]:
-        """逐行糾錯；should_stop() 成立就回傳 None（錄音一開始就停，見 CLAUDE.md 重點一）。"""
-        lines: List[str] = []
+        """拿掉每行的說話人標籤，各行內容接起來、跨行每 WINDOW_CHARS 字一個視窗糾錯，再依原本的換行切回、接回標籤
+        （只做同長度單字替換，換行位置不變）。should_stop() 成立就回傳 None（錄音一開始就停，見 CLAUDE.md 重點一）。"""
+        labels: List[str] = []
+        bodies: List[str] = []
         for line in text.split("\n"):
-            if should_stop is not None and should_stop():
-                return None
-            lines.append(self.correct_line(line))
-        return "\n".join(lines)
+            m = _LABEL_RE.match(line)
+            labels.append(m.group(0) if m else "")
+            bodies.append(line[m.end():] if m else line)
+        joined = "\n".join(bodies)
+        simp = self._t2s.convert(joined)
+        if len(simp) != len(joined):         # 簡繁轉換長度不同（極少見）：退回逐行，避免位置對錯
+            fixed_lines: List[str] = []
+            for body in bodies:
+                if should_stop is not None and should_stop():
+                    return None
+                fixed_lines.append(self.correct_line(body))
+        else:
+            out = list(joined)
+            for start in range(0, len(simp), WINDOW_CHARS):
+                if should_stop is not None and should_stop():
+                    return None
+                piece = simp[start:start + WINDOW_CHARS]
+                offsets, preds = self._predict(piece)
+                apply_predictions(joined, start, piece, offsets, preds, self._s2t.convert, out)
+            fixed_lines = "".join(out).split("\n")
+        return "\n".join(label + body for label, body in zip(labels, fixed_lines))

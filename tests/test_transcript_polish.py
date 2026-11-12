@@ -300,11 +300,49 @@ def test_csc_apply_predictions_takes_confident_single_char_swaps_only():
     trad = "行成4天，協理"
     piece = "行成4天，协理"                       # t2s 後的視窗
     offsets = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)]
-    preds = [("行", 0.99), ("程", 0.95), ("4", 0.9), ("天", 0.9), ("，", 0.9), ("协", 0.9), ("利", 0.68)]
+    preds = [("行", 0.99), ("程", 0.95), ("4", 0.9), ("天", 0.9), ("，", 0.9), ("协", 0.9), ("利", 0.4)]
     out = list(trad)
     n = cc.apply_predictions(trad, 0, piece, offsets, preds, lambda s: {"程": "程", "利": "利"}.get(s, s), out)
-    assert "".join(out) == "行程4天，協理"       # 協理→協利 機率 0.68 < 0.7，不收；数字、標點不動
+    assert "".join(out) == "行程4天，協理"       # 協理→協利 機率 0.4 < MIN_PROB 0.5，不收；数字、標點不動
     assert n == 1
+
+
+class _SameText:
+    def convert(self, s):
+        return s
+
+
+class _GrowsWhenJoined:
+    def convert(self, s):
+        return s + "x" if "\n" in s else s      # 接起來的全文長度變了 → 要退回逐行
+
+
+def _csc_with_fake_model(t2s, seen):
+    import csc_corrector as cc
+
+    def predict(piece):
+        seen.append(piece)
+        offsets = [(i, i + 1) for i, ch in enumerate(piece) if not ch.isspace()]
+        preds = [("程" if piece[s] == "成" and s > 0 and piece[s - 1] == "行" else piece[s], 0.9) for s, _ in offsets]
+        return offsets, preds
+
+    c = object.__new__(cc.CscCorrector)
+    c._t2s, c._s2t, c._predict = t2s, _SameText(), predict
+    return c
+
+
+def test_csc_correct_runs_windows_across_lines_without_labels(monkeypatch):
+    import csc_corrector as cc
+    monkeypatch.setattr(cc, "WINDOW_CHARS", 8)
+    text = "說話人1：今天的行成\n說話人2：行成4天\n沒有標籤的行成"
+    want = "說話人1：今天的行程\n說話人2：行程4天\n沒有標籤的行程"
+    seen = []
+    assert _csc_with_fake_model(_SameText(), seen).correct(text) == want
+    assert seen == ["今天的行成\n行成", "4天\n沒有標籤的", "行成"]     # 視窗跨行、標籤不送模型
+    assert _csc_with_fake_model(_SameText(), []).correct(text, should_stop=lambda: True) is None
+    seen = []
+    assert _csc_with_fake_model(_GrowsWhenJoined(), seen).correct(text) == want
+    assert seen == ["今天的行成", "行成4天", "沒有標籤的行成"]           # 長度對不上就逐行
 
 
 class _FakeCsc:
