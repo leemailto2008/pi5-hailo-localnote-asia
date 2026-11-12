@@ -158,6 +158,11 @@
   網頁狀態列依模式顯示「再用 LLM 校對／再重新潤稿」。pytest：潤稿 44 passed、全套 634 passed（3 個既有 Windows 限定失敗）。
   15:12 部署 .228（備份 20261112_151217）；真實 API（POST /api/polish fix＋llm，來源高精度稿，實錄 5 分）：266.2 s、pre_fix csc 3 處、
   LLM 再收 1 處（另 11 處較大改動不收）、cer_num 0.0572→0.0541、事實 0.8955 不變、標籤同序。
+- 15:20 修正：部署／重啟服務後高精度逐字稿不見（只放記憶體），網頁潤稿來源只剩即時稿（13:05 部署後實測發現）。
+  41c3c66：SingleJob 加 persist_path，done／stopped 結果寫到 /dev/shm/localnote_state/refine_last.json（RAM 磁碟；不放 audio_cache，
+  免得算進錄音環形緩衝筆數），重啟讀回；壞檔／未完成狀態不讀、失敗不蓋掉上一次。pytest：single_job 7 passed、全套 636 passed。
+  15:24 部署 .228（備份 20261112_152357）；實測：POST /api/refine（m_1794453024）→ done、檔案 15.5 KB → sudo systemctl restart →
+  GET /api/refine 仍是 done、同一場、1304 字、4 位說話人；Playwright 開頁：高精度逐字稿區顯示「完成：4 位說話人，錄音 316 秒…」、潤稿來源可選且預設選高精度稿。
 
 ## 量測紀錄
 - 2026-11-10 16:43 fix 3min（Pi）：chunks=2，elapsed 16.6 s，changes=0，err 0.0133 → 0.0133。
