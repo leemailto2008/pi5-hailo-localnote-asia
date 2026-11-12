@@ -60,7 +60,7 @@
   開始錄音後 2 秒內（量測的輪詢間隔）子行程就已結束（Pi 實測，e2e 1 分鐘錄音）。
 - Pi 安裝：tools/ci/setup_sherpa_models.sh（sherpa-onnx 2.0.1 裝在 pi 使用者 site-packages；模型 /home/pi/models/sherpa，5 檔 md5 已驗）。
 
-## 後續改善（排程循環接著做，一次做一項，照常 commit／部署／實測）
+## 後續改善（排程循環接著做，一次做一項，照常 commit／部署／實測）【11-12 10:30：6–8 全部 DONE；5、9 等使用者決定；排程已依步驟 9 停用】
 1. 夜間聲學實測（19:00–07:00，依 CLAUDE.md 流程：開耳麥自動連線、確認 PC 喇叭、看前 30 秒逐字稿）：
    用 tools/e2e/speaker_selftest.py 播 10 分鐘會議 → 藍牙耳麥錄音 → /api/refine，比較 Hailo 即時與 SenseVoice 的 CER、分說話人正確率。
    這是 SenseVoice 在真實藍牙音訊（CVSD 8 kHz、有掉包）上的表現，目前只有數位音訊的數據。
@@ -557,3 +557,15 @@
   - 數位工作：清單 #2–#4 已完成，#5 待使用者決定，無剩餘可做的數位改善；本輪未改程式、未跑 pytest、未部署、未 commit。
   - device_bash 仍回報「未連接資料夾」，未請求資料夾權限；改用 Desktop Commander 的 PowerShell 讀取 Pi /api/status。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。
   - 無新進度，本輪不回報。排程仍啟用；#1 待 19:00 後、耳麥開機並靠近 Pi 與喇叭（喇叭位置需人工確認）時重試。
+
+## 2026-11-12 排程輪次（台北 10:23–10:35，白天窗，最終輪：後續改善 6–8 全部完成）
+- 互動鎖：無（標頭無該行）。.228 /api/status：state=done（job m_1794416006，無錄音／處理）；pgrep refine_transcript、run_suite.py、run_acoustic、compare_asr、merge_pi、vad_sweep 無評估程序。
+- 版本：.228 服務程式為 0fd0396（/home/pi/ln_e2e/deploy_0fd0396 存在；pi5-dispatcher-api.service active）；git HEAD cb4fbd7（0fd0396 之後只有文件 commit）。/health：status=degraded、redis_connected=false、ollama_running=true；redis 問題屬 ACTIVE_BACKLOG 第 8 項，不屬本大改，未處理。
+- 後續 #6：完成（11-11 13:07、13:35、11-11 23:23、11-12 00:53 量測紀錄）。
+- 後續 #7：完成（08:30 分類紀錄；SenseVoice 替換錯誤以同音／近音為主，未實作熱詞，屬產品決定）。
+- 後續 #8：完成（09:41 deploy c2f81a7、10:13 .228 與 10:15 .229 deploy 0fd0396，LN_DEPLOY_FORCE=1 僅用於 .229 ＝ 使用者 09:45 指定；fix_engines 兩台 default=llm、MacBERT 可用）。
+  - 觀察（本輪，10:24）：.229 http://192.168.50.229:8000/health 回 HTTP 000（連不上）。此為本輪觀察，不影響 10:15 的部署與實測結果；.229 目前是否關機、網路是否異常，未查證。
+- 後續 #5、#9：仍等使用者決定（不實作）。
+- 依步驟 9：6–8 都完成、5 與 9 仍等使用者 → 本檔標記；推送 gitlab、origin；排程 trig_01XfezGs1zV3uroLZy1NZm4D 設 enabled=false（結果見下）。
+- 本輪未改程式、未部署、未重啟、未跑 pytest、未在 Pi 上跑評估。未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。device_bash 仍回報「未連接資料夾」，改用 Desktop Commander 的 PowerShell 執行 SSH 與 curl。
+- 工作區另有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入本次 commit。
