@@ -74,6 +74,40 @@ def test_runner_exception_becomes_error_state_and_job_can_restart():
     asyncio.run(scenario())
 
 
+def test_persisted_result_survives_restart_but_running_and_errors_do_not(tmp_path):
+    path = str(tmp_path / "state" / "refine_last.json")
+
+    async def scenario():
+        job = SingleJob("refine", persist_path=path)
+
+        async def good(j):
+            return {"transcript": "說話人1：你好"}
+
+        job.start(good, job="m_1")
+        await job._task                                 # 等存檔（在背景執行緒）也做完
+        again = SingleJob("refine", persist_path=path)  # 服務重啟
+        snap = again.snapshot()
+        assert snap["state"] == "done" and snap["job"] == "m_1" and snap["result"]["transcript"] == "說話人1：你好"
+
+        async def bad(j):
+            raise RuntimeError("boom")
+
+        again.start(bad)
+        await again._task
+        assert SingleJob("refine", persist_path=path).snapshot()["job"] == "m_1"   # 失敗不蓋掉上一次的結果
+
+    asyncio.run(scenario())
+
+
+def test_unreadable_or_unfinished_saved_result_is_ignored(tmp_path):
+    p = tmp_path / "refine_last.json"
+    p.write_text("{not json", encoding="utf-8")
+    assert SingleJob("refine", persist_path=str(p)).snapshot() == {"state": "idle"}
+    p.write_text('{"state": "running", "started": 1}', encoding="utf-8")
+    assert SingleJob("refine", persist_path=str(p)).snapshot() == {"state": "idle"}
+    assert SingleJob("refine").snapshot() == {"state": "idle"}
+
+
 def test_meeting_busy_reason_blocks_recording_and_processing():
     from single_job import meeting_busy_reason
 

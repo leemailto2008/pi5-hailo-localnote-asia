@@ -1827,11 +1827,14 @@ def _fix_engines() -> Dict[str, Any]:
 
 
 # 潤稿、高精度逐字稿都是背景工作（single_job.SingleJob）：一小時的會議潤稿約 22 段，Hailo 每段 60–95 秒，
-# 同步回應一定超過前端逾時。狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）。
+# 同步回應一定超過前端逾時。潤稿狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）；
+# 高精度逐字稿的結果另存在 RAM 磁碟（不寫實體磁碟），部署／重啟服務後還在，潤稿也還能選它當來源（重開機才清掉，與錄音檔一樣）。
+# 放在錄音快取旁邊的資料夾，不放進 AUDIO_CACHE_DIR：那裡的檔案數會算進錄音環形緩衝的保留筆數。
 from single_job import SingleJob, meeting_busy_reason  # noqa: E402
 
 _polish_job = SingleJob("polish")
-_refine_job = SingleJob("refine")
+_refine_job = SingleJob("refine", persist_path=os.path.join(
+    os.path.dirname(os.path.abspath(AUDIO_CACHE_DIR)), "localnote_state", "refine_last.json"))
 _JOB_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
 
 
