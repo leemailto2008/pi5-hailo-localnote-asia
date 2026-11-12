@@ -109,6 +109,11 @@
   （tools/ci/setup_csc_model.sh：model.onnx 474 MB、tokenizer.json，sha256 相符；磁碟剩 5.2 G）。
   實測（/home/pi/code_dispatcher，PI5_POLISH_FIX_ENGINE=csc）：1.7 s，「行成→行程」（LLM 同句改成「形成」），「議體」未改，標籤不變。
   服務預設仍是 llm（systemd 未設 PI5_POLISH_FIX_ENGINE）；要切到 csc：服務加 Environment=PI5_POLISH_FIX_ENGINE=csc 後重啟。
+- 10:07 使用者要網頁上就能選 → 0fd0396：「① 修同音字與漏字」區加「引擎：LLM（較準、較慢）／MacBERT（很快、稍不準）」，
+  每次按之前自己選（記在瀏覽器）；POST /api/polish 加 engine，GET /api/polish 回 fix_engines（預設、MacBERT 不能用的原因）。
+  pytest：潤稿 38 passed、全部 627 passed（3 個既有 Windows 限定失敗）。本機 mock 檢查 5 種情境（預設、選 MacBERT、這台沒裝時停用＋原因、記住選擇、沒記錄用預設）。
+  10:13 部署 .228（備份 20261112_101322）、10:15 部署 .229（LN_DEPLOY_FORCE=1，備份 20261112_101550）；兩台 fix_engines 都是 default=llm、MacBERT 可用。
+  .228 真實頁面（Playwright）：選 MacBERT → 60 分鐘即時逐字稿 12256 字、21 段 32 s 完成，同音字 27 處，資訊列「模型：MacBERT4CSC」。
 
 ## 量測紀錄
 - 2026-11-10 16:43 fix 3min（Pi）：chunks=2，elapsed 16.6 s，changes=0，err 0.0133 → 0.0133。
