@@ -8,6 +8,11 @@ import transcript_polish as tp
 from llm_backend import LLMError
 
 
+@pytest.fixture(autouse=True)
+def _no_rewrite_pre_csc(monkeypatch):
+    monkeypatch.setattr(tp, "REWRITE_PRE_CSC", False)   # 測試不載入真的 MacBERT（Pi 上有裝）；要測的測試自己打開
+
+
 class _FakeBackend:
     label = "CPU Ollama qwen2.5:3b-opt"
 
@@ -387,6 +392,54 @@ def test_polish_fix_engine_can_be_chosen_per_call(monkeypatch):
     assert res["engine"] == "llm" and len(seen) == 1
     res = _run(tp.polish_transcript("一" * 100, "rewrite", engine="csc"))  # rewrite 不看 engine
     assert res["engine"] is None
+
+
+def _pre_csc_on(monkeypatch, available=True):
+    import csc_corrector as cc
+    monkeypatch.setattr(tp, "REWRITE_PRE_CSC", True)
+    monkeypatch.setattr(cc, "CscCorrector", _FakeCsc)
+    monkeypatch.setattr(cc, "unavailable_reason", lambda model_dir=None: None if available else "缺少模型檔 model.onnx")
+
+
+def test_rewrite_runs_macbert_first_when_available(monkeypatch):
+    _pre_csc_on(monkeypatch)
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of, seen))     # rewrite 照抄送進來的文字
+    res = _run(tp.polish_transcript("說話人1：行成4天，請協理確認。", "rewrite", source="refine"))
+    assert "行程4天" in _chunk_of(seen[0]["prompt"])                       # rewrite 拿到的是 MacBERT 修過的
+    assert res["polished"] == "說話人1：行程4天，請協理確認。"               # 確認→確定 不同音，沒收
+    assert res["pre_fix_engine"] == "csc" and res["pre_fix_edits"] == 1
+    assert res["backend"] == _FakeBackend.label and res["diff_counts"]["rep"] == 1   # 標色對原文，含 MacBERT 的修改
+
+
+def test_rewrite_skips_macbert_when_unavailable_or_switched_off(monkeypatch):
+    _pre_csc_on(monkeypatch, available=False)
+    seen = []
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(_chunk_of, seen))
+    res = _run(tp.polish_transcript("行成4天，請協理確認。", "rewrite"))
+    assert "行成4天" in _chunk_of(seen[0]["prompt"]) and res["pre_fix_engine"] is None and res["pre_fix_edits"] == 0
+    _pre_csc_on(monkeypatch)
+    monkeypatch.setattr(tp, "REWRITE_PRE_CSC", False)
+    res = _run(tp.polish_transcript("行成4天，請協理確認。", "rewrite"))
+    assert res["pre_fix_engine"] is None and res["polished"] == "行成4天，請協理確認。"
+
+
+def test_rewrite_failure_keeps_macbert_fix(monkeypatch):
+    _pre_csc_on(monkeypatch)
+
+    def boom(prompt):
+        raise LLMError("hailo down")
+
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(boom))
+    res = _run(tp.polish_transcript("行成4天，請協理確認。", "rewrite"))
+    assert res["failed_chunks"] == 1 and res["polished"] == "行程4天，請協理確認。"
+
+
+def test_rewrite_with_macbert_stops_when_recording_starts(monkeypatch):
+    _pre_csc_on(monkeypatch)
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: pytest.fail("錄音中不該呼叫 LLM")))
+    res = _run(tp.polish_transcript("行成4天", "rewrite", should_stop=lambda: True))
+    assert res["stopped"] is True and res["polished"] == "行成4天"
 
 
 def test_polish_rejects_unknown_fix_engine():
