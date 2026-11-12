@@ -1,3 +1,4 @@
 # 離線單元測試 (CI unit job)；e2e/HIL 在 Pi 上使用系統既有套件
 numpy==2.2.6
 pytest==8.3.5
+cn2an==0.5.24    # tools/e2e/scoring.cer_num（Pi：python3 -m pip install --user --break-system-packages cn2an==0.5.24）

@@ -9,7 +9,7 @@
 | `meeting_gen.py` | 測試會議腳本產生器：12 種議題模板 × 固定 seed 填值，每個議題內建可核對事實，結尾總結重述決議與待辦 |
 | `gen_test_audio.py` | edge-tts 三聲線合成 → 依實際長度自動校正議題數 → 寫回 fixture (`audio.sha256`、每句時間軸) |
 | `fixtures/meeting_{1,3,5,10,15,30}min.json` | 已校正的 fixtures（**進 git**）；音檔不進 git |
-| `scoring.py` | 純函式評分：CER、事實召回、summary 結構／重複／總結召回／議題覆蓋、門檻判定 |
+| `scoring.py` | 純函式評分：CER、CER（不計數字寫法，`cer_num`，需 cn2an）、事實召回、summary 結構／重複／總結召回／議題覆蓋、門檻判定 |
 | `e2e.py` | 單一案例：null sink 注入 (`/dev/shm/ln_force_source`) → `/api/record` → 即時播放 → 評分 + `mon.py` 資源取樣 |
 | `run_suite.py` | 多案例：套 `thresholds.json`，輸出 `suite.json`、`summary.md`、`junit.xml`；任一失敗 exit 1 |
 | `speaker_selftest.py` | 聲學自測（在接喇叭的電腦上執行）：喇叭播放講稿 → 耳麥 → 藍牙 mSBC → app，錄完用 fixture 評分；只用標準函式庫 |

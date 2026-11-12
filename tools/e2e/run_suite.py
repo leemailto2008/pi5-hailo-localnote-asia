@@ -70,15 +70,16 @@ def write_junit(path, cases):
 
 def write_markdown(path, cases, meta):
     L = [f"# LocalNote e2e 報告 · {meta['started']}", "", f"- 主機：{meta['host']}　commit：{meta.get('commit') or '-'}", ""]
-    L += ["| 長度 | 結果 | CER | 逐字稿事實 | 總結事實 | 議題覆蓋 | summary 延遲 | STT NPU | 錄音 CPU | 最高溫 | RAM 峰值 |",
-          "|---|---|---|---|---|---|---|---|---|---|---|"]
+    L += ["| 長度 | 結果 | CER | CER（不計數字寫法） | 逐字稿事實 | 總結事實 | 議題覆蓋 | summary 延遲 | STT NPU | 錄音 CPU | 最高溫 | RAM 峰值 |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for c in cases:
         r = c.get("result") or {}
         t, s, res = r.get("transcript_eval") or {}, r.get("summary_eval") or {}, r.get("resources") or {}
         ok = "✅" if all(k["passed"] for k in c["checks"]) else "❌"
         npu = f"{r.get('stt_npu_chunks', 0)}/{r.get('stt_npu_chunks', 0) + r.get('stt_cpu_chunks', 0)}"
         rr = s.get('recap_recall', '-') if s.get('recap_recall_rel') is None else f"{s.get('recap_recall')} (逐字稿內 {s.get('recap_recall_rel')})"
-        L.append(f"| {c['title']} | {ok} | {t.get('cer', '-')} | {t.get('fact_recall', '-')} | {rr} | "
+        cn = t.get("cer_num")
+        L.append(f"| {c['title']} | {ok} | {t.get('cer', '-')} | {'-' if cn is None else cn} | {t.get('fact_recall', '-')} | {rr} | "
                  f"{s.get('topic_coverage', '-')} | {r.get('summary_latency_s', '-')} s | {npu} | {res.get('rec_cpu_avg', '-')}% | "
                  f"{res.get('cpu_temp_max', '-')} °C | {res.get('ram_peak_mb', '-')} MB |")
     for c in cases:

@@ -1,3 +1,5 @@
+import pytest
+
 import scoring
 
 
@@ -5,6 +7,16 @@ def test_cer():
     assert scoring.cer("今天天氣很好", "今天天氣很好") == 0
     assert scoring.cer("今天天氣很好", "今天天汽很好") == round(1 / 6, 4)
     assert scoring.cer("好，我們開始。", "好我們開始") == 0          # 標點不計
+
+
+def test_cer_num_ignores_number_format():
+    pytest.importorskip("cn2an")
+    ref = "修正版預計十月十一日上線，庫存一千五百台，降價百分之十，預算十二萬元，兩百萬。"
+    hyp = "修正版預計10月11日上線，庫存1500台，降價10%，預算12萬元，200萬。"
+    assert scoring.cer(ref, hyp) > 0.3                 # 舊 cer 把寫法差異算成錯
+    assert scoring.cer_num(ref, hyp) == 0
+    assert scoring.cer_num("週二前回覆", "週日前回覆") == 0.2   # 真的聽錯仍然算
+    assert scoring.transcript_checks(hyp, {"lines": [["A", ref]]})["cer_num"] == 0
 
 
 def test_fact_hits_aliases():

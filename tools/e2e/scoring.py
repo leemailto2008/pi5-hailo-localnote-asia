@@ -1,12 +1,18 @@
 """LocalNote e2e 評分函式 (純函式，無硬體相依，可在 CI 離線測試)。"""
 import re
 import unicodedata
+from decimal import Decimal
 
 try:
     import opencc
     _CC = opencc.OpenCC("s2twp")
 except Exception:  # CI 環境可能沒有 OpenCC
     _CC = None
+
+try:
+    import cn2an       # 中文數字 → 阿拉伯數字（cer_num 用；沒裝就不算 cer_num）
+except ImportError:
+    cn2an = None
 
 PLACEHOLDERS = ("（核心重點", "若無具體待辦", "只寫真正定案", "不要重複規則", "每點 40 字以內", "依議題分點",
                 "模型輸出長度不足", "the model ran out of output length")   # ensure_sections() 的截斷標記也算失敗
@@ -52,6 +58,38 @@ def levenshtein(a: str, b: str) -> int:
 
 def cer(ref: str, hyp: str) -> float:
     r, h = norm(ref), norm(hyp)
+    return round(levenshtein(r, h) / max(1, len(r)), 4)
+
+
+_WAN_RE = re.compile(r"(\d+(?:\.\d+)?)([万亿])")
+_NUM_T2S = str.maketrans("萬億兩點", "万亿两点")     # cn2an 只認簡體數字字；其他字不影響
+
+
+def _wan_to_digits(m: "re.Match") -> str:
+    v = Decimal(m.group(1)) * (10 ** 4 if m.group(2) == "万" else 10 ** 8)
+    return str(int(v)) if v == v.to_integral_value() else format(v, "f")
+
+
+def _cn_digits(s: str) -> str:
+    try:
+        return cn2an.transform(s, "cn2an")
+    except ValueError:            # cn2an 只在少數怪輸入丟 ValueError：照原文比
+        return s
+
+
+def num_norm(text: str) -> str:
+    """cer_num 用：中文數字一律轉阿拉伯數字（十月十一日 → 10月11日、百分之十 → 10%、12萬 → 120000）後再 norm。"""
+    s = (text or "").translate(_NUM_T2S)
+    return norm(_WAN_RE.sub(_wan_to_digits, _cn_digits(s)))
+
+
+def cer_num(ref: str, hyp: str):
+    """不計數字寫法的 CER：參考稿寫「十月十一日、一千五百台」、ASR 寫「10月11日、1500台」不算錯。
+    2026-11-12 量測：GS3 實錄高精度稿的 cer 約 0.17–0.21，其中約 2/3 是這種寫法差異（cer_num 約 0.05–0.07）。
+    沒裝 cn2an 回傳 None。"""
+    if cn2an is None:
+        return None
+    r, h = num_norm(ref), num_norm(hyp)
     return round(levenshtein(r, h) / max(1, len(r)), 4)
 
 
@@ -101,6 +139,7 @@ def transcript_checks(transcript: str, fixture: dict) -> dict:
     fh = fact_hits(transcript, fixture.get("facts") or {})
     return {
         "cer": cer(ref, transcript or ""),
+        "cer_num": cer_num(ref, transcript or ""),
         "ref_chars": len(norm(ref)),
         "hyp_chars": len(norm(transcript or "")),
         "fact_recall": recall(fh),
