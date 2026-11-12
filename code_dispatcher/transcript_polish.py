@@ -211,6 +211,43 @@ def apply_glossary(text: str, terms: Sequence[str],
     return "".join(out), changed
 
 
+def edit_opcodes(src: str, dst: str) -> List[Tuple[str, int, int, int, int]]:
+    """difflib 的 opcodes，加一個修正：字數相同的連續同音字替換，difflib 常對成「替換＋相同 1 字＋刪除」
+    （「清理協禮」→「請李協理」對成 清→請李協、理 相同、刪 協禮；11-12 會議詞彙＋MacBERT 實測看到），
+    修同音字因此整段不收、網頁標色也畫錯。相鄰的修改中間只隔 ≤ 1 個相同的字（不是空白／換行）、併起來兩邊字數相同時
+    併成一塊，再逐字切回最小的替換段（位置相同的字仍是 equal）。其他情況與 difflib 相同。"""
+    ops = difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes()
+    merged: List[Tuple[str, int, int, int, int]] = []
+    i = 0
+    while i < len(ops):
+        tag, i1, i2, j1, j2 = ops[i]
+        if tag != "equal":
+            k = i
+            while (k + 2 < len(ops) and ops[k + 1][0] == "equal" and ops[k + 1][2] - ops[k + 1][1] <= 1
+                   and not src[ops[k + 1][1]:ops[k + 1][2]].isspace() and ops[k + 2][0] != "equal"):
+                k += 2
+            end = next((e for e in range(k, i, -2) if ops[e][2] - i1 == ops[e][4] - j1), None)
+            if end is not None:
+                merged.append(("replace", i1, ops[end][2], j1, ops[end][4]))
+                i = end + 1
+                continue
+        merged.append((tag, i1, i2, j1, j2))
+        i += 1
+    out: List[Tuple[str, int, int, int, int]] = []
+    for tag, i1, i2, j1, j2 in merged:
+        if tag != "replace" or i2 - i1 != j2 - j1:
+            out.append((tag, i1, i2, j1, j2))
+            continue
+        k = 0
+        while k < i2 - i1:
+            same = src[i1 + k] == dst[j1 + k]
+            s = k
+            while k < i2 - i1 and (src[i1 + k] == dst[j1 + k]) == same:
+                k += 1
+            out.append(("equal" if same else "replace", i1 + s, i1 + k, j1 + s, j1 + k))
+    return out
+
+
 def accept_homophone_edits(src: str, dst: str,
                            protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
     """把模型的校對全文 dst 對齊原文 src（difflib），只收「修同音字與漏字」，其餘位置保留原文：
@@ -223,7 +260,7 @@ def accept_homophone_edits(src: str, dst: str,
     out: List[str] = []
     stats = {"accepted": 0, "rejected": 0}
     pos = 0
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+    for tag, i1, i2, j1, j2 in edit_opcodes(src, dst):
         if tag == "equal":
             continue
         out.append(src[pos:i1])
@@ -254,7 +291,7 @@ def diff_segments(src: str, dst: str) -> List[List[str]]:
     eq 相同；rep 替換 (text 新字、orig 原字，修同音字)；ins 補上的字 (修漏字)；del 刪掉的字 (text 是原字)。
     autojunk 關掉：中文常用字出現次數多，開著會被當成雜訊而對不齊。"""
     out: List[List[str]] = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+    for tag, i1, i2, j1, j2 in edit_opcodes(src, dst):
         if tag == "equal":
             out.append(["eq", dst[j1:j2], ""])
         elif tag == "replace":

@@ -454,6 +454,25 @@ def test_rewrite_with_macbert_stops_when_recording_starts(monkeypatch):
     assert res["stopped"] is True and res["polished"] == "行成4天"
 
 
+def test_edit_opcodes_realigns_same_length_homophone_runs():
+    src, dst = "預算表清理協禮在7月1日前", "預算表請李協理在7月1日前"
+    # difflib 本身：清→請李協、理 相同、刪 協禮（整段不收、標色畫錯）
+    ops = tp.edit_opcodes(src, dst)
+    assert [(t, src[i1:i2], dst[j1:j2]) for t, i1, i2, j1, j2 in ops if t != "equal"] == \
+        [("replace", "清理", "請李"), ("replace", "禮", "理")]
+    out, st = tp.accept_homophone_edits(src, dst)
+    assert out == dst and st == {"accepted": 2, "rejected": 0}
+    assert [s for s in tp.diff_segments(src, dst) if s[0] != "eq"] == [["rep", "請李", "清理"], ["rep", "理", "禮"]]
+    # 中間隔換行不併；字數不同照 difflib
+    assert tp.edit_opcodes("甲\n乙", "丙\n丁") == difflib_ops("甲\n乙", "丙\n丁")
+    assert tp.accept_homophone_edits("請協理確認", "請協理確認日期")[0] == "請協理確認"
+
+
+def difflib_ops(a, b):
+    import difflib
+    return [tuple(op) for op in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()]
+
+
 def test_parse_glossary_splits_dedups_and_keeps_only_chinese_terms():
     raw = "李協理、宏遠科技，韌體\n韌體; 新版 ERP / 甲 / A1區 /楊工程師"
     assert tp.parse_glossary(raw) == ["李協理", "宏遠科技", "韌體", "新版", "楊工程師"]   # 「ERP」「甲」「A1區」不收
