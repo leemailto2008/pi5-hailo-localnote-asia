@@ -142,6 +142,13 @@
   調參三份 cer_num：MacBERT 0.0541／0.0419／0.0428（平均 0.0463）；rewrite 0.0562／0.0429／0.0448（0.0480）；疊加 0.0541／0.0409／0.0428（0.0459），
   事實都不掉、標籤同序；耗時 rewrite 197／198／408 s，疊加只多 MacBERT 4–6 s。疊加只在第二次錄多對 1 字（差距在 rewrite 溫度 0.2 的隨機範圍內）。
   照選法進驗證：12:05 開跑新錄 10／30 分（crw2.log）。
+  確認（MacBERT／rewrite／疊加）：新錄 10 分 0.0408／0.0413／0.0403、30 分 0.0413／0.0427／0.0402，事實都不掉、標籤同序 → **採用**。
+  466566a：rewrite 每段先跑 MacBERT（有裝才做、PI5_POLISH_REWRITE_PRE_CSC=0 可關；rewrite 失敗保留 MacBERT 修過的）；結果加 pre_fix_engine／pre_fix_edits，
+  網頁狀態列加「先用 MacBERT 修同音字 N 處」。pytest：潤稿 43 passed、全套 633 passed（3 個既有 Windows 限定失敗）。
+  13:05 部署 .228（備份 20261112_130521）；真實 API（POST /api/polish rewrite，來源高精度稿，實錄 5 分）：200.6 s、pre_fix csc 3 處、
+  cer_num 0.0572→0.0541、事實 0.8955 不變、標籤同序（與實驗一致）。
+  .228 真實頁面（Playwright headless，部署重啟後高精度稿不在記憶體，來源用即時稿 5 分）：按「整段重新潤稿」→ 189 s 完成，狀態列
+  「改寫 24 處、刪除 7 處；先用 MacBERT 修同音字 3 處，再重新潤稿（標色含這些修改）；1 段改到數字，已保留原文」，資訊列模型 Hailo-10H NPU qwen3:1.7b。
 
 ## 量測紀錄
 - 2026-11-10 16:43 fix 3min（Pi）：chunks=2，elapsed 16.6 s，changes=0，err 0.0133 → 0.0133。
