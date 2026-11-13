@@ -666,6 +666,68 @@ def save_mic_preference(pref: str) -> str:
     return pref
 
 
+# 錄音中的即時逐字稿引擎 (2026-11-13 使用者要求「錄音中也用 SenseVoice」)：whisper = Hailo-10H Whisper (NPU，CPU 零占用，原行為)；
+# sensevoice = SenseVoice (sv_worker，CPU 2 執行緒綁 CPU 2、3)。藍牙收音時一律用 whisper：CLAUDE.md 重點一「錄音中不跑 CPU 推論」，
+# 夜間要量藍牙＋SenseVoice 的影響時設 PI5_LIVE_SV_ON_BT=1。存檔，重啟後保留；下一場錄音生效。
+LIVE_ASR_CHOICES = ("whisper", "sensevoice")
+LIVE_ASR_PATH = os.path.join(DATA_DIR, "live_asr.json")
+LIVE_SV_ON_BT = os.environ.get("PI5_LIVE_SV_ON_BT", "0").strip() == "1"
+
+
+def load_live_asr_preference() -> str:
+    try:
+        import json
+        with open(LIVE_ASR_PATH, encoding="utf-8") as f:
+            pref = json.load(f).get("engine", "whisper")
+    except FileNotFoundError:
+        return "whisper"
+    except (OSError, ValueError, AttributeError) as e:
+        print(f"[VoicePipeline] live ASR preference unreadable ({e}); using whisper")
+        return "whisper"
+    return pref if pref in LIVE_ASR_CHOICES else "whisper"
+
+
+def save_live_asr_preference(engine: str) -> str:
+    if engine not in LIVE_ASR_CHOICES:
+        raise ValueError(f"engine 必須是 {'/'.join(LIVE_ASR_CHOICES)}")
+    import json
+    os.makedirs(os.path.dirname(LIVE_ASR_PATH), exist_ok=True)
+    tmp = LIVE_ASR_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"engine": engine}, f)
+    os.replace(tmp, LIVE_ASR_PATH)
+    return engine
+
+
+def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT) -> str:
+    """這場錄音實際用的即時逐字稿引擎。source = 錄音的 PipeWire 節點；藍牙 (bluez*) 或還不知道時用 whisper。"""
+    if pref != "sensevoice" or not source:
+        return "whisper"
+    if source.startswith("bluez") and not sv_on_bt:
+        return "whisper"
+    return "sensevoice"
+
+
+def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: Optional[Any] = None,
+                        info_out: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """錄音中的即時切片。engine = whisper → speech_to_text (Hailo Whisper，失敗退 CPU)；
+    sensevoice → sv_worker，這段失敗就改走 speech_to_text (逐字稿區的 ASR 會列出兩種引擎各幾段)。"""
+    if engine == "sensevoice":
+        from sv_worker import LIVE_POST_LABEL, live_label, sv_worker
+        try:
+            res = sv_worker.transcribe(audio_np)
+        except RuntimeError as e:
+            print(f"[VoicePipeline] SenseVoice 即時切片失敗，這段改用 Hailo Whisper：{e}")
+        else:
+            if info_out is not None:
+                info_out.update(engine=live_label(), vad="", post=LIVE_POST_LABEL)
+            text = res.get("text", "")
+            if text:
+                print(f"[VoicePipeline] SenseVoice 即時切片：'{text}' (耗時 {res.get('inference_time_ms', 0)} ms)")
+            return text
+    return speech_to_text(audio_np, cancellation_event, info_out=info_out)
+
+
 def pick_usb_source(nodes: List[Dict[str, Any]]) -> Optional[str]:
     """第一個 USB 音效卡的錄音節點 (ALSA、device.bus=usb、media.class 恰為 Audio/Source)。"""
     for n in nodes:
@@ -886,6 +948,8 @@ async def record_audio_from_mic(
     from bt_link_stats import ArrivalMeter, sco_rx_packets
 
     source_node = await ensure_bluetooth_recording_ready()
+    if stats_out is not None:
+        stats_out["source"] = source_node   # 即時逐字稿引擎依收音來源決定 (live_asr_engine)
 
     cap_cmd = [
         "taskset", "-c", "0,1",

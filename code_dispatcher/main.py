@@ -1441,6 +1441,40 @@ async def get_mic_config() -> Dict[str, Any]:
     return await _mic_config()
 
 
+class LiveAsrRequest(BaseModel):
+    engine: str = Field(..., description="whisper = Hailo-10H Whisper (NPU)；sensevoice = SenseVoice (CPU，藍牙收音時仍用 Whisper)")
+
+
+def _live_asr_config() -> Dict[str, Any]:
+    from voice_pipeline import LIVE_SV_ON_BT, load_live_asr_preference
+    import refine_transcript
+    return {"engine": load_live_asr_preference(), "sensevoice_unavailable": refine_transcript.check_available(),
+            "sensevoice_on_bluetooth": LIVE_SV_ON_BT}
+
+
+@app.get("/api/config/live_asr", tags=["Demo UI"])
+async def get_live_asr_config() -> Dict[str, Any]:
+    """錄音中的即時逐字稿引擎 (下一場錄音生效)；sensevoice_unavailable 不為空表示這台沒裝 sherpa-onnx 或模型。"""
+    return await asyncio.to_thread(_live_asr_config)
+
+
+@app.post("/api/config/live_asr", tags=["Demo UI"])
+async def set_live_asr_config(req: LiveAsrRequest) -> Dict[str, Any]:
+    from voice_pipeline import save_live_asr_preference
+    import refine_transcript
+    if req.engine == "sensevoice":
+        reason = refine_transcript.check_available()
+        if reason:
+            raise HTTPException(status_code=400, detail=f"這台不能用 SenseVoice：{reason}")
+    try:
+        await asyncio.to_thread(save_live_asr_preference, req.engine)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"無法儲存即時逐字稿引擎：{e}")
+    return await asyncio.to_thread(_live_asr_config)
+
+
 @app.post("/api/config/mic", tags=["Demo UI"])
 async def set_mic_config(req: MicPreferenceRequest) -> Dict[str, Any]:
     from voice_pipeline import save_mic_preference

@@ -32,7 +32,8 @@ if os.path.exists(_agent_dir) and _agent_dir not in sys.path:
 
 from voice_memory import get_in_memory_cache_dir
 from last_meeting import load_last_meeting, save_last_meeting
-from voice_pipeline import NoMicrophoneError, record_audio_from_mic, slice_bounds, speech_to_text
+from voice_pipeline import (NoMicrophoneError, live_asr_engine, load_live_asr_preference, record_audio_from_mic,
+                            slice_bounds, speech_to_text, speech_to_text_live)
 
 AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 
@@ -720,6 +721,24 @@ class MeetingJobManager:
             curr_preview: str = ""
             chunk_worker_done = asyncio.Event()
 
+            # 即時逐字稿引擎 (2026-11-13)：網頁選 SenseVoice 且不是藍牙收音時用 SenseVoice (sv_worker，CPU 2、3)，否則 Hailo Whisper。
+            # 錄音開始、知道收音來源 (rec_stats["source"]) 後決定一次，整場不變；用 SenseVoice 時先載入模型。
+            live_asr_pref = load_live_asr_preference()
+            live_engine: Optional[str] = None
+            sv_warm_task: Optional[asyncio.Task] = None   # 留著參照，背景工作才不會被回收
+            rec_stats: Dict[str, Any] = {}
+
+            def decide_live_engine() -> str:
+                nonlocal live_engine, sv_warm_task
+                if live_engine is None and rec_stats.get("source"):
+                    live_engine = live_asr_engine(live_asr_pref, rec_stats["source"])
+                    self.status.metrics["live_asr"] = live_engine
+                    print(f"[MeetingMinutes] 即時逐字稿引擎：{live_engine}（網頁選 {live_asr_pref}，收音 {rec_stats['source']}）")
+                    if live_engine == "sensevoice":
+                        from sv_worker import sv_worker
+                        sv_warm_task = asyncio.get_running_loop().create_task(asyncio.to_thread(sv_worker.warm_up))
+                return live_engine or "whisper"
+
             async def _chunk_stt_worker():
                 """背景即時解算滑動切片 PCM 音訊"""
                 nonlocal first_chunk_ready_time, first_stt_output_time, first_stt_latency, last_done_enq_t, curr_preview
@@ -749,8 +768,9 @@ class MeetingJobManager:
 
                                 stt_info: Dict[str, str] = {}
                                 seg_text = await asyncio.to_thread(
-                                    speech_to_text,
+                                    speech_to_text_live,
                                     pcm_np,
+                                    decide_live_engine(),
                                     self._thread_cancellation_token,
                                     info_out=stt_info
                                 )
@@ -887,7 +907,6 @@ class MeetingJobManager:
                     self.notify_status_update()
                 await chunk_queue.put((slice_data, is_final, time.time()))
 
-            rec_stats: Dict[str, Any] = {}
             self._record_task = asyncio.create_task(
                 record_audio_from_mic(
                     duration_sec,
@@ -918,6 +937,7 @@ class MeetingJobManager:
                 if "dropout_live" in rec_stats:
                     self.status.metrics["link_dropout_live"] = rec_stats["dropout_live"]
                     self.status.metrics["link_arrival_live"] = rec_stats.get("arrival_live")
+                decide_live_engine()   # 收音來源一確定就決定引擎（SenseVoice 先載入模型，第一個切片不用等）
                 self.notify_status_update()
                 await asyncio.sleep(0.5)
 
@@ -994,6 +1014,9 @@ class MeetingJobManager:
                 self.status.msg = f"🎧 錄音完成！正在結算最後 {cur_rem} 段逐字稿 (尾端已等 {cur_tail_wait}s)..."
                 self.notify_status_update()
                 await asyncio.sleep(0.5)
+            if live_engine == "sensevoice":   # 切片都轉完了：結束 SenseVoice 子行程，記憶體留給紀要與高精度逐字稿
+                from sv_worker import sv_worker
+                await asyncio.to_thread(sv_worker.shutdown)
 
             # Broadcast reset frame upon recording completion
             try:

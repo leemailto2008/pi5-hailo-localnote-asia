@@ -267,6 +267,14 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                 藍牙耳麥優先
               </button>
             </div>
+            <div class="row" style="margin-top:6px;padding:6px 10px;background:var(--set-bg);border-radius:8px;justify-content:space-between;align-items:center;">
+              <span style="font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;" id="liveAsrLabel">
+                📝 即時逐字稿
+              </span>
+              <button type="button" class="toggle-btn" id="btnToggleLiveAsr" title="錄音中的即時逐字稿用哪個語音辨識；下一場錄音生效">
+                Hailo Whisper
+              </button>
+            </div>
             <div style="margin-top:6px;padding:6px 10px;background:var(--set-bg);border-radius:8px;display:flex;flex-direction:column;gap:4px;align-self:stretch">
               <label for="polishGlossary" style="font-size:12.5px;color:var(--muted)">📖 會議詞彙（選填）<span id="glossaryState"></span></label>
               <textarea id="polishGlossary" rows="2" style="font:inherit;font-size:13px;resize:vertical"
@@ -1603,6 +1611,56 @@ if (btnToggleMicPref) {
   });
 }
 loadMicPref();
+
+/* ---------- 即時逐字稿引擎 (Hailo Whisper／SenseVoice，2026-11-13)，存在伺服器端，下一場錄音生效 ----------
+   SenseVoice 在 CPU 上跑：藍牙收音時後端仍用 Hailo Whisper（錄音中不跑 CPU 推論，避免藍牙斷音）。 */
+let liveAsr = 'whisper';
+
+function renderLiveAsr(cfg) {
+  const btn = $('btnToggleLiveAsr'), label = $('liveAsrLabel');
+  if (!btn || !cfg) return;
+  liveAsr = cfg.engine === 'sensevoice' ? 'sensevoice' : 'whisper';
+  const sv = liveAsr === 'sensevoice';
+  btn.className = sv ? 'toggle-btn active' : 'toggle-btn';
+  btn.textContent = sv ? 'SenseVoice（CPU）' : 'Hailo Whisper（NPU）';
+  btn.disabled = !sv && !!cfg.sensevoice_unavailable;
+  if (label) label.textContent = '📝 即時逐字稿' + (sv && !cfg.sensevoice_on_bluetooth ? '（藍牙收音時用 Whisper）' : '');
+  btn.title = cfg.sensevoice_unavailable && !sv
+    ? '這台不能用 SenseVoice：' + cfg.sensevoice_unavailable
+    : '點擊切換錄音中的即時逐字稿引擎，下一場錄音生效。SenseVoice 較準但用 CPU；藍牙收音時為避免斷音仍用 Hailo Whisper';
+}
+
+async function loadLiveAsr() {
+  try {
+    const r = await fetch('/api/config/live_asr');
+    if (r.ok) renderLiveAsr(await r.json());
+  } catch (e) {
+    console.warn('live ASR config load failed', e);
+  }
+}
+
+const btnToggleLiveAsr = $('btnToggleLiveAsr');
+if (btnToggleLiveAsr) {
+  btnToggleLiveAsr.addEventListener('click', async () => {
+    const next = liveAsr === 'sensevoice' ? 'whisper' : 'sensevoice';
+    try {
+      const r = await fetch('/api/config/live_asr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: next })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+      renderLiveAsr(data);
+      toast(next === 'sensevoice'
+        ? '📝 下一場錄音的即時逐字稿改用 SenseVoice' + (data.sensevoice_on_bluetooth ? '' : '（藍牙收音時仍用 Hailo Whisper）')
+        : '📝 下一場錄音的即時逐字稿改用 Hailo Whisper');
+    } catch (e) {
+      toast('切換即時逐字稿引擎失敗：' + e.message);
+    }
+  });
+}
+if (!MOCK) loadLiveAsr();
 
 /* ---------- 核心效能與耗時指標面板 (即時更新 & 手動切換開關，預設隱藏) ---------- */
 const btnToggleMetrics = $('btnToggleMetrics');
