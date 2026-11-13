@@ -42,6 +42,16 @@ ASR_LANGUAGE = os.environ.get("PI5_SENSEVOICE_LANGUAGE", "auto")
 # 乾淨音檔 0.163／0.164／0.162（不變）。調大會讓停頓短於它的換人併成同一句，逐句分說話人就分不開；
 # 合成資料換人停頓都 ≥ 0.8 s，量不到這個風險，真人會議驗證前維持 0.25。
 VAD_MIN_SILENCE_S = float(os.environ.get("PI5_VAD_MIN_SILENCE", "0.25"))
+# 辨識怎麼切段（2026-11-13）：pause = 跟即時逐字稿一樣在停頓處切 4–9.5 秒（audio_splice.pause_cut_index）整段辨識，
+# 再依 token 時間把字分回 VAD 句子（分說話人仍用 VAD 句子，與之前相同）；vad = 舊法，每個 VAD 句子各自辨識。
+# 量測（同一份 OGG 母帶、只比辨識，.cc_scratch/pe/exp_refine_seg.py，cer_num）：調參 實錄 5 分 0.0572 → 0.0337、
+# 第二次錄 0.048 → 0.0388、10 分 0.0463 → 0.0337；驗證 新錄 10 分 0.0519 → 0.0342、30 分 0.0504 → 0.0326。VAD 句子平均才 3 秒，上下文太短。
+# 整條流程（.cc_scratch/pe/exp_refine_full.py，含分說話人）：同上 3 份 cer_num 0.0572／0.048／0.0463 → 0.0337／0.0388／0.0342，
+# 逐句歸屬正確率都 100%、4 人、句數相同；逐段 token 接起來都等於文字（0 段例外）。代價：辨識變慢約 50%（5 分 18 → 27 s、10 分 35 → 53 s）。
+# 驗證 新錄 5／10 分、即時 SenseVoice 那兩場 5／10 分：cer_num 0.0541／0.0519／0.0501／0.0524 → 0.0439／0.0347／0.0409／0.0302，逐句正確率都 100%；
+# 唯一差異：即時 SenseVoice 那場 10 分多分出 1 人（只有一句 1.31 s 的「主要是外殼刮傷，」，剛好超過 CLUSTER_MIN_LONGEST_S）。
+ASR_SEGMENTATION = os.environ.get("PI5_REFINE_ASR_SEGMENT", "pause")
+ASR_SLICE_MIN_S, ASR_SLICE_MAX_S = 4.0, 9.5
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
 # pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
 # 分群後再把「群中心餘弦相似度 ≥ CENTROID_MERGE_COS」的群合併（同一人被拆成兩群時中心很近）。
@@ -112,7 +122,8 @@ def pipeline_labels() -> Dict[str, str]:
                 f"＋滑動視窗找句內換人（{WINDOW_S:g} s 視窗、{WINDOW_HOP_S:g} s 步進）")
     return {
         "asr": f"SenseVoiceSmall int8（sherpa-onnx，CPU {NUM_THREADS} 執行緒，語言 {ASR_LANGUAGE}，ITN）",
-        "vad": f"Silero VAD（最短靜音 {VAD_MIN_SILENCE_S:g} s；分說話人另用 {FINE_VAD_MIN_SILENCE_S:g} s 找句內停頓）",
+        "vad": (f"辨識：停頓處切 {ASR_SLICE_MIN_S:g}–{ASR_SLICE_MAX_S:g} s 整段辨識；" if ASR_SEGMENTATION == "pause" else "")
+               + f"Silero VAD 切句（最短靜音 {VAD_MIN_SILENCE_S:g} s；分說話人另用 {FINE_VAD_MIN_SILENCE_S:g} s 找句內停頓）",
         "diarize": diar,
         "post": "OpenCC s2twp＋台灣用字修正",
     }
@@ -217,6 +228,38 @@ def split_at_pauses(start: float, end: float, tokens: Sequence[str], times: Sequ
     return [(a, b, "".join(tokens[i0:i1]).strip()) for a, b, i0, i1 in token_pieces(start, end, tokens, times, cuts)]
 
 
+def pause_slices(samples) -> List[Tuple[int, int]]:
+    """跟即時逐字稿相同的切法：每段在 ASR_SLICE_MIN_S–ASR_SLICE_MAX_S 秒內能量最低處下刀。回傳 [(起樣本, 迄樣本)]。"""
+    from audio_splice import pause_cut_index
+    n_samples = len(samples)
+    out, pos, hi = [], 0, int(ASR_SLICE_MAX_S * SAMPLE_RATE)
+    while n_samples - pos > hi:
+        cut = pause_cut_index(samples[pos:pos + hi + 1], SAMPLE_RATE, ASR_SLICE_MIN_S, ASR_SLICE_MAX_S)
+        out.append((pos, pos + cut))
+        pos += cut
+    if n_samples - pos > 0:
+        out.append((pos, n_samples))
+    return out
+
+
+def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
+                  times: Sequence[float]) -> List[Tuple[List[str], List[float]]]:
+    """每個 token 依起點時間（已排序）歸到所在的 VAD 句子；落在兩句之間（VAD 沒收的停頓）就歸到較近的那句。"""
+    out: List[Tuple[List[str], List[float]]] = [([], []) for _ in regions]
+    if not regions:
+        return out
+    j = 0
+    for tok, t in zip(tokens, times):
+        while j + 1 < len(regions) and regions[j + 1][0] <= t:
+            j += 1
+        k = j
+        if t >= regions[j][1] and j + 1 < len(regions) and regions[j + 1][0] - t < t - regions[j][1]:
+            k = j + 1
+        out[k][0].append(tok)
+        out[k][1].append(t)
+    return out
+
+
 def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None) -> Optional[List[Sentence]]:
     """VAD 切句後逐句辨識，再依靈敏 VAD 的短停頓把句子切成小段（見 FINE_VAD_MIN_SILENCE_S；
     後段的 cont=True）。被 should_stop 中止時回傳 None。"""
@@ -241,9 +284,16 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     raw: List[Tuple[float, float, str, List[str], List[float]]] = []
     fine_regions: List[Tuple[float, float]] = []
 
+    regions: List[Tuple[float, float]] = []
+
     def drain() -> None:
         while not vad.empty():
             seg = vad.front
+            if ASR_SEGMENTATION == "pause":   # 只記句子範圍，辨識另外整段做
+                start = seg.start / SAMPLE_RATE
+                regions.append((start, start + len(seg.samples) / SAMPLE_RATE))
+                vad.pop()
+                continue
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, seg.samples)
             recognizer.decode_stream(stream)
@@ -269,11 +319,35 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         if i % check_every == 0:
             if should_stop is not None and should_stop():
                 return None
-            if on_progress is not None:
-                on_progress(i / total)
+            if on_progress is not None:   # pause 模式 VAD 只切句、很快，辨識另算（進度 10% 之後）
+                on_progress(i / total * (0.1 if ASR_SEGMENTATION == "pause" else 1.0))
     vad.flush()
     fine_vad.flush()
     drain()
+
+    if ASR_SEGMENTATION == "pause":
+        all_tokens: List[str] = []
+        all_times: List[float] = []
+        slices = pause_slices(samples)
+        for n, (i0, i1) in enumerate(slices):
+            if should_stop is not None and should_stop():
+                return None
+            stream = recognizer.create_stream()
+            stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
+            recognizer.decode_stream(stream)
+            res = stream.result
+            if len(res.tokens) == len(res.timestamps):
+                all_tokens.extend(res.tokens)
+                all_times.extend(i0 / SAMPLE_RATE + t for t in res.timestamps)
+            elif res.text.strip():   # 沒有逐字時間（不應發生）：整段文字放在段落中點
+                all_tokens.append(res.text.strip())
+                all_times.append((i0 + i1) / 2 / SAMPLE_RATE)
+            if on_progress is not None:
+                on_progress(0.1 + 0.9 * (n + 1) / len(slices))
+        for (start, end), (toks, tms) in zip(regions, assign_tokens(regions, all_tokens, all_times)):
+            text = "".join(toks).strip()
+            if text:
+                raw.append((start, end, text, toks, tms))
 
     pauses = [(a[1] + b[0]) / 2 for a, b in zip(fine_regions, fine_regions[1:])]
     sentences: List[Sentence] = []

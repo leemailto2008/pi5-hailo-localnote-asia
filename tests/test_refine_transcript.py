@@ -366,3 +366,28 @@ def test_cluster_of_only_short_units_is_not_a_speaker(monkeypatch):
     sents = [Sentence(0.0, 1.6, "甲說"), Sentence(1.7, 2.7, "週五回報"), Sentence(2.7, 4.0, "乙說")]
     assert rt.diarize_sentences(x, sents) is True
     assert [s.speaker for s in sents] == [0, -1, -1]
+
+def test_pause_slices_cover_audio_and_respect_bounds():
+    import numpy as np
+    sr = rt.SAMPLE_RATE
+    x = np.random.default_rng(0).normal(0, 0.1, 47 * sr).astype(np.float32)
+    x[int(6.0 * sr):int(6.3 * sr)] = 0.0          # 一段停頓：第一刀應落在這裡
+    sl = rt.pause_slices(x)
+    assert sl[0][0] == 0 and sl[-1][1] == len(x)
+    assert all(a[1] == b[0] for a, b in zip(sl, sl[1:]))                      # 連續、不重疊
+    assert all((e - s) <= rt.ASR_SLICE_MAX_S * sr + 1 for s, e in sl)
+    assert all((e - s) >= rt.ASR_SLICE_MIN_S * sr for s, e in sl[:-1])
+    assert 6.0 * sr <= sl[0][1] <= 6.3 * sr
+    assert rt.pause_slices(x[:3 * sr]) == [(0, 3 * sr)]
+
+
+def test_assign_tokens_by_time_and_gap_goes_to_nearer_sentence():
+    regions = [(0.0, 2.0), (3.0, 5.0)]
+    toks = ["第", "一", "句", "停", "第", "二"]
+    times = [0.1, 0.5, 1.9, 2.2, 3.1, 4.9]       # 2.2 落在兩句之間、離前句較近
+    out = rt.assign_tokens(regions, toks, times)
+    assert out[0] == (["第", "一", "句", "停"], [0.1, 0.5, 1.9, 2.2])
+    assert out[1] == (["第", "二"], [3.1, 4.9])
+    out = rt.assign_tokens(regions, ["前", "後"], [-0.5, 2.8])   # 第一句之前歸第一句；2.8 離後句較近
+    assert out == [(["前"], [-0.5]), (["後"], [2.8])]
+    assert rt.assign_tokens([], ["字"], [1.0]) == []
