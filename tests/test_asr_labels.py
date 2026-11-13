@@ -30,6 +30,8 @@ def test_stt_combo_lists_counts_when_engines_mixed():
 def test_slice_bounds_match_recorder_formula():
     assert vp.slice_bounds(8.0) == (4.0, 9.5)
     assert vp.slice_bounds(5.0) == (3.0, 6.5)
+    assert vp.slice_bounds(8.0, first=True) == (3.0, 5.0)       # 第一片 3–5 s：首字不必等 9.5 s 緩衝
+    assert vp.slice_bounds(3.0, first=True) == (3.0, 4.5)       # 本來就比第一片上限短：不變
 
 
 def test_speech_to_text_reports_hailo_engine(monkeypatch):

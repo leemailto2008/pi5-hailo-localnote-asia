@@ -54,9 +54,16 @@ CPU_POST_LABEL = "OpenCC s2twp＋重複迴圈清理"
 HAILO_POST_LABEL = "OpenCC s2twp＋規則修正 fix_meeting_terms（日期、職稱、人名…）＋解碼迴圈清理"
 
 
-def slice_bounds(chunk_sec: float) -> Tuple[float, float]:
-    """即時 STT 切片長度範圍 (秒)：在這個範圍內找能量最低處下刀 (Whisper 輸入窗口 10 s)。"""
-    return max(3.0, chunk_sec - 4.0), min(chunk_sec + 1.5, 9.5)
+# 錄音的第一片切短 (2026-11-13)：原本要等緩衝滿 9.5 s 才切第一片，網頁「首字」約 10.5 s；第一片改在 3–5 s 內找停頓下刀。
+FIRST_SLICE_MAX_S = float(os.environ.get("PI5_FIRST_SLICE_MAX_S", "5.0"))
+
+
+def slice_bounds(chunk_sec: float, first: bool = False) -> Tuple[float, float]:
+    """即時 STT 切片長度範圍 (秒)：在這個範圍內找能量最低處下刀 (Whisper 輸入窗口 10 s)。first=True 是錄音的第一片。"""
+    lo, hi = max(3.0, chunk_sec - 4.0), min(chunk_sec + 1.5, 9.5)
+    if first and FIRST_SLICE_MAX_S < hi:
+        return min(lo, 3.0), max(FIRST_SLICE_MAX_S, 3.0)
+    return lo, hi
 
 
 def to_taiwan_traditional(text: str) -> str:
@@ -1011,7 +1018,8 @@ async def record_audio_from_mic(
     vu_frame_bytes = 1600  # 50ms @ 16kHz mono (800 samples * 2 bytes)
     # STT 切片改為「停頓處切點」：在 [min, max] 秒內找能量最低處下刀，避免切在句中 (Whisper 輸入窗口 10 s)
     slice_min_s, slice_max_s = slice_bounds(chunk_sec)
-    slice_max_bytes = int(slice_max_s * 32000)
+    first_min_s, first_max_s = slice_bounds(chunk_sec, first=True)
+    first_slice_pending = True
     splicer = ZeroSplicer(sr=16000)
     # 只有藍牙來源才量 SCO 到達率 (USB 麥克風等不會有 SCO 封包，不能顯示成掉包 100%)
     arrival = ArrivalMeter(window_s=10.0, interval_s=1.0,
@@ -1037,7 +1045,7 @@ async def record_audio_from_mic(
                 pass
 
     async def _deliver(clean: bytes):
-        nonlocal chunk_buffer
+        nonlocal chunk_buffer, first_slice_pending
         if not clean:
             return
         # 1) master OGG encoder
@@ -1050,11 +1058,16 @@ async def record_audio_from_mic(
         # 2) streaming STT slices
         if pcm_chunk_callback:
             chunk_buffer.extend(clean)
-            while len(chunk_buffer) >= slice_max_bytes:
-                window = np.frombuffer(bytes(chunk_buffer[:slice_max_bytes]), dtype="<i2")
-                cut = pause_cut_index(window, 16000, slice_min_s, slice_max_s) * 2
+            while True:
+                lo_s, hi_s = (first_min_s, first_max_s) if first_slice_pending else (slice_min_s, slice_max_s)
+                max_bytes = int(hi_s * 32000)
+                if len(chunk_buffer) < max_bytes:
+                    break
+                window = np.frombuffer(bytes(chunk_buffer[:max_bytes]), dtype="<i2")
+                cut = pause_cut_index(window, 16000, lo_s, hi_s) * 2
                 slice_data = bytes(chunk_buffer[:cut])
                 chunk_buffer = chunk_buffer[cut:]
+                first_slice_pending = False
                 try:
                     if asyncio.iscoroutinefunction(pcm_chunk_callback):
                         await pcm_chunk_callback(slice_data, False)
