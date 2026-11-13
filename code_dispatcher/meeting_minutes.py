@@ -55,7 +55,7 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            drop_unspoken_years, fill_missing_topics,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
-                           map_notes_complete, split_with_recap, summary_limits, take_stable_chunk, tidy_live_transcript)
+                           live_join_sep, map_notes_complete, split_with_recap, summary_limits, take_stable_chunk, tidy_live_transcript)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
 # 5 分鐘會議 (約 1000 字) 單次整理品質良好 → 1200 字以內維持單次；超過則切成 <= 1000 字的區塊逐段抽重點，
@@ -808,25 +808,7 @@ class MeetingJobManager:
                                     if len(live_segments) == 1:
                                         curr_preview = clean_t
                                     else:
-                                        prev_chunk = live_segments[-2]
-                                        # 判斷前後是否皆為純英文/ASCII環境
-                                        is_eng_prev = any(c.isascii() and c.isalpha() for c in prev_chunk)
-                                        is_eng_curr = any(c.isascii() and c.isalpha() for c in clean_t)
-                                        if is_eng_prev and is_eng_curr:
-                                            # 全英文環境：若前段已有結尾標點則空一格，否則以逗號加空格連接
-                                            if prev_chunk.endswith((".", "!", "?", "...", "…", ";", ":")):
-                                                sep = " "
-                                            elif prev_chunk.endswith(","):
-                                                sep = " "
-                                            else:
-                                                sep = ", "
-                                        else:
-                                            # 中文或中英夾雜環境
-                                            if prev_chunk.endswith(("。", "！", "？", "!", "?", "...", "…", ".")):
-                                                sep = " "
-                                            else:
-                                                sep = "，"
-                                        curr_preview = curr_preview + sep + clean_t
+                                        curr_preview = curr_preview + live_join_sep(live_segments[-2], clean_t) + clean_t
                                     self.status.transcript = curr_preview
                                     self.status.transcript_live = curr_preview
                                     self.status.metrics["stt_chars"] = len(curr_preview.replace("\n", "").strip())

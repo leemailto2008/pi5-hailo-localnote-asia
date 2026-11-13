@@ -171,7 +171,14 @@ def test_take_stable_chunk_and_live_tidy():
     assert summary_utils.take_stable_chunk(text, len(text) - 1500, 1000, 1000) is None   # 後面不足 lag：先不切
     assert summary_utils.take_stable_chunk("甲" * 2500, 0, 1000, 1000) == 1000          # 沒有標點：硬切
     live = "好，，我們開始\ufffd今天的會議。。 第一個議題"
-    assert summary_utils.tidy_live_transcript(live) == "好，我們開始今天的會議 第一個議題"    # 與原本錄音結束後的整理完全相同 (連續標點留最後一個)
+    assert summary_utils.tidy_live_transcript(live) == "好，我們開始今天的會議。第一個議題"    # 句末標點優先，不被後面的空白吃掉
+    assert summary_utils.tidy_live_transcript("要討論？ 第一個，， 議題  好") == "要討論？第一個，議題 好"
+    # 即時切片串接：全形句末標點後不補；中文補「，」；英文補空白或「, 」
+    sep = summary_utils.live_join_sep
+    assert sep("我們開始今天的週會。", "今天有幾個議題") == "" and sep("要討論嗎？", "第一個") == ""
+    assert sep("我們開始今天的週會", "今天有幾個議題") == "，"
+    assert sep("Let's start.", "First topic") == " " and sep("Let's start", "first topic") == ", "
+    assert sep("韌體T14修正版。", "OK next") == ""
     # 前段整理結果與全文整理結果一致 (預先整理的前提)
     full = summary_utils.tidy_live_transcript(text + "，，最後總結一下")
     assert full.startswith(summary_utils.tidy_live_transcript(text)[:end])

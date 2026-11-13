@@ -761,10 +761,35 @@ def split_transcript(text: str, max_chars: int = 1000) -> List[str]:
     return [c for c in chunks if c]
 
 
+def _merge_punct_run(m: "re.Match") -> str:
+    # 句末標點優先，其次第一個非空白標點，全是空白才留空白。
+    # 舊版留最後一個：SenseVoice 切片以「。」結尾、切片之間補空白，「。 」→「 」，句號全被吃掉 (2026-11-13)
+    run = m.group(0)
+    for c in run:
+        if c in "。！？":
+            return c
+    for c in run:
+        if not c.isspace():
+            return c
+    return run[-1]
+
+
+def live_join_sep(prev_chunk: str, cur_chunk: str) -> str:
+    """即時切片串接時兩段之間的分隔。前段已有全形句末標點就不再補 (SenseVoice 切片以「。」結尾，舊版補空白，錄音中預覽一路「。 」)；
+    兩段都有英文字母時沿用英文規則 (空白或「, 」)；其餘中文段落補「，」。"""
+    if prev_chunk.endswith(("。", "！", "？")):
+        return ""
+    is_eng_prev = any(c.isascii() and c.isalpha() for c in prev_chunk)
+    is_eng_curr = any(c.isascii() and c.isalpha() for c in cur_chunk)
+    if is_eng_prev and is_eng_curr:
+        return " " if prev_chunk.endswith((".", "!", "?", "…", ";", ":", ",")) else ", "
+    return " " if prev_chunk.endswith(("!", "?", ".", "…")) else "，"
+
+
 def tidy_live_transcript(text: str) -> str:
     """即時切片串接成的逐字稿 → 紀要用的全文：去掉亂碼字元、合併連續標點。錄音中預先整理與錄音結束後用同一套，前段才會逐字相同。"""
     t = (text or "").strip().replace("\ufffd", "")
-    return re.sub(r"([，、。！？\s]){2,}", r"\1", t)
+    return re.sub(r"[，、。！？\s]{2,}", _merge_punct_run, t)
 
 
 _STABLE_CUT_CHARS = "。！？!?；;\n，,、：:"
