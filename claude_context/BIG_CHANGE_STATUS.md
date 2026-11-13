@@ -99,6 +99,10 @@
   | B 即時 SenseVoice | 99.9% | 0.1%（0.47 s） | **0.0166** | **0.9714** | **1.0** | 107 s | 5.5% |
   依事先定的規則（到達／補靜音差距在 0.5 個百分點內）→ **藍牙也放行 SenseVoice**：PI5_LIVE_SV_ON_BT 預設改 1（設 0 改回 Whisper），
   CLAUDE.md 重點一加實測例外。只有一場 → 部署後再跑藍牙 30 分確認。
+  14:50 部署 84c2eb0（備份 20261113_145043），/api/config/live_asr 回 sensevoice_on_bluetooth=true；開跑藍牙 30 分 SenseVoice（bt_ab/run30.log）。
+- 15:14 使用者：「要把程式預設改成 SenseVoice」→ LIVE_ASR_DEFAULT = sensevoice（沒存過設定、設定檔壞掉都用它）；
+  這台沒裝 sherpa-onnx／模型時錄音自動用 Whisper（live_asr_engine 的 sv_available，meeting_minutes 用 refine_transcript.check_available 判斷），
+  網頁註記「這台不能用 SenseVoice，錄音用 Whisper」。pytest 651 passed。等藍牙 30 分跑完再部署。
 
 ## 晨間彙整（2026-11-13 07:25，11-12 白天＋夜間自測改迴圈）
 - 正式版本：.228 程式 192caec（11-12 17:59 部署），之後只有文件；GitHub／GitLab 已同步。.229 從 11-12 10:24 起 ping 不到（停在 0fd0396，沒有今天的改善），回來就 force 更新。

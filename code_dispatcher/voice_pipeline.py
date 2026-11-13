@@ -672,6 +672,9 @@ def save_mic_preference(pref: str) -> str:
 # 即時 Whisper／SenseVoice：封包到達 100.0／99.9%、補靜音 0.0／0.1%（0.13／0.47 s）、錄音 CPU 2.6／5.5%、cer_num 0.1531／0.0166。
 # PI5_LIVE_SV_ON_BT=0 讓藍牙收音時改回 Whisper。
 LIVE_ASR_CHOICES = ("whisper", "sensevoice")
+# 預設 SenseVoice（11-13 15:14 使用者決定；GS3 5／10／30 分、藍牙 10 分 cer_num 0.12–0.16 → 0.016–0.031）。
+# 這台沒裝 sherpa-onnx 或模型時，錄音自動改用 Whisper（live_asr_engine 的 sv_available）。
+LIVE_ASR_DEFAULT = "sensevoice"
 LIVE_ASR_PATH = os.path.join(DATA_DIR, "live_asr.json")
 LIVE_SV_ON_BT = os.environ.get("PI5_LIVE_SV_ON_BT", "1").strip() != "0"
 
@@ -680,13 +683,13 @@ def load_live_asr_preference() -> str:
     try:
         import json
         with open(LIVE_ASR_PATH, encoding="utf-8") as f:
-            pref = json.load(f).get("engine", "whisper")
+            pref = json.load(f).get("engine", LIVE_ASR_DEFAULT)
     except FileNotFoundError:
-        return "whisper"
+        return LIVE_ASR_DEFAULT
     except (OSError, ValueError, AttributeError) as e:
-        print(f"[VoicePipeline] live ASR preference unreadable ({e}); using whisper")
-        return "whisper"
-    return pref if pref in LIVE_ASR_CHOICES else "whisper"
+        print(f"[VoicePipeline] live ASR preference unreadable ({e}); using {LIVE_ASR_DEFAULT}")
+        return LIVE_ASR_DEFAULT
+    return pref if pref in LIVE_ASR_CHOICES else LIVE_ASR_DEFAULT
 
 
 def save_live_asr_preference(engine: str) -> str:
@@ -701,9 +704,10 @@ def save_live_asr_preference(engine: str) -> str:
     return engine
 
 
-def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT) -> str:
-    """這場錄音實際用的即時逐字稿引擎。source = 錄音的 PipeWire 節點；還不知道來源，或藍牙 (bluez*) 且 sv_on_bt 關掉時用 whisper。"""
-    if pref != "sensevoice" or not source:
+def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT, sv_available: bool = True) -> str:
+    """這場錄音實際用的即時逐字稿引擎。source = 錄音的 PipeWire 節點；還不知道來源、這台不能用 SenseVoice，
+    或藍牙 (bluez*) 且 sv_on_bt 關掉時用 whisper。"""
+    if pref != "sensevoice" or not source or not sv_available:
         return "whisper"
     if source.startswith("bluez") and not sv_on_bt:
         return "whisper"

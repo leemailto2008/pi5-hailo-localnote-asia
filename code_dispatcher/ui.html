@@ -1624,7 +1624,9 @@ function renderLiveAsr(cfg) {
   btn.className = sv ? 'toggle-btn active' : 'toggle-btn';
   btn.textContent = sv ? 'SenseVoice（CPU）' : 'Hailo Whisper（NPU）';
   btn.disabled = !sv && !!cfg.sensevoice_unavailable;
-  if (label) label.textContent = '📝 即時逐字稿' + (sv && !cfg.sensevoice_on_bluetooth ? '（藍牙收音時用 Whisper）' : '');
+  const note = sv && cfg.sensevoice_unavailable ? '（這台不能用 SenseVoice，錄音用 Whisper）'
+    : (sv && !cfg.sensevoice_on_bluetooth ? '（藍牙收音時用 Whisper）' : '');
+  if (label) label.textContent = '📝 即時逐字稿' + note;
   btn.title = cfg.sensevoice_unavailable && !sv
     ? '這台不能用 SenseVoice：' + cfg.sensevoice_unavailable
     : '點擊切換錄音中的即時逐字稿引擎，下一場錄音生效。SenseVoice 較準（用 CPU）；Hailo Whisper 用 NPU、CPU 零占用'

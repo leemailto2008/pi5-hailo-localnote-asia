@@ -722,7 +722,7 @@ class MeetingJobManager:
             curr_preview: str = ""
             chunk_worker_done = asyncio.Event()
 
-            # 即時逐字稿引擎 (2026-11-13)：網頁選 SenseVoice 且不是藍牙收音時用 SenseVoice (sv_worker，CPU 2、3)，否則 Hailo Whisper。
+            # 即時逐字稿引擎 (2026-11-13)：預設／網頁選 SenseVoice 時用 SenseVoice (sv_worker，CPU 2、3)，網頁選 Whisper 或這台不能用時 Hailo Whisper。
             # 錄音開始、知道收音來源 (rec_stats["source"]) 後決定一次，整場不變；用 SenseVoice 時先載入模型。
             live_asr_pref = load_live_asr_preference()
             live_engine: Optional[str] = None
@@ -732,7 +732,9 @@ class MeetingJobManager:
             def decide_live_engine() -> str:
                 nonlocal live_engine, sv_warm_task
                 if live_engine is None and rec_stats.get("source"):
-                    live_engine = live_asr_engine(live_asr_pref, rec_stats["source"])
+                    import refine_transcript   # SenseVoice 的套件與模型在不在（沒有就用 Whisper）
+                    live_engine = live_asr_engine(live_asr_pref, rec_stats["source"],
+                                                  sv_available=refine_transcript.check_available() is None)
                     self.status.metrics["live_asr"] = live_engine
                     print(f"[MeetingMinutes] 即時逐字稿引擎：{live_engine}（網頁選 {live_asr_pref}，收音 {rec_stats['source']}）")
                     if live_engine == "sensevoice":

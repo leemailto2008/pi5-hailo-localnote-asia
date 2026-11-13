@@ -20,12 +20,13 @@ def test_live_engine_uses_sensevoice_only_when_chosen_and_not_bluetooth():
     assert vp.live_asr_engine("sensevoice", BT, sv_on_bt=True) == "sensevoice"   # 夜間量測用的覆寫
     assert vp.live_asr_engine("whisper", USB, sv_on_bt=True) == "whisper"
     assert vp.live_asr_engine("sensevoice", "", sv_on_bt=False) == "whisper"     # 還不知道來源
+    assert vp.live_asr_engine("sensevoice", USB, sv_available=False) == "whisper"   # 這台沒裝 SenseVoice
 
 
 def test_live_asr_preference_round_trip_and_bad_values(monkeypatch, tmp_path):
     path = tmp_path / "data" / "live_asr.json"
     monkeypatch.setattr(vp, "LIVE_ASR_PATH", str(path))
-    assert vp.load_live_asr_preference() == "whisper"            # 沒存過
+    assert vp.load_live_asr_preference() == "sensevoice"         # 沒存過：預設 SenseVoice（11-13 使用者決定）
     assert vp.save_live_asr_preference("sensevoice") == "sensevoice"
     assert vp.load_live_asr_preference() == "sensevoice"
     try:
@@ -33,10 +34,12 @@ def test_live_asr_preference_round_trip_and_bad_values(monkeypatch, tmp_path):
         raise AssertionError("bad engine accepted")
     except ValueError:
         pass
+    assert vp.save_live_asr_preference("whisper") == "whisper"
+    assert vp.load_live_asr_preference() == "whisper"            # 使用者選過就照他的
     path.write_text("{not json", encoding="utf-8")
-    assert vp.load_live_asr_preference() == "whisper"            # 壞檔：退回原行為
+    assert vp.load_live_asr_preference() == "sensevoice"         # 壞檔：用預設
     path.write_text('{"engine": "paraformer"}', encoding="utf-8")
-    assert vp.load_live_asr_preference() == "whisper"
+    assert vp.load_live_asr_preference() == "sensevoice"
 
 
 def test_speech_to_text_live_routes_and_falls_back(monkeypatch):
