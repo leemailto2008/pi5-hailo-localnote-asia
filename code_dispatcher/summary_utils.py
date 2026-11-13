@@ -721,26 +721,42 @@ def _pieces(text: str, max_chars: int) -> List[str]:
     return out
 
 
+# 每段可超出 max_chars 10% (2026-11-13)：段數也以 1.1 × max_chars 計算 (Hailo 約 1500 字才滿，單次紀要本來就收到 1200 字)。
+# 舊版以 max_chars 算段數，10 分會議正文 2000–2200 字切成 3 段 × 約 680 字，比 1900 字的多一次 LLM 呼叫。
+# 228 A/B (同一份即時稿、各 2–3 次)：10 分 3 份 95–114 s → 76–81 s；30 分 2 份 249–266 s → 206–229 s；召回沒有一次變差。
+CHUNK_SLACK = 1.1
+
+
 def split_transcript(text: str, max_chars: int = 1000) -> List[str]:
-    """把逐字稿切成每段 <= max_chars 的區塊，盡量切在句子或子句邊界，內容不增不減 (只去頭尾空白)。"""
+    """把逐字稿切成每段 <= max_chars × CHUNK_SLACK 的區塊，盡量切在句子或子句邊界，內容不增不減 (只去頭尾空白)。"""
     text = (text or "").strip()
     if not text:
         return []
     if len(text) <= max_chars:
         return [text]
+    limit = int(max_chars * CHUNK_SLACK)
     # 平均分段：先算出需要幾段，再以平均長度為目標切，避免最後剩一小段 (多一次 LLM 呼叫)
-    target = len(text) / -(-len(text) // max_chars)
+    target = len(text) / -(-len(text) // limit)
+    pieces = _pieces(text, max_chars)
     chunks: List[str] = []
-    cur = ""
-    for piece in _pieces(text, max_chars):
-        if cur and (len(cur) + len(piece) > max_chars or len(cur) >= target):
+    cur, i = "", 0
+    while i < len(pieces):
+        piece = pieces[i]
+        # 整句放不下、這段又還沒到平均長度：拆成子句再放 (SenseVoice 稿以句號斷句、句子較長，整句放不下會提早切而多出一段)
+        if cur and len(cur) + len(piece) > limit and len(cur) < target:
+            sub = [c for c in _CLAUSE_RE.split(piece) if c]
+            if len(sub) > 1:
+                pieces[i:i + 1] = sub
+                continue
+        if cur and (len(cur) + len(piece) > limit or len(cur) >= target):
             chunks.append(cur.strip())
             cur = ""
         cur += piece
+        i += 1
     if cur.strip():
         chunks.append(cur.strip())
-    # 尾段過短 (< 15%) 時併入前一段，容許超出上限 10%：Hailo 實際上限約 1500 字，1000 已留足餘裕
-    if len(chunks) >= 2 and len(chunks[-1]) < 0.15 * max_chars and len(chunks[-2]) + len(chunks[-1]) <= 1.1 * max_chars:
+    # 尾段過短 (< 15%) 時併入前一段 (不超過 limit)
+    if len(chunks) >= 2 and len(chunks[-1]) < 0.15 * max_chars and len(chunks[-2]) + len(chunks[-1]) <= limit:
         chunks[-2:] = [chunks[-2] + chunks[-1]]
     return [c for c in chunks if c]
 

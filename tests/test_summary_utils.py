@@ -61,6 +61,22 @@ def test_split_transcript_balanced_no_tiny_tail():
     assert min(len(c) for c in chunks) > 0.6 * len(text) / len(chunks)
 
 
+def test_split_transcript_counts_chunks_with_slack():
+    text = "。".join(["測" * 95] * 22) + "。"              # 2112 字：舊版切 3 段 × 704 字
+    chunks = split_transcript(text, 1000)
+    assert len(chunks) == 2 and max(len(c) for c in chunks) <= 1100
+    assert "".join(chunks) == text
+
+
+def test_split_transcript_splits_long_sentence_into_clauses():
+    sent = "，".join(["議" * 29] * 10) + "。"               # 300 字的句子
+    text = sent * 7                                        # 2100 字：整句打包會切成 900／900／300
+    chunks = split_transcript(text, 1000)
+    assert len(chunks) == 2 and max(len(c) for c in chunks) <= 1100
+    assert "".join(chunks) == text
+    assert chunks[0].endswith("，") or chunks[0].endswith("。")
+
+
 def test_split_transcript_merges_tiny_tail():
     text = "。".join(["測" * 95] * 63) + "。"              # 6048 字：6 段滿 + 很短的尾段
     chunks = split_transcript(text, 1000)
