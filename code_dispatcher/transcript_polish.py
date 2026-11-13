@@ -578,3 +578,52 @@ async def _load_pre_csc() -> Any:
     except (ImportError, RuntimeError, OSError) as e:
         logger.warning("[polish] MacBERT pre-fix load failed, LLM only: %s", e)
         return None
+
+
+def restore_layout(src: str, fixed: str) -> Optional[str]:
+    """把只換字、不增刪字的修正結果放回原稿的排版。polish_transcript 依 MAX_CHUNK_CHARS 切段、段與段之間空一行、
+    長行切成好幾行；高精度逐字稿是一個說話人一行，切開的行沒有說話人標籤。
+    兩邊非空白字數不同（有補字或刪字）就回傳 None。"""
+    stream = [c for c in fixed if not c.isspace()]
+    if len(stream) != sum(1 for c in src if not c.isspace()):
+        return None
+    it = iter(stream)
+    return "".join(c if c.isspace() else next(it) for c in src)
+
+
+# 會後自動快修（2026-11-13）：高精度逐字稿完成後自動跑會議詞彙＋MacBERT（PI5_REFINE_QUICK_FIX=0 關掉）。
+# 11-12 量測（cer_num，原稿 → 會議詞彙＋MacBERT；事實召回都沒掉、說話人標籤同序）：
+#   GS3 新錄 60 分 0.0472 → 0.0377（32 s）、10 分 0.0519 → 0.0453（6.4 s）、30 分（無詞彙）0.0504 → 0.0475（16 s）；
+#   藍牙 10 分 0.0413 → 0.0337（6.4 s）、5 分 0.0501 → 0.0368（3.7 s）。LLM 校對較準但 60 分要 53 分鐘，留給使用者手動按。
+QUICK_FIX = os.environ.get("PI5_REFINE_QUICK_FIX", "1").strip() != "0"
+
+
+async def quick_fix(text: str, glossary: Optional[Sequence[str]] = None,
+                    should_stop: Optional[Callable[[], bool]] = None,
+                    on_progress: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
+    """高精度逐字稿的快修：會議詞彙＋MacBERT（polish_transcript 的 fix／csc，與量測同一條路），排版照原稿（restore_layout）。
+    回傳 {"status": "done"|"stopped"|"skipped"|"error", ...}；done 帶 text（修正後全文）與修改處數。
+    不丟例外：快修失敗只影響這一步，高精度逐字稿本身照常交出。"""
+    if not QUICK_FIX:
+        return {"status": "skipped", "reason": "PI5_REFINE_QUICK_FIX=0"}
+    from csc_corrector import unavailable_reason
+    reason = unavailable_reason()
+    if reason is not None:
+        return {"status": "skipped", "reason": reason}
+    if not (text or "").strip():
+        return {"status": "skipped", "reason": "沒有逐字稿"}
+    try:
+        res = await polish_transcript(text, "fix", on_progress=on_progress, should_stop=should_stop,
+                                      source="refine", engine="csc", glossary=glossary)
+    except (RuntimeError, ImportError, OSError, ValueError) as e:
+        logger.warning("[quick_fix] failed, keep the original transcript: %s", e)
+        return {"status": "error", "reason": str(e) or type(e).__name__}
+    if res["stopped"]:
+        return {"status": "stopped"}
+    fixed = restore_layout(text, res["polished"])
+    if fixed is None:   # csc 路徑只換字，不該發生；發生就不收，保留原稿
+        logger.warning("[quick_fix] character count changed, keep the original transcript")
+        return {"status": "error", "reason": "修正後字數不同，保留原稿"}
+    return {"status": "done", "text": fixed, "engine": res["backend"],
+            "csc_edits": res["accepted_edits"], "glossary_terms": res["glossary_terms"],
+            "glossary_edits": res["glossary_edits"]}

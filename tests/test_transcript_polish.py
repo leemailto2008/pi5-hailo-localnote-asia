@@ -536,3 +536,44 @@ def test_diff_segments_marks_replacement_insertion_and_deletion():
     # 去掉 del 後接起來就是新文字
     src, dst = "第一個議題是公安", "第一個議題是工安。"
     assert "".join(t for op, t, _ in tp.diff_segments(src, dst) if op != "del") == dst
+
+
+def test_restore_layout_puts_fixed_chars_back_into_original_lines():
+    src = "說話人1：行成 4天\n說話人2：好。"
+    assert tp.restore_layout(src, "說話人1：行程4天\n\n說話人2：好。") == "說話人1：行程 4天\n說話人2：好。"
+    assert tp.restore_layout(src, "說話人1：行程4天日\n說話人2：好。") is None   # 多一個字：對不回去
+
+
+def _quick_fix_on(monkeypatch, available=True):
+    import csc_corrector as cc
+    monkeypatch.setattr(tp, "QUICK_FIX", True)
+    monkeypatch.setattr(cc, "CscCorrector", _FakeCsc)
+    monkeypatch.setattr(cc, "unavailable_reason", lambda model_dir=None: None if available else "缺少模型檔 model.onnx")
+    monkeypatch.setattr(tp, "aiter_chat_stream", _stream(lambda p: pytest.fail("快修不該呼叫 LLM")))
+
+
+def test_quick_fix_keeps_one_line_per_speaker_even_for_long_turns(monkeypatch):
+    _quick_fix_on(monkeypatch)
+    long_turn = "說話人1：" + "行成，" * 300          # 超過 600 字，polish_transcript 會切成好幾行
+    text = long_turn + "\n說話人2：任體行成4天。"
+    res = _run(tp.quick_fix(text, ["韌體"]))
+    assert res["status"] == "done"
+    assert res["text"] == text.replace("行成", "行程").replace("任體", "韌體")
+    assert res["text"].count("\n") == 1                # 排版與原稿相同
+    assert res["glossary_terms"] == 1 and res["glossary_edits"] == 1 and res["csc_edits"] >= 301
+
+
+def test_quick_fix_skips_stops_and_reports_errors(monkeypatch):
+    _quick_fix_on(monkeypatch, available=False)
+    assert _run(tp.quick_fix("說話人1：行成"))["status"] == "skipped"
+    _quick_fix_on(monkeypatch)
+    assert _run(tp.quick_fix("   "))["status"] == "skipped"
+    assert _run(tp.quick_fix("說話人1：行成", should_stop=lambda: True)) == {"status": "stopped"}
+    monkeypatch.setattr(tp, "QUICK_FIX", False)
+    assert _run(tp.quick_fix("說話人1：行成"))["status"] == "skipped"
+    monkeypatch.setattr(tp, "QUICK_FIX", True)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("缺少 pypinyin")
+    monkeypatch.setattr(tp, "polish_transcript", boom)
+    assert _run(tp.quick_fix("說話人1：行成")) == {"status": "error", "reason": "缺少 pypinyin"}

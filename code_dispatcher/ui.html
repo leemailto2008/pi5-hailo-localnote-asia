@@ -267,6 +267,11 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                 藍牙耳麥優先
               </button>
             </div>
+            <div style="margin-top:6px;padding:6px 10px;background:var(--set-bg);border-radius:8px;display:flex;flex-direction:column;gap:4px;align-self:stretch">
+              <label for="polishGlossary" style="font-size:12.5px;color:var(--muted)">📖 會議詞彙（選填）<span id="glossaryState"></span></label>
+              <textarea id="polishGlossary" rows="2" style="font:inherit;font-size:13px;resize:vertical"
+                placeholder="人名、公司、產品、術語，用逗號或換行分隔（例：李協理、宏遠科技、韌體）。會後自動修同音字與潤稿時，把聽起來一樣的錯字改成這些詞"></textarea>
+            </div>
             <p class="hint" id="hint">戴上耳麥，按下紅色按鈕開始說。時間到自動停，盒子接著整理成紀要。</p>
           </div>
           <div class="progress" id="progress" hidden>
@@ -501,11 +506,7 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                 <label id="polishSrcRefineLabel"><input type="radio" name="polishSrc" value="refine" id="polishSrcRefine"> 高精度逐字稿（SenseVoice）</label>
                 <label><input type="radio" name="polishSrc" value="live" id="polishSrcLive" checked> 完整逐字稿（即時 ASR）</label>
               </div>
-              <div class="row pl-src" id="polishGlossaryRow">
-                <b>會議詞彙</b>
-                <textarea id="polishGlossary" rows="2" style="flex:1;min-width:220px;font:inherit;resize:vertical"
-                  placeholder="人名、公司、產品、術語，用逗號或換行分隔（例：李協理、宏遠科技、韌體）。潤稿時把聽起來一樣的錯字改成這些詞；記在這個瀏覽器"></textarea>
-              </div>
+              <div class="pl-legend" id="polishGlossaryNote">會議詞彙在「錄一段會議」卡片填寫，兩種潤稿都會用到。</div>
               <div class="pl-zone" id="polishFixZone">
                 <div class="row">
                   <b class="pl-title">① 修同音字與漏字</b>
@@ -661,7 +662,7 @@ const API = {
   btAuto: '/api/bt/trusted/auto_connect',
   btRemove: '/api/bt/remove',
   record: '/api/record', status: '/api/status',
-  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish', refine: '/api/refine',
+  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish', refine: '/api/refine', glossary: '/api/glossary',
   tts: '/api/tts', netSwitch: '/api/net/switch',
   cancelJob: '/api/record/cancel', transcribeRegion: '/api/transcribe/region',
   finishRecord: '/api/record/finish',
@@ -2250,13 +2251,43 @@ function applyFixEngines(fe) {
 for (const r of [el.polishEngineLlm, el.polishEngineCsc]) {
   r.addEventListener('change', () => { try { localStorage.setItem(POLISH_ENGINE_KEY, polishEngine()); } catch (_) {} });
 }
-// 會議詞彙：使用者自己填（人名、公司、產品、術語），兩種潤稿都送給後端；記在這個瀏覽器。
+// 會議詞彙：使用者自己填（人名、公司、產品、術語），在「錄一段會議」卡片，會前就能填。
+// 存在盒子上（POST /api/glossary）：會後自動快修（高精度逐字稿完成後的會議詞彙＋MacBERT）在後端跑，網頁關著也用得到；
+// 兩種潤稿也照舊送給後端。瀏覽器另記一份：盒子重開機（RAM 磁碟清空）後開頁就把這份送回去。
 const POLISH_GLOSSARY_KEY = 'localnote_polish_glossary';
+let glossarySaveTimer = null;
+function showGlossaryState(text) {
+  const s = $('glossaryState');
+  if (s) s.textContent = text ? '：' + text : '';
+}
+async function saveGlossary() {
+  if (MOCK) return;
+  try {
+    const res = await api(API.glossary, { text: el.polishGlossary.value });
+    showGlossaryState((res.terms || []).length ? `已存到盒子，${res.terms.length} 個詞` : '');
+  } catch (err) {
+    showGlossaryState('沒存到盒子（' + (err.message || err) + '）');
+  }
+}
 if (el.polishGlossary) {
   try { el.polishGlossary.value = localStorage.getItem(POLISH_GLOSSARY_KEY) || ''; } catch (_) {}
   el.polishGlossary.addEventListener('input', () => {
     try { localStorage.setItem(POLISH_GLOSSARY_KEY, el.polishGlossary.value); } catch (_) {}
+    clearTimeout(glossarySaveTimer);
+    glossarySaveTimer = setTimeout(saveGlossary, 800);
   });
+  if (!MOCK) {
+    api(API.glossary).then(res => {
+      const server = (res && res.text) || '';
+      if (server.trim()) {
+        el.polishGlossary.value = server;   // 盒子上那份為準（可能是另一台手機填的）
+        try { localStorage.setItem(POLISH_GLOSSARY_KEY, server); } catch (_) {}
+        showGlossaryState((res.terms || []).length ? `已存到盒子，${res.terms.length} 個詞` : '');
+      } else if (el.polishGlossary.value.trim()) {
+        saveGlossary();
+      }
+    }).catch(err => console.warn('glossary load failed', err));
+  }
 }
 function polishGlossary() { return el.polishGlossary ? el.polishGlossary.value.trim() : ''; }
 function syncPolishBox() {
@@ -2392,7 +2423,7 @@ let refineBusy = false;
 let refineUnavailable = null;
 // 開頁時已完成的結果：要等逐字稿載入後才顯示，否則下面「沒有逐字稿就清空」會把它清掉（11-11 Playwright 實測開頁看不到結果）。
 let pendingRefine = null;
-const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: '分說話人' };
+const REFINE_PHASE = { load: '解碼錄音', asr: 'SenseVoice 辨識', diarize: '分說話人', fix: '修同音字（會議詞彙＋MacBERT）' };
 function syncRefineBox() {
   const has = !!transcriptPlainText();
   el.refineBox.hidden = !has;
@@ -2435,8 +2466,10 @@ function renderRefine(job) {
     return;
   }
   const r = job.result;
-  el.refineText.textContent = r.transcript || '';
-  renderInfo(el.refineInfo, [['ASR', r.asr || r.engine], ['VAD', r.vad], ['分說話人', r.diarize], ['後處理', r.post]]);
+  const qf = r.quick_fix || {};
+  const changed = renderRefineText(r.transcript || '', r.transcript_raw);
+  renderInfo(el.refineInfo, [['ASR', r.asr || r.engine], ['VAD', r.vad], ['分說話人', r.diarize], ['後處理', r.post],
+    ['自動修同音字', qf.status === 'done' ? `${qf.glossary_terms ? '會議詞彙＋' : ''}${qf.engine || 'MacBERT'}` : '']]);
   const parts = [];
   if (r.speakers) parts.push(`${r.speakers} 位說話人`);
   if (r.audio_s) parts.push(`錄音 ${Math.round(r.audio_s)} 秒`);
@@ -2445,7 +2478,41 @@ function renderRefine(job) {
   const head = job.state === 'stopped'
     ? '錄音開始，已中止' + (r.phase === 'diarize' ? '（已辨識，未分說話人）' : '（尚未辨識完）')
     : '完成';
-  el.refineStatus.textContent = head + (parts.length ? `：${parts.join('，')}` : '') + (r.engine && !r.asr ? `（${r.engine}）` : '');
+  let fixNote = '';
+  if (qf.status === 'done') {
+    fixNote = `；已自動修同音字 ${changed} 處（標色處，滑過看原字`
+      + (qf.glossary_terms ? `；依會議詞彙 ${qf.glossary_edits || 0} 處` : '；沒填會議詞彙') + '）';
+  } else if (qf.status === 'stopped') {
+    fixNote = '；錄音開始，沒有自動修同音字';
+  } else if (qf.status === 'error') {
+    fixNote = '；自動修同音字失敗，顯示原稿（' + (qf.reason || '') + '）';
+  }
+  el.refineStatus.textContent = head + (parts.length ? `：${parts.join('，')}` : '') + (r.engine && !r.asr ? `（${r.engine}）` : '') + fixNote;
+}
+
+// 自動修同音字只換字（字數、換行與原稿相同）：逐字比對標出改過的字；對不上（舊結果、沒有原稿）就只顯示文字。
+// 標色用 <mark>，textContent 仍是修正後全文（潤稿來源、複製都用它）。回傳改了幾處。
+function renderRefineText(text, raw) {
+  if (!raw || raw.length !== text.length || raw === text) {
+    el.refineText.textContent = text;
+    return 0;
+  }
+  let html = '';
+  let n = 0;
+  let i = 0;
+  while (i < text.length) {
+    let j = i;
+    const same = raw[i] === text[i];
+    while (j < text.length && (raw[j] === text[j]) === same) j += 1;
+    if (same) html += esc(text.slice(i, j));
+    else {
+      html += `<mark class="pl-rep" title="原字：${esc(raw.slice(i, j))}">${esc(text.slice(i, j))}</mark>`;
+      n += 1;
+    }
+    i = j;
+  }
+  el.refineText.innerHTML = html;
+  return n;
 }
 
 async function runRefine(start) {

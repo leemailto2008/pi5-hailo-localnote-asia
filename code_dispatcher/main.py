@@ -1834,10 +1834,58 @@ def _fix_engines() -> Dict[str, Any]:
 # 放在錄音快取旁邊的資料夾，不放進 AUDIO_CACHE_DIR：那裡的檔案數會算進錄音環形緩衝的保留筆數。
 from single_job import SingleJob, meeting_busy_reason  # noqa: E402
 
+_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(AUDIO_CACHE_DIR)), "localnote_state")
 _polish_job = SingleJob("polish")
-_refine_job = SingleJob("refine", persist_path=os.path.join(
-    os.path.dirname(os.path.abspath(AUDIO_CACHE_DIR)), "localnote_state", "refine_last.json"))
+_refine_job = SingleJob("refine", persist_path=os.path.join(_STATE_DIR, "refine_last.json"))
 _JOB_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
+
+# 會議詞彙（2026-11-13）：網頁「錄一段會議」卡片填，存在盒子上，會後自動快修（高精度逐字稿完成後）用得到。
+# 與高精度逐字稿同放 RAM 磁碟（零磁碟寫入）：重開機清掉，網頁開頁時會把瀏覽器記的那份再送上來。
+_GLOSSARY_PATH = os.path.join(_STATE_DIR, "glossary.txt")
+GLOSSARY_MAX_CHARS = 5000
+
+
+def _read_glossary() -> str:
+    try:
+        with open(_GLOSSARY_PATH, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeDecodeError) as e:   # 讀不到只影響快修少了詞彙，不擋其他功能
+        logger.warning("[glossary] cannot read %s: %s", _GLOSSARY_PATH, e)
+        return ""
+
+
+def _write_glossary(text: str) -> None:
+    os.makedirs(os.path.dirname(_GLOSSARY_PATH), exist_ok=True)
+    tmp = _GLOSSARY_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, _GLOSSARY_PATH)   # 寫完才換上，讀的人不會看到半個檔
+
+
+class GlossaryRequest(BaseModel):
+    text: str = Field(default="", max_length=GLOSSARY_MAX_CHARS,
+                      description="會議詞彙：人名、公司、產品、術語，用逗號、頓號或換行分隔")
+
+
+@app.get("/api/glossary", tags=["Demo UI"])
+async def get_glossary() -> Dict[str, Any]:
+    """會議詞彙（盒子上這一份）：text 原文、terms 實際會用的詞（只收 2–12 個中文字的詞）。"""
+    from transcript_polish import parse_glossary
+    text = await asyncio.to_thread(_read_glossary)
+    return {"text": text, "terms": parse_glossary(text)}
+
+
+@app.post("/api/glossary", tags=["Demo UI"])
+async def post_glossary(req: GlossaryRequest) -> Dict[str, Any]:
+    """存會議詞彙；會後自動快修與之後的潤稿都用這一份。"""
+    from transcript_polish import parse_glossary
+    try:
+        await asyncio.to_thread(_write_glossary, req.text)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"會議詞彙存不進去：{e}")
+    return {"text": req.text, "terms": parse_glossary(req.text)}
 
 
 @app.post("/api/polish", tags=["Demo UI"])
@@ -1916,15 +1964,32 @@ def _start_refine(job_id: str) -> Dict[str, Any]:
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="找不到這場會議的錄音檔（服務重啟後記憶體磁碟會清空）")
 
+    # 進度權重依 Pi 實測耗時：辨識、分說話人（逐句分說話人，11-11：5 分鐘 15.3 s／5.4 s，60 分鐘 182 s／74 s）、
+    # 快修（會議詞彙＋MacBERT，11-12：5 分鐘 3.7 s，60 分鐘 32 s）約 63／25／12。
+    weights = {"asr": (0.0, 0.63), "diarize": (0.63, 0.25), "fix": (0.88, 0.12)}
+
     def on_progress(phase: str, frac: float) -> None:
-        # 進度權重依 Pi 實測耗時（逐句分說話人，11-11）：辨識約佔 70%，分說話人約 30%
-        # （5 分鐘 15.3 s／5.4 s，60 分鐘 182 s／74 s）。
-        overall = frac * 0.7 if phase == "asr" else (0.7 + frac * 0.3 if phase == "diarize" else 0.0)
-        _refine_job.update(phase=phase, progress=round(overall * 100))
+        start, span = weights.get(phase, (0.0, 0.0))
+        _refine_job.update(phase=phase, progress=round((start + frac * span) * 100))
 
     async def runner(job: SingleJob) -> Dict[str, Any]:
+        from transcript_polish import parse_glossary, quick_fix
         # 子行程執行：sherpa-onnx 分說話人整段持有 GIL，放在本行程的執行緒會卡住整個 API (11-10 實測)。
-        return await refine_transcript.run_in_subprocess(path, is_any_recording_active, on_progress)
+        result = await refine_transcript.run_in_subprocess(path, is_any_recording_active, on_progress)
+        if result.get("stopped") or not (result.get("transcript") or "").strip():
+            return result
+        # 會後自動快修：會議詞彙＋MacBERT（transcript_polish.quick_fix）；transcript 換成修正稿，原稿留在 transcript_raw。
+        on_progress("fix", 0.0)
+        terms = parse_glossary(await asyncio.to_thread(_read_glossary))
+        fix = await quick_fix(result["transcript"], terms, is_any_recording_active,
+                              lambda done, total: on_progress("fix", done / max(total, 1)))
+        if fix["status"] == "done":
+            result["transcript_raw"] = result["transcript"]
+            result["transcript"] = fix.pop("text")
+        else:
+            print(f"[AutoRefine] 快修{fix['status']}：{fix.get('reason', '')}")
+        result["quick_fix"] = fix
+        return result
 
     return _refine_job.start(runner, job=job_id, phase="load", progress=0)
 
