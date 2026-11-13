@@ -1,5 +1,5 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
-互動 session 進行中，至 2026-11-14 05:00（台北；使用者 11-13 18:3x 去運動、三天後回來：不要問、自設定時器、自測改到最佳 DONE；每輪續期 2 小時；過期代表迴圈斷了，每小時排程接手）
+互動 session 進行中，至 2026-11-14 07:00（台北；使用者 11-13 18:3x 去運動、三天後回來：不要問、自設定時器、自測改到最佳 DONE；每輪續期 2 小時；過期代表迴圈斷了，每小時排程接手）
 
 ## 三天自測迴圈待辦（2026-11-13 18:40 起；做完一項就標 ✅ 與數字）
 1. ✅ 紀要分段 1100 字（split_transcript CHUNK_SLACK，commit 501a81a）。exp_chunk_sum.py，同一份即時稿 old／new：
@@ -35,6 +35,17 @@
    整場：cer_num 0.0146（GS3 10 分 SenseVoice 場次 0.0126–0.0161 之間）、fact_recall 0.971、recap 1.0、topic 1.0、紀要 80.6 s（10 分場次 66–110 s）。採用。
 9. ✅ 長會議條目上限：60 分會議分段 14→13，summary_limits 摘要上限 9→8 條。改成照字數估段數（summary_limit_chunks，commit 1692d59）。
    A/B（exp_limits.py，同一份 60 分稿 g60sv 各 2 次，out_lim/results.jsonl）：cur 8 條、議題覆蓋 0.8／0.8；fix 9 條、1.0／1.0；召回都 1.0；耗時 399–420 vs 424–427 s。採用。
+10. ✅ 英文會議（即時 SenseVoice auto 語言）GS3 聲學：01:14 開跑 en_short＋en_long（acoustic_gs3/20261114_011436_en，en_1692.log，1692d59）。
+   前 40 s 即時稿正常（7.8 s 出第一句英文），但發現英文的「, 」被即時切片清理換成全形「，」（「Okay，let's start…」）。
+   → ecdf19d：clean_live_segment，兩邊是英文字母／數字時保留英文標點；單元測試加 5 例。待本輪英文跑完當基準，部署後再跑一次比較。
+   基準（1692d59）PASS 2/2：en_short cer 0.035、fact 1.0、recap 1.0、topic 1.0、紀要 71.4 s；en_long cer 0.070、fact 0.967（漏 T7 供應商名稱）、recap 1.0、topic 1.0、紀要 82.0 s。
+   最後逐字稿與紀要本來就沒有全形逗號（「，」只出現在錄音中的即時預覽），所以這個 bug 只影響錄音中的顯示。
+   01:30 部署 ecdf19d，再跑英文（acoustic_gs3/20261114_013046_en，en_ecdf.log）：錄音中預覽已是「Okay, let's start…」。
+   PASS 2/2：en_short cer 0.0315、fact 1.0、recap 1.0、topic 1.0、紀要 50.8 s；en_long cer 0.0674、fact 1.0、recap 1.0、topic 1.0、紀要 131.9 s。
+   en_long 紀要慢是模型寫完三段後又寫「---\n**Recap:**」把內容再抄一遍，寫滿 600 tokens（原文 2113 字、清理後 905 字）→ 第 11 項。
+11. 單次紀要提早停止：summary_utils.minutes_extra_start（摘要／待辦／決議依序寫完、決議至少一條後又開 ---／**／## 新區塊 → 停止生成）。
+   ln_e2e 下 21 份單次紀要原文有 2 份這樣多寫（都是英文，多寫 246／633 字）。工作區已改（未 commit，pytest 642 passed）；
+   01:49 起 A/B（early_repo、exp_early.py、out_early/results.jsonl：enl×3、ens×3、a5×2、a5b×2，new／old）。
 6. 錄音中預先整理（premap）維持關閉：CLAUDE.md 規則要使用者確認，不自行改預設。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
