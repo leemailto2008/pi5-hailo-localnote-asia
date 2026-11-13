@@ -54,15 +54,17 @@ CPU_POST_LABEL = "OpenCC s2twp＋重複迴圈清理"
 HAILO_POST_LABEL = "OpenCC s2twp＋規則修正 fix_meeting_terms（日期、職稱、人名…）＋解碼迴圈清理"
 
 
-# 錄音的第一片切短 (2026-11-13)：原本要等緩衝滿 9.5 s 才切第一片，網頁「首字」約 10.5 s；第一片改在 3–5 s 內找停頓下刀。
-FIRST_SLICE_MAX_S = float(os.environ.get("PI5_FIRST_SLICE_MAX_S", "5.0"))
+# 錄音的第一片切短 (2026-11-14)：原本要等緩衝滿 9.5 s 才切第一片，網頁「首字」約 10.5 s；第一片改在 5–7 s 內找停頓下刀。
+# 3–5 s 試過不行：228 GS3 第一片只切到開場的「好。」(EMO_UNKNOWN)，被當底噪濾掉，第一段字反而到 14 s 才出來。
+FIRST_SLICE_MAX_S = float(os.environ.get("PI5_FIRST_SLICE_MAX_S", "7.0"))
 
 
 def slice_bounds(chunk_sec: float, first: bool = False) -> Tuple[float, float]:
     """即時 STT 切片長度範圍 (秒)：在這個範圍內找能量最低處下刀 (Whisper 輸入窗口 10 s)。first=True 是錄音的第一片。"""
     lo, hi = max(3.0, chunk_sec - 4.0), min(chunk_sec + 1.5, 9.5)
     if first and FIRST_SLICE_MAX_S < hi:
-        return min(lo, 3.0), max(FIRST_SLICE_MAX_S, 3.0)
+        top = max(FIRST_SLICE_MAX_S, 3.0)
+        return max(3.0, top - 2.0), top
     return lo, hi
 
 
