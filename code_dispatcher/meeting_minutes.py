@@ -55,7 +55,8 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            drop_unspoken_years, fill_missing_topics,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
-                           live_join_sep, map_notes_complete, split_with_recap, summary_limits, take_stable_chunk, tidy_live_transcript)
+                           live_join_sep, map_notes_complete, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
+                           tidy_live_transcript)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
 # 5 分鐘會議 (約 1000 字) 單次整理品質良好 → 1200 字以內維持單次；超過則切成 <= 1000 字的區塊逐段抽重點，
@@ -813,7 +814,8 @@ class MeetingJobManager:
                                     self.status.transcript_live = curr_preview
                                     self.status.metrics["stt_chars"] = len(curr_preview.replace("\n", "").strip())
                                     self.status.metrics["stt_paragraphs"] = len(live_segments)
-                                    self.status.metrics["first_stt_text_time"] = now_elapsed
+                                    if self.status.metrics.get("first_stt_text_time") is None:   # 第一次真的出字 (底噪被濾掉的切片不算)
+                                        self.status.metrics["first_stt_text_time"] = now_elapsed
 
                                 self.status.metrics["stt_audio_delay"] = max(0.0, round(time.time() - enq_t, 1))
                                 self.notify_status_update()
@@ -1377,6 +1379,8 @@ class MeetingJobManager:
             body_todos = []
         chunks = split_with_recap(rest, lim["chunk"]) if rest else []   # 結尾總結自成一段
         total = len(notes) + len(chunks)
+        has_recap = bool(chunks) and is_recap_chunk(chunks[-1])
+        limits = summary_limits(summary_limit_chunks(len(transcript), lim["chunk"], total, has_recap))
         print(f"[MeetingMinutes] 📚 長逐字稿 {len(transcript)} 字 ({lang}) → {total} 段 (每段 <= {lim['chunk']} 字)，逐段整理")
         self.status.metrics["summary_chunks"] = total
         self.status.metrics["summary_premap_used"] = len(notes)
@@ -1393,7 +1397,7 @@ class MeetingJobManager:
                 # 口頭總結直接用原句 (見 summary_utils.recap_notes)；模型仍常駐時由 finally 的 _release_hailo() 釋放 NPU
                 notes.append(recap_notes(piece))
                 print(f"[MeetingMinutes] 段 {idx}/{total}: 結尾總結 {len(piece)} 字，直接採用原句")
-                self.status.summary_stream = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **summary_limits(total)), lang)
+                self.status.summary_stream = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **limits), lang)
                 continue
             try:
                 self._hailo_pinned = True
@@ -1412,13 +1416,13 @@ class MeetingJobManager:
             if ka is None and idx < total:
                 await asyncio.sleep(3.0)   # 視窗切換：等 hailo-ollama 卸載完成再送下一段 (避免撞上卸載)
             # 逐段把目前組出的紀要推給前端，使用者不必等全部完成
-            partial = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **summary_limits(total)), lang)
+            partial = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **limits), lang)
             self.status.summary_stream = partial
             if job_id:
                 await ws_manager.broadcast("summary_stream", {"job_id": job_id, "token": "", "accumulated": partial})
 
         self.status.metrics["summary_map_s"] = round(time.time() - t_map, 1)
-        full_text = assemble_long_minutes(notes, body_todos=body_todos, **summary_limits(total))
+        full_text = assemble_long_minutes(notes, body_todos=body_todos, **limits)
         self.status.summary_stream = localize_minutes(full_text, lang)
         print(f"[MeetingMinutes] 長會議紀要完成：{total} 段，{time.time() - t_map:.1f}s")
         return full_text

@@ -2093,6 +2093,13 @@ def keep_alive_plan(n_chunks: int, sec_per_chunk: int = 75, cap: int = 1800, mar
     return plan
 
 
+def summary_limit_chunks(n_chars: int, chunk_chars: int, n_chunks: int, recap: bool) -> int:
+    """summary_limits() 用的段數：照舊分段 (每段 chunk_chars 字) 估算段數 (有結尾總結再加一段)，且不少於實際段數。
+    分段放寬到 1100 字 (CHUNK_SLACK) 後段數變少，條目上限不能跟著變少 (60 分會議 14→13 段，摘要上限會從 9 條變 8 條；
+    228 同一份 60 分稿各 2 次：8 條時議題覆蓋 0.8／0.8，9 條時 1.0／1.0)。"""
+    return max(n_chunks, -(-max(0, n_chars) // max(1, chunk_chars)) + (1 if recap else 0))
+
+
 def summary_limits(n_chunks: int) -> Dict[str, int]:
     """長會議紀要的條目上限隨長度增加 (30 分鐘約 7 段 → 摘要 8／待辦 6／決議 3；4 小時約 55 段 → 15／11／6)。"""
     return {"max_summary": min(16, 8 + max(0, n_chunks - 8) // 6),

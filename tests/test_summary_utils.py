@@ -77,6 +77,16 @@ def test_split_transcript_splits_long_sentence_into_clauses():
     assert chunks[0].endswith("，") or chunks[0].endswith("。")
 
 
+def test_summary_limit_chunks_follows_length_not_chunk_size():
+    from summary_utils import summary_limit_chunks, summary_limits
+    # 60 分會議 12512 字：分段放寬後 13 段，條目上限仍照 14 段 (摘要 9 條)
+    assert summary_limit_chunks(12512, 1000, 13, recap=True) == 14
+    assert summary_limits(summary_limit_chunks(12512, 1000, 13, recap=True))["max_summary"] == 9
+    assert summary_limit_chunks(12512, 1000, 13, recap=False) == 13
+    assert summary_limit_chunks(2150, 1000, 3, recap=True) == 4
+    assert summary_limit_chunks(900, 1000, 5, recap=False) == 5          # 不少於實際段數
+
+
 def test_split_transcript_merges_tiny_tail():
     text = "。".join(["測" * 95] * 63) + "。"              # 6048 字：6 段滿 + 很短的尾段
     chunks = split_transcript(text, 1000)
