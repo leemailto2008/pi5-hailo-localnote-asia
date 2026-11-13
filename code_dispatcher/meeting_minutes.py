@@ -39,6 +39,7 @@ AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 
 # LLM backend selection (Hailo-10H qwen3:1.7b preferred, CPU Ollama fallback) lives in llm_backend.py
 from llm_backend import aiter_chat_stream, LLMError
+from meeting_glossary import apply_to_text as apply_meeting_glossary
 try:
     # 部署後 hailo_whisper 在 code_dispatcher 底下。NPU 每個切片 (約 6 秒) 已各自修過一次術語，
     # 但「最後總結一下，｜舊一是…」「交給吳｜父裡」這類跨切片的句型要等整份逐字稿接起來才看得到，所以全文再修一次 (規則可重複套用)。
@@ -859,6 +860,7 @@ class MeetingJobManager:
             async def _premap_loop():
                 """錄音中預先整理：逐字稿前段穩定後 (後面還有 SUMMARY_PREMAP_LAG 字) 就逐段抽重點，結果留給錄音後的長會議整理沿用。"""
                 done_upto = 0
+                glossed_prefix = ""
                 while not premap_stop.is_set() and not self._cancellation_token.is_set():
                     try:
                         await asyncio.wait_for(premap_stop.wait(), timeout=SUMMARY_PREMAP_POLL_S)
@@ -868,7 +870,10 @@ class MeetingJobManager:
                     end = take_stable_chunk(live, done_upto, SUMMARY_CHUNK_CHARS, SUMMARY_PREMAP_LAG)
                     if end is None or premap_stop.is_set() or self._cancellation_token.is_set():
                         continue
-                    piece = live[done_upto:end].strip()
+                    # 會議詞彙 (與錄音後同一套整理)：只套這一段——整份 60 分鐘逐字稿要 0.3 s (11-13 Pi 實測)，不在錄音中每 10 秒重算；
+                    # 詞彙不改字數 (位置照舊)，切點在標點、詞彙全是中文字，不會跨段，接起來與錄音後整份套用相同
+                    seg, _ = await asyncio.to_thread(apply_meeting_glossary, live[done_upto:end])
+                    piece = seg.strip()
                     idx = len(self._premap_notes) + 1
                     t_req = time.time()
                     try:
@@ -882,7 +887,8 @@ class MeetingJobManager:
                         return
                     text = compact_notes(text or "") or compact_notes("- " + piece[:120], max_lines=1, max_len=60)
                     self._premap_notes.append(text)
-                    self._premap_prefix = live[:end]
+                    glossed_prefix += seg
+                    self._premap_prefix = glossed_prefix
                     done_upto = end
                     self.status.metrics["summary_premap_chunks"] = idx
                     print(f"[MeetingMinutes] 錄音中預先整理第 {idx} 段：{len(piece)} → {len(text)} 字 ({time.time() - t_req:.1f}s)")
@@ -1065,6 +1071,10 @@ class MeetingJobManager:
             transcript_live = final_preview
             if final_preview and len(final_preview.strip()) >= 5:
                 transcript = fix_meeting_terms(tidy_live_transcript(final_preview))    # 與錄音中預先整理用同一套整理
+                # 會議詞彙：同音錯字先改成使用者填的人名／公司／產品再出紀要 (meeting_glossary 檔頭有量測)
+                transcript, n_gloss = await asyncio.to_thread(apply_meeting_glossary, transcript)
+                if n_gloss:
+                    print(f"[MeetingMinutes] 會議詞彙改 {n_gloss} 處後出紀要")
                 print(f"[MeetingMinutes] ⚡ 0秒尾端等待！成功取用即時切片串流 STT (字數: {len(transcript)}，段落數: {len(live_segments)})！")
             else:
                 # 保底：若即時切片為空，快速執行一次母帶轉錄
@@ -1297,7 +1307,7 @@ class MeetingJobManager:
 
         async def _regen_worker():
             try:
-                transcript = self.result.transcript
+                transcript, _ = await asyncio.to_thread(apply_meeting_glossary, self.result.transcript)   # 會後才填／改的詞彙，重新整理時也用上
                 raw_markdown = _safe_post(ground_todo_table, await self._generate_summary_llm(transcript, job_id=job_id), transcript)
                 raw_markdown = _safe_post(drop_unspoken_years, raw_markdown, transcript)
                 raw_markdown = _safe_post(fill_decisions_from_transcript, raw_markdown, transcript)
