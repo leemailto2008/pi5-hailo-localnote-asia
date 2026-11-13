@@ -774,6 +774,27 @@ def _merge_punct_run(m: "re.Match") -> str:
     return run[-1]
 
 
+_LIVE_SEP_RUN_RE = re.compile(r"[,\-\s]{2,}")
+
+
+def clean_live_segment(text: str) -> str:
+    """一個即時切片的辨識結果 → 要接到逐字稿的文字：去亂碼字元、連續的逗號／破折號／空白收成一個、去掉頭尾的標點。
+    兩邊都是英文字母或數字時保留英文標點 (「Okay, let's」)；舊版一律換成「，」，英文會議每個逗號都變成「Okay，let's」(2026-11-14)。"""
+    t = (text or "").strip().replace("�", "")
+
+    def _sep(m: "re.Match") -> str:
+        run = m.group(0)
+        before = t[m.start() - 1] if m.start() > 0 else ""
+        after = t[m.end()] if m.end() < len(t) else ""
+        if before.isascii() and before.isalnum() and after.isascii() and after.isalnum():
+            return ", " if "," in run else (" - " if "-" in run else " ")
+        return "，"
+
+    t = _LIVE_SEP_RUN_RE.sub(_sep, t)
+    t = re.sub(r"^[\s\-,\.，。]+", "", t)
+    return re.sub(r"[\s\-]+$", "", t)
+
+
 def live_join_sep(prev_chunk: str, cur_chunk: str) -> str:
     """即時切片串接時兩段之間的分隔。前段已有全形句末標點就不再補 (SenseVoice 切片以「。」結尾，舊版補空白，錄音中預覽一路「。 」)；
     兩段都有英文字母時沿用英文規則 (空白或「, 」)；其餘中文段落補「，」。"""

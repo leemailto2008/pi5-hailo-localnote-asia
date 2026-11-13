@@ -183,6 +183,13 @@ def test_take_stable_chunk_and_live_tidy():
     live = "好，，我們開始\ufffd今天的會議。。 第一個議題"
     assert summary_utils.tidy_live_transcript(live) == "好，我們開始今天的會議。第一個議題"    # 句末標點優先，不被後面的空白吃掉
     assert summary_utils.tidy_live_transcript("要討論？ 第一個，， 議題  好") == "要討論？第一個，議題 好"
+    # 單一切片清理：英文逗號保留、中文換全形、連續標點收成一個、頭尾標點去掉
+    clean = summary_utils.clean_live_segment
+    assert clean("Okay, let's start today's weekly meeting.") == "Okay, let's start today's weekly meeting."
+    assert clean("We have 100, 200  units") == "We have 100, 200 units"
+    assert clean("好, 我們開始") == "好，我們開始"
+    assert clean("- , 好, , , 我們 - -") == "好，我們，"
+    assert clean("A - B") == "A - B"
     # 即時切片串接：全形句末標點後不補；中文補「，」；英文補空白或「, 」
     sep = summary_utils.live_join_sep
     assert sep("我們開始今天的週會。", "今天有幾個議題") == "" and sep("要討論嗎？", "第一個") == ""

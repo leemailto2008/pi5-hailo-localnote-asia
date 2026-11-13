@@ -55,7 +55,7 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            drop_unspoken_years, fill_missing_topics,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
-                           live_join_sep, map_notes_complete, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
+                           clean_live_segment, live_join_sep, map_notes_complete, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
                            tidy_live_transcript)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
@@ -796,9 +796,7 @@ class MeetingJobManager:
                                 if seg_text and seg_text.strip():
                                     clean_t = seg_text.strip()
                                     clean_t = clean_t.replace("\ufffd", "").replace("\uFFFD", "")
-                                    clean_t = re.sub(r"([,\-\s]{2,})+", "，", clean_t)
-                                    clean_t = re.sub(r"^[\s\-,\.，。]+", "", clean_t)
-                                    clean_t = re.sub(r"[\s\-]+$", "", clean_t)
+                                    clean_t = clean_live_segment(clean_t)
 
                                     if not clean_t or clean_t in ("-", ",", "，", "。", "、"):
                                         chunk_queue.task_done()
