@@ -77,7 +77,7 @@
   開始錄音後 2 秒內（量測的輪詢間隔）子行程就已結束（Pi 實測，e2e 1 分鐘錄音）。
 - Pi 安裝：tools/ci/setup_sherpa_models.sh（sherpa-onnx 2.0.1 裝在 pi 使用者 site-packages；模型 /home/pi/models/sherpa，5 檔 md5 已驗）。
 
-## 後續改善（排程循環接著做，一次做一項，照常 commit／部署／實測）【11-12 10:30：6–8 全部 DONE；5、9 等使用者決定；排程已依步驟 9 停用】
+## 後續改善（排程循環接著做，一次做一項，照常 commit／部署／實測）【11-12 10:30：6–8 全部 DONE；5、9 等使用者決定；排程已依步驟 9 停用（11-13 08:24 排程再喚醒確認 6–8 仍成立，見「2026-11-13 排程輪次」）】
 1. 夜間聲學實測（19:00–07:00，依 CLAUDE.md 流程：開耳麥自動連線、確認 PC 喇叭、看前 30 秒逐字稿）：
    用 tools/e2e/speaker_selftest.py 播 10 分鐘會議 → 藍牙耳麥錄音 → /api/refine，比較 Hailo 即時與 SenseVoice 的 CER、分說話人正確率。
    這是 SenseVoice 在真實藍牙音訊（CVSD 8 kHz、有掉包）上的表現，目前只有數位音訊的數據。
@@ -90,6 +90,15 @@
 8. （11-11 新增；11-12 09:45 使用者改規則）.229 更新到最新版：使用者 11-12 09:45「.229 目前就是拿來要你協助 update 到最新（force）」→
    .229 有新版就部署，可加 LN_DEPLOY_FORCE（不必等閒置）；可選模型也照裝（MacBERT4CSC 等，靠開關切換）。【11-12 08:30：阻塞，.229 SSH 與 HTTP 皆無回應，見下方排程輪次】【11-12 09:41 完成：使用者要求，互動 session 部署 c2f81a7（程式同 25d946a），見下方】
 9. 待使用者決定（不要自行實作）：SenseVoice VAD 最短靜音 0.25 → 0.4（PI5_VAD_MIN_SILENCE；見 VAD 掃描）。
+
+## 2026-11-13 排程輪次（台北 08:24–08:40，白天窗；排程 trig_01XfezGs1zV3uroLZy1NZm4D）
+- 互動鎖：標頭「互動 session 進行中，至 2026-11-13 08:05」已過期，忽略（本輪 08:24 開工）。
+- Pi .228：pgrep（refine_transcript、run_suite.py、run_acoustic、compare_asr、merge_pi、vad_sweep）無程序；/api/status state=done（job m_1794503591，無錄音、無處理）；load 0.03。/health 回 status=degraded、redis_connected=false、ollama_running=true、RAM 可用 5886／8062 MB、CPU 48.8 °C（redis 離線的原因未查證，與本輪改動無關）。
+- 版本：.228 執行 /home/pi/ln_e2e/deploy_192caec（refine_transcript.py md5 與 /home/pi/code_dispatcher 相同）。git HEAD 3e85ecc（192caec 之後只有文件 commit），origin／gitlab 同。工作區另有他人未提交的 claude_context/ACTIVE_BACKLOG_AND_NEXT_STEPS.md 修改，未併入。
+- .229（192.168.50.229）：ping 失敗、HTTP :8000 無回應，自 11-12 10:24 起持續離線。.229 停在 0fd0396，沒有 192caec 以後的程式改善（MacBERT 前處理、會議詞彙、對齊修正等）。未部署、未加 LN_DEPLOY_FORCE。連得上且閒置時，依本循環規則部署 HEAD（不加 FORCE）。
+- 判定：第 6、7 項完成（量測見 11-11、11-12 紀錄）；第 8 項於 11-12 09:41 完成（c2f81a7 部署 .229，實測 /api/refine、/api/polish），10:15 另以強制部署 0fd0396（fix_engines 實測）。之後 .229 離線，「有新版就部署」目前受阻，列為待辦。第 5、9 項仍等使用者決定，不實作。依步驟 9，本輪結束前以 update_trigger 把排程 trig_01XfezGs1zV3uroLZy1NZm4D 設為 enabled=false。
+- 注意：另有排程「白天巡檢 08:45」（trig_01E9y2PrKjy4S83EMv5RCmac）的提示寫「.229 回來就 force 部署」，與本循環「絕不加 LN_DEPLOY_FORCE」的規則衝突。本輪未修改該排程，待使用者決定以哪一條為準。
+- 本輪未改程式、未部署、未重啟、未跑 pytest、未在 Pi 上跑評估、未錄音；未發送刪除、資料夾、電腦控制或內建瀏覽器授權請求。device_bash 仍回報「未連接資料夾」，改用 Desktop Commander 的 PowerShell 執行 SSH。
 
 ## 2026-11-12 排程輪次（台北 08:23–08:30，白天窗）
 - 互動鎖：無（標頭無該行）。Pi .228 /api/status：state=done（job m_1794416006，無錄音／處理）；ps 比對 refine_transcript、run_suite、run_acoustic、compare_asr、merge_pi、vad_sweep 無評估程序。
