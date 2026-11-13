@@ -218,6 +218,7 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", pla
         "metrics": {k: m.get(k) for k in ("first_chunk_time", "first_stt_latency", "stt_tail_wait", "stt_chars", "llm_status",
                                           "llm_backend", "llm_duration", "llm_tokens", "llm_tps", "total_latency", "total_elapsed")},
         "stt_npu_chunks": log.count("Hailo-10H 轉錄完成"), "stt_cpu_chunks": log.count("Zero-Disk Transcribed text"),
+        "stt_sv_chunks": log.count("SenseVoice 即時切片："),   # 即時稿選 SenseVoice 時 (11-13)
         "hailo_busy_errors": log.count("HailoWhisper] Hailo-10H runtime initialization failed"),
         "llm_fallbacks": log.count("trying next backend"),
         "zero_splice": [l[l.find("removed"):][:120] for l in log.splitlines() if "zero-splice" in l],

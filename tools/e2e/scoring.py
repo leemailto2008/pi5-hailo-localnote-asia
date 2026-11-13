@@ -170,9 +170,13 @@ def evaluate(result: dict, th: dict) -> list:
         lat = result.get("summary_latency_s")
         lim = th["summary_latency_base_s"] + th["summary_latency_per_min_s"] * result.get("audio_s", 0) / 60.0
         chk("summary_latency_s", lat, f"<= {lim:.0f}", lat is not None and lat <= lim)
-    n_npu, n_cpu = result.get("stt_npu_chunks", 0), result.get("stt_cpu_chunks", 0)
-    ratio = round(n_npu / max(1, n_npu + n_cpu), 4)
-    chk("stt_npu_ratio", ratio, f">= {th['stt_npu_ratio_min']}", ratio >= th["stt_npu_ratio_min"])
+    n_npu, n_cpu, n_sv = result.get("stt_npu_chunks", 0), result.get("stt_cpu_chunks", 0), result.get("stt_sv_chunks", 0)
+    if n_sv:   # 即時稿選 SenseVoice (11-13)：看有多少段真的由 SenseVoice 轉 (失敗改走 Whisper 的段數算進分母)
+        ratio = round(n_sv / max(1, n_sv + n_npu + n_cpu), 4)
+        chk("stt_sv_ratio", ratio, f">= {th['stt_npu_ratio_min']}", ratio >= th["stt_npu_ratio_min"])
+    else:
+        ratio = round(n_npu / max(1, n_npu + n_cpu), 4)
+        chk("stt_npu_ratio", ratio, f">= {th['stt_npu_ratio_min']}", ratio >= th["stt_npu_ratio_min"])
     chk("hailo_busy_errors", result.get("hailo_busy_errors", 0), f"<= {th['hailo_busy_errors_max']}", result.get("hailo_busy_errors", 0) <= th["hailo_busy_errors_max"])
     tail = (result.get("metrics") or {}).get("stt_tail_wait")
     chk("stt_tail_wait_s", tail, f"<= {th['stt_tail_wait_max_s']}", tail is not None and tail <= th["stt_tail_wait_max_s"])

@@ -68,6 +68,14 @@ def test_evaluate_pass_and_fail():
     assert failed == {"transcript_cer", "stt_npu_ratio", "summary_latency_s"}
 
 
+def test_evaluate_counts_sensevoice_live_chunks_instead_of_npu():
+    th = scoring.thresholds_for(TH, 3)
+    checks = {c["check"]: c for c in scoring.evaluate(_result(stt_npu_chunks=0, stt_sv_chunks=44), th)}
+    assert checks["stt_sv_ratio"]["passed"] and "stt_npu_ratio" not in checks
+    checks = {c["check"]: c for c in scoring.evaluate(_result(stt_npu_chunks=10, stt_sv_chunks=30), th)}
+    assert not checks["stt_sv_ratio"]["passed"]          # 1/4 的段落 SenseVoice 失敗改走 Whisper
+
+
 def test_api_gap_check():
     th = dict(scoring.thresholds_for(TH, 3), api_max_gap_s_max=8)
     names = lambda r: {c["check"]: c["passed"] for c in scoring.evaluate(r, th)}
