@@ -1,5 +1,5 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
-互動 session 進行中，至 2026-11-14 07:00（台北；使用者 11-13 18:3x 去運動、三天後回來：不要問、自設定時器、自測改到最佳 DONE；每輪續期 2 小時；過期代表迴圈斷了，每小時排程接手）
+互動 session 進行中，至 2026-11-14 09:00（台北；使用者 11-13 18:3x 去運動、三天後回來：不要問、自設定時器、自測改到最佳 DONE；每輪續期 2 小時；過期代表迴圈斷了，每小時排程接手）
 
 ## 三天自測迴圈待辦（2026-11-13 18:40 起；做完一項就標 ✅ 與數字）
 1. ✅ 紀要分段 1100 字（split_transcript CHUNK_SLACK，commit 501a81a）。exp_chunk_sum.py，同一份即時稿 old／new：
@@ -43,9 +43,15 @@
    01:30 部署 ecdf19d，再跑英文（acoustic_gs3/20261114_013046_en，en_ecdf.log）：錄音中預覽已是「Okay, let's start…」。
    PASS 2/2：en_short cer 0.0315、fact 1.0、recap 1.0、topic 1.0、紀要 50.8 s；en_long cer 0.0674、fact 1.0、recap 1.0、topic 1.0、紀要 131.9 s。
    en_long 紀要慢是模型寫完三段後又寫「---\n**Recap:**」把內容再抄一遍，寫滿 600 tokens（原文 2113 字、清理後 905 字）→ 第 11 項。
-11. 單次紀要提早停止：summary_utils.minutes_extra_start（摘要／待辦／決議依序寫完、決議至少一條後又開 ---／**／## 新區塊 → 停止生成）。
-   ln_e2e 下 21 份單次紀要原文有 2 份這樣多寫（都是英文，多寫 246／633 字）。工作區已改（未 commit，pytest 642 passed）；
-   01:49 起 A/B（early_repo、exp_early.py、out_early/results.jsonl：enl×3、ens×3、a5×2、a5b×2，new／old）。
+11. ✅ 單次紀要提早停止：summary_utils.minutes_extra_start（摘要／待辦／決議依序寫完、決議至少一條後又開 ---／**／## 新區塊 → 停止生成）。
+   ln_e2e 下 21 份單次紀要原文有 2 份這樣多寫（都是英文，多寫 246／633 字）。
+   A/B（early_repo、exp_early.py、out_early/results.jsonl，同一份稿 new／old）：英文 enl×3、ens×3 觸發 2 次，召回／議題全部 1.0；
+   en_long new 69／113／84 s vs old 131／94／68 s（平均 89 vs 98）、en_short 42／48／53 vs 57／42／55；中文 a5／a5b 8 次都沒觸發（同一條路徑，
+   a5 一次 recap 0.67 是 LLM 雜訊）。commit bf59bce，02:26 部署 .228。
+   中文 5 分單次紀要 455–580 tokens 的原因另看了一次原文（exp_raw5.py，a5）：這次 298 tokens、74.8 s、沒有多寫區塊；長短是模型每次輸出不同，不改。
+12. ✅ 藍牙 30 分回歸（bf59bce，即時 SenseVoice）：02:27 開跑（bt_ab/20261114_0227_30min_bf59，run30_bf59.log）；60 s 檢查到達 100%、掉包 0%、即時稿正常有句號。
+   PASS、errors 0：紀要 185.1 s、7 段（11-13 下午同條件約 250 s、8 段）、recap 1.0、topic 1.0；cer_num 0.0242（之前 0.0205）、fact 0.965；
+   到達 100%、掉包 0%、補零 0.26 s；錄音中 CPU 5.5%；句號 313、空白 0。自動高精度稿：說話人 5（實際 4，同一句 TTS 重複 3 次的已知假象）、ASR 152 s＋分說話人 77 s。
 6. 錄音中預先整理（premap）維持關閉：CLAUDE.md 規則要使用者確認，不自行改預設。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
