@@ -993,6 +993,28 @@ def map_notes_complete(text: str, max_lines: int = 4, max_len: int = 40) -> bool
     return len(tail) > max_len and len(compact_notes(text, max_lines, max_len).splitlines()) >= max_lines
 
 
+_MIN_HEAD_DEC_RE = re.compile(r"^[ \t]*#{1,3}[ \t]*(決議|Decisions?)", re.M | re.I)
+_MIN_HEAD_SUM_RE = re.compile(r"^[ \t]*#{1,3}[ \t]*(摘要|Summary)", re.M | re.I)
+_MIN_HEAD_TODO_RE = re.compile(r"^[ \t]*#{1,3}[ \t]*(待辦|Action)", re.M | re.I)
+_MIN_EXTRA_RE = re.compile(r"^[ \t]*(-{3,}|\*\*|#{1,3}[ \t])", re.M)
+_MIN_BULLET_RE = re.compile(r"^[ \t]*[-*][ \t]+\S", re.M)
+
+
+def minutes_extra_start(text: str) -> Optional[int]:
+    """單次紀要串流：摘要、待辦、決議三段都寫了 (依序)、決議至少一條之後，模型又開新的區塊 (---、**粗體標題**、## 標題)
+    時回傳該區塊的起點，否則 None。這些多寫的內容 (例如「---\\n**Recap:**」把前面再抄一遍) 會被 clean_summary_markdown 丟掉，
+    可以停止生成。2026-11-14 228：21 份單次紀要原文有 2 份 (都是英文) 這樣多寫，en_long 一份寫滿 600 tokens、130 s。"""
+    text = text or ""
+    m = _MIN_HEAD_DEC_RE.search(text)
+    if not m or not _MIN_HEAD_SUM_RE.search(text, 0, m.start()) or not _MIN_HEAD_TODO_RE.search(text, 0, m.start()):
+        return None
+    b = _MIN_BULLET_RE.search(text, m.end())
+    if not b:
+        return None
+    e = _MIN_EXTRA_RE.search(text, b.end())
+    return e.start() if e else None
+
+
 SECTION_MISSING_NOTE = "（模型輸出長度不足，此段未產生，請參考逐字稿）"
 
 # 逐字稿中明講的「決議是…」(STT 端 fix_meeting_terms 已把 決意/捷一… 改回「決議」)。

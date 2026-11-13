@@ -77,6 +77,22 @@ def test_split_transcript_splits_long_sentence_into_clauses():
     assert chunks[0].endswith("，") or chunks[0].endswith("。")
 
 
+def test_minutes_extra_start_detects_content_after_three_sections():
+    from summary_utils import minutes_extra_start
+    base = ("## Summary\n- Training on Sept 2\n\n## Action Items\n| Item | Owner | Due |\n|---|---|---|\n| Send names | Mary | Thu |\n\n"
+            "## Decisions\n- Firmware release March 15\n")
+    assert minutes_extra_start(base) is None                                    # 三段寫完、還沒多寫
+    extra = base + "\n---\n**Recap:**\n- Training"
+    assert extra[minutes_extra_start(extra):].startswith("---")
+    assert minutes_extra_start(base + "- Trial order 30 units\n") is None       # 決議第二條不是多寫
+    zh = "## 摘要\n- 韌體10月11日上線\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 迴歸測試 | 李協理 | 週五 |\n\n## 決議\n- 先簽50臺試單\n"
+    assert minutes_extra_start(zh + "\n**總結**：…")  is not None
+    # 決議寫在待辦前面 (順序不對) 時不能停：後面的「## 待辦」是正規內容
+    early = "## 摘要\n- 韌體\n\n## 決議\n- 先簽試單\n\n## 待辦\n| 事項 | 負責人 | 時間 |"
+    assert minutes_extra_start(early) is None
+    assert minutes_extra_start("## Decisions\n") is None
+
+
 def test_summary_limit_chunks_follows_length_not_chunk_size():
     from summary_utils import summary_limit_chunks, summary_limits
     # 60 分會議 12512 字：分段放寬後 13 段，條目上限仍照 14 段 (摘要 9 條)

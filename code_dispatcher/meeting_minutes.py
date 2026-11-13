@@ -55,7 +55,7 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            drop_unspoken_years, fill_missing_topics,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
-                           clean_live_segment, live_join_sep, map_notes_complete, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
+                           clean_live_segment, live_join_sep, map_notes_complete, minutes_extra_start, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
                            tidy_live_transcript)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
@@ -1444,6 +1444,7 @@ class MeetingJobManager:
                   else f"Transcript:\n{transcript}\n\nWrite the meeting minutes:")
 
         accumulated = []
+        n_tokens: Optional[int] = None    # 提早停止時記下實際生成的 token 數 (accumulated 會被截成一段)
         used_backend_label = "n/a"
         try:
             # num_predict 380 → 480 (2026-10-31 228 A/B，9 份容易截斷的 3–5 分鐘逐字稿)：「待辦／決議未產生」4/9 → 1/9，
@@ -1451,24 +1452,34 @@ class MeetingJobManager:
             # 逐字稿超過 SUMMARY_LONG_SINGLE_CHARS 字 (約 4–5 分鐘) 時上限再放寬到 600 (2026-11-02 228 A/B，5 份 5 分鐘逐字稿各 2 次)：
             # 480 時 10 次有 3 次「待辦未產生」，600 時 1 次；平均多 5 s、最多 131 s；回顧 0.80／0.70、議題 0.90／0.90 都在雜訊內。
             npred = 600 if len(clean_transcript) > lim["long_single"] else 480
-            async for token, _done, backend in aiter_chat_stream(prompt, system=system_msg, temperature=0.2, num_predict=npred, timeout=180.0,
-                                                                 hailo_retries=2):
-                used_backend_label = backend.label
-                if self._cancellation_token and self._cancellation_token.is_set():
-                    print("[MeetingMinutes] LLM generation aborted by cancellation token.")
-                    return ""
-                if token:
-                    accumulated.append(token)
-                    # 逐 Token 打字機串流廣播
-                    curr_text = "".join(accumulated)
-                    self.status.summary_stream = curr_text
-                    self.status.metrics["llm_tokens"] = len(accumulated)
-                    if job_id:
-                        await ws_manager.broadcast("summary_stream", {
-                            "job_id": job_id,
-                            "token": token,
-                            "accumulated": curr_text
-                        })
+            from contextlib import aclosing
+            async with aclosing(aiter_chat_stream(prompt, system=system_msg, temperature=0.2, num_predict=npred, timeout=180.0,
+                                                  hailo_retries=2)) as stream:
+                async for token, _done, backend in stream:
+                    used_backend_label = backend.label
+                    if self._cancellation_token and self._cancellation_token.is_set():
+                        print("[MeetingMinutes] LLM generation aborted by cancellation token.")
+                        return ""
+                    if token:
+                        accumulated.append(token)
+                        # 逐 Token 打字機串流廣播
+                        curr_text = "".join(accumulated)
+                        self.status.summary_stream = curr_text
+                        self.status.metrics["llm_tokens"] = len(accumulated)
+                        if job_id:
+                            await ws_manager.broadcast("summary_stream", {
+                                "job_id": job_id,
+                                "token": token,
+                                "accumulated": curr_text
+                            })
+                        # 三段都寫完後模型又開新區塊 (---、**Recap** …)：後面會被丟掉，停止生成 (關閉串流 hailo-ollama 會立刻停)
+                        extra_at = minutes_extra_start(curr_text)
+                        if extra_at is not None:
+                            n_tokens = len(accumulated)
+                            accumulated = [curr_text[:extra_at]]
+                            self.status.metrics["llm_early_stop"] = True
+                            print(f"[MeetingMinutes] 紀要三段已寫完，模型開始多寫 ({curr_text[extra_at:extra_at + 20]!r})，停止生成")
+                            break
 
             self.status.summary_raw = "".join(accumulated)   # 原文先存一份給 e2e 存檔 (JobStatus.summary_raw)
             full_text = clean_summary_markdown(to_internal_sections("".join(accumulated)))   # 英文標題先換成內部的中文標題
@@ -1479,7 +1490,7 @@ class MeetingJobManager:
                 full_text = _safe_post(fill_missing_topics, full_text, clean_transcript)   # 摘要漏掉的後段議題用逐字稿原句補一條
                 shown = localize_minutes(full_text, lang)                          # 回傳內部格式，畫面上顯示該語言
                 self.status.summary_stream = shown
-                self.status.metrics["llm_tokens"] = len(accumulated)
+                self.status.metrics["llm_tokens"] = n_tokens if n_tokens is not None else len(accumulated)
                 self.status.metrics["llm_backend"] = used_backend_label
                 if job_id:
                     await ws_manager.broadcast("summary_stream", {
