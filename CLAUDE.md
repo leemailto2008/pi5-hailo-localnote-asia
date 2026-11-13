@@ -157,6 +157,7 @@
 - **會後自動快修（2026-11-13，f4ab061）:** 高精度逐字稿完成後自動跑會議詞彙＋MacBERT（`transcript_polish.quick_fix`，`PI5_REFINE_QUICK_FIX=0` 可關）；`/api/refine` 的 `transcript` 是修正稿、`transcript_raw` 是原稿。**量測「原稿 → 潤稿」一律從 `transcript_raw` 起算**。會議詞彙存在盒子上（`GET／POST /api/glossary`，`/dev/shm/localnote_state/glossary.txt`）。
 - **會議詞彙也用在紀要（2026-11-13，33c673c）:** `meeting_glossary.apply_to_text` 在紀要前套到即時稿（錄音中預先整理只套當段，整份 60 分要 0.3 s，錄音中不可每 10 秒整份重算）。
 - **即時稿可選 SenseVoice（2026-11-13，4a462bc）:** 網頁開關＋`/api/config/live_asr`；`sv_worker` 子行程綁 CPU 2、3。藍牙收音時預設仍用 Hailo Whisper（`PI5_LIVE_SV_ON_BT=1` 放行，夜間量測用）。GS3 實測 cer_num 0.12–0.16 → 0.016–0.031。e2e 用 `stt_sv_ratio` 取代 `stt_npu_ratio`。
+- **高精度稿辨識切段（2026-11-13，e19a919）:** 辨識在停頓處切 4–9.5 s 整段做（與即時稿相同），字依時間分回 VAD 句子給分說話人；VAD 句子（約 3 s）上下文太短，cer_num 0.05 → 0.03–0.04。`PI5_REFINE_ASR_SEGMENT=vad` 切回。
 - **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`；`tests/test_bt_link_stats.py` 要 fcntl，Windows 上加 `--ignore`。
 - **PC → Pi 傳大檔:** scp 原樣傳 7 MB tar 會卡住，加 `-C`（壓縮）約 1 分鐘傳完。
 
