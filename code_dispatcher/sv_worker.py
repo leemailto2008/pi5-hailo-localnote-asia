@@ -91,7 +91,8 @@ def _child_main() -> None:
                 stream.accept_waveform(SAMPLE_RATE, np.asarray(payload, dtype=np.float32))
                 recognizer.decode_stream(stream)
                 text = to_taiwan_traditional(stream.result.text.strip())
-                _write_frame(proto_out, {"ok": True, "text": text,
+                _write_frame(proto_out, {"ok": True, "text": text, "lang": getattr(stream.result, "lang", ""),
+                                         "emotion": getattr(stream.result, "emotion", ""),
                                          "inference_time_ms": round((time.perf_counter() - t0) * 1000)})
             else:
                 _write_frame(proto_out, {"ok": False, "error": f"unknown command {cmd!r}"})

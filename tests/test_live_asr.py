@@ -57,3 +57,17 @@ def test_speech_to_text_live_routes_and_falls_back(monkeypatch):
     assert vp.speech_to_text_live(audio, "sensevoice") == "惠斯珀"   # 這段改走 Hailo Whisper
     assert vp.speech_to_text_live(audio, "whisper") == "惠斯珀"
     assert calls == ["whisper", "whisper"]
+
+
+def test_sensevoice_noise_outputs_are_dropped_only_when_marked_and_short(monkeypatch):
+    assert vp.sv_is_noise("The.", "<|en|>", "<|EMO_UNKNOWN|>")
+    assert vp.sv_is_noise("哈。", "<|zh|>", "<|EMO_UNKNOWN|>")
+    assert vp.sv_is_noise("그.", "<|ko|>", "<|EMO_UNKNOWN|>")
+    assert vp.sv_is_noise("。", "<|nospeech|>", "<|NEUTRAL|>")
+    assert not vp.sv_is_noise("好。", "<|zh|>", "<|NEUTRAL|>")                       # 真人短回覆
+    assert not vp.sv_is_noise("第一個議題是韌體更新。", "<|zh|>", "<|EMO_UNKNOWN|>")   # 長的照收
+    audio = np.zeros(16000, dtype=np.float32)
+    monkeypatch.setattr(vp, "speech_to_text", lambda a, c=None, info_out=None: "不該呼叫")
+    monkeypatch.setattr(svw.sv_worker, "transcribe",
+                        lambda a: {"text": "The.", "lang": "<|en|>", "emotion": "<|EMO_UNKNOWN|>", "inference_time_ms": 300})
+    assert vp.speech_to_text_live(audio, "sensevoice") == ""

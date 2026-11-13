@@ -106,6 +106,17 @@
 - 藍牙 30 分 SenseVoice 確認（84c2eb0 預設放行、不靠環境變數；bt_ab/20261113_1450_30min，15:25 結束）：
   封包到達 100.0%、補靜音 0.0%（0.26 s）、cer_num 0.0205、事實 0.9645、紀要召回 1.0、紀要延遲 261 s、SenseVoice 246 段、錄音 CPU 5.6% → **維持 84c2eb0**。
 - 15:29 部署 5eac24c（備份 20261113_152934）。設定檔在 /home/pi/telegram_agent/data/live_asr.json；暫時改名後 API 回 engine=sensevoice（預設），改回後照舊。
+- 15:34 使用者「把 .229 也 update」→ 15:35 .229 回線（uptime 5 天，state=done、沒有錄音）→ force 部署 c4eb06e（LN_DEPLOY_FORCE=1，備份 20261113_153557）。
+  /api/config/live_asr：engine=sensevoice（沒存過設定＝預設）、sensevoice_on_bluetooth=true、SenseVoice 可用；sherpa-onnx 2.0.1 與模型都在；
+  高精度稿可用；MacBERT 可用；會議詞彙空的（別人測時自己填）。SenseVoice 即時子行程：載入 1.8 s；送 3 秒全靜音切片回「그.」（韓文幻覺）。
+  實際錄音靜音切片會先被能量快篩擋掉（LIVE_SKIP_PEAK／RMS）；.228 今天 7 場 SenseVoice 即時稿都沒有韓文／日文假名，只有一段「啊。」。
+  待辦：錄 1 分鐘只有房間底噪的會議，看 SenseVoice 會不會吐出這類字。
+- 15:37–15:41 底噪測試（.228，不播音、各錄 2 分、跳過紀要；noise_test/20261113_1537）：
+  GS3 麥克風：底噪很小，所有切片都被能量快篩擋掉，沒有送 SenseVoice（即時稿空，母帶保底轉錄回「未能辨識出清晰人聲語音」）。
+  藍牙耳麥：CVSD 嘶聲（RMS 約 0.02）過了快篩，SenseVoice 吐出「。」「.」「哈。」「The.」，即時稿留下「The. 哈。」。
+  分析（sv_event.py／sv_event_stats.py）：底噪切片的情緒標記全是 <|EMO_UNKNOWN|>（部分語言 <|nospeech|>）；真人語音切片
+  （GS3 2 份＋藍牙 2 份，約 300 段）全是 NEUTRAL／HAPPY、語言 zh／yue，沒有 EMO_UNKNOWN。
+  → 過濾：SenseVoice 輸出標記為底噪（EMO_UNKNOWN 或 nospeech）且只剩 ≤ 3 個字就丟掉（真人短回覆「好。」是 NEUTRAL，不受影響）。pytest 652 passed。
 
 ## 晨間彙整（2026-11-13 07:25，11-12 白天＋夜間自測改迴圈）
 - 正式版本：.228 程式 192caec（11-12 17:59 部署），之後只有文件；GitHub／GitLab 已同步。.229 從 11-12 10:24 起 ping 不到（停在 0fd0396，沒有今天的改善），回來就 force 更新。
