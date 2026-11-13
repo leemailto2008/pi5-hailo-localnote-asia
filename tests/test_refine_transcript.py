@@ -326,6 +326,7 @@ def test_split_by_windows_leaves_short_or_tokenless_sentences():
 
 def test_short_piece_borrows_from_its_own_vad_sentence_first(monkeypatch):
     _fake_sherpa(monkeypatch)
+    monkeypatch.setattr(rt, "CLUSTER_MIN_UNITS", 1)   # 這裡甲只有一個單位；測的是短尾巴借同句，不是單位數門檻
     # 乙說完（0.0–1.3），甲的句子 1.3–2.8（長片段）＋短尾巴 3.2–3.5（cont）；尾巴時間上離乙的下一句 3.55–4.9 更近
     x = _samples([(0.0, 1.3, 1.0), (1.3, 2.8, 0.0), (3.2, 3.5, 2.0), (3.55, 4.9, 1.0)], seconds=6)
     sents = [Sentence(0.0, 1.3, "乙說"), Sentence(1.3, 2.8, "甲說"), Sentence(3.2, 3.5, "完", cont=True),
@@ -391,3 +392,18 @@ def test_assign_tokens_by_time_and_gap_goes_to_nearer_sentence():
     out = rt.assign_tokens(regions, ["前", "後"], [-0.5, 2.8])   # 第一句之前歸第一句；2.8 離後句較近
     assert out == [(["前"], [-0.5]), (["後"], [2.8])]
     assert rt.assign_tokens([], ["字"], [1.0]) == []
+
+
+def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    # 甲、乙各兩段；中間一段 1.3 s 的嵌入自成一群（只有 1 個單位）→ 不算一個人，借時間上最近的單位
+    x = _samples([(0.0, 1.5, 0.0), (1.6, 3.1, 0.0), (3.2, 4.5, -1.0), (4.6, 6.1, 1.0), (6.2, 7.7, 1.0)], seconds=8)
+    sents = [Sentence(0.0, 1.5, "甲一"), Sentence(1.6, 3.1, "甲二"), Sentence(3.2, 4.5, "外殼刮傷"),
+             Sentence(4.6, 6.1, "乙一"), Sentence(6.2, 7.7, "乙二")]
+    assert rt.diarize_sentences(x, sents) is True
+    spk = [s.speaker for s in sents]
+    assert len(set(spk)) == 2 and spk[0] == spk[1] and spk[3] == spk[4] and spk[2] in (spk[1], spk[3])
+    monkeypatch.setattr(rt, "CLUSTER_MIN_UNITS", 1)                   # 原行為：自成第 3 人
+    sents = [Sentence(s.start, s.end, s.text) for s in sents]
+    assert rt.diarize_sentences(x, sents) is True
+    assert len({s.speaker for s in sents}) == 3

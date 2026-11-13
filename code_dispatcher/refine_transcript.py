@@ -49,7 +49,7 @@ VAD_MIN_SILENCE_S = float(os.environ.get("PI5_VAD_MIN_SILENCE", "0.25"))
 # 整條流程（.cc_scratch/pe/exp_refine_full.py，含分說話人）：同上 3 份 cer_num 0.0572／0.048／0.0463 → 0.0337／0.0388／0.0342，
 # 逐句歸屬正確率都 100%、4 人、句數相同；逐段 token 接起來都等於文字（0 段例外）。代價：辨識變慢約 50%（5 分 18 → 27 s、10 分 35 → 53 s）。
 # 驗證 新錄 5／10 分、即時 SenseVoice 那兩場 5／10 分：cer_num 0.0541／0.0519／0.0501／0.0524 → 0.0439／0.0347／0.0409／0.0302，逐句正確率都 100%；
-# 唯一差異：即時 SenseVoice 那場 10 分多分出 1 人（只有一句 1.31 s 的「主要是外殼刮傷，」，剛好超過 CLUSTER_MIN_LONGEST_S）。
+# 唯一差異：即時 SenseVoice 那場 10 分多分出 1 人（只有一句 1.31 s 的「主要是外殼刮傷，」，剛好超過 CLUSTER_MIN_LONGEST_S；已由 CLUSTER_MIN_UNITS 解決）。
 ASR_SEGMENTATION = os.environ.get("PI5_REFINE_ASR_SEGMENT", "pause")
 ASR_SLICE_MIN_S, ASR_SLICE_MAX_S = 4.0, 9.5
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
@@ -84,6 +84,12 @@ PIECE_MIN_EMBED_S = 1.25
 # 自成第 5 人，frame 99.0%（未切段的舊法同樣 99.0%、5 人）→ 100%、4 人。其他資料都不變（實錄 5／10／30／60、快速換人、乾淨 5／15／30，x86）。
 # 2.0 會把實錄 5 分只講一行（最長 1.5–2.0 s）的真人併掉（97.7%、3 人）；1.25 與片段門檻相同。
 CLUSTER_MIN_LONGEST_S = 1.25
+# 只有 1 個單位的群也不算一個人（2026-11-13，.cc_scratch/pe/exp_diar_units.py；同一次辨識，GS3 9 份＋藍牙 3 份，實際 4 人）：
+# 1（原行為）→ 2：只有即時 SenseVoice 那場 10 分由 5 人變 4 人（一句 1.31 s 的「主要是外殼刮傷，」自成一群）、時間正確率 99.67 → 100%，
+# 其他 11 份完全相同（藍牙 30 分仍是 5 人：多出的那群有 2 個單位，3 才併得掉）；3 會把 5 分會議裡只講 2 段的真人併掉
+# （4 份變 3 人、逐句 97.8%），不用。
+# 代價：整場只講一段（≥ 1.25 s）的人會併到時間上最近的人。PI5_CLUSTER_MIN_UNITS=1 切回。
+CLUSTER_MIN_UNITS = int(os.environ.get("PI5_CLUSTER_MIN_UNITS", "2"))
 WINDOW_S = 1.5
 WINDOW_HOP_S = 0.75
 WINDOW_SPLIT_MIN_S = 3.0
@@ -480,9 +486,14 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
     emb = np.ascontiguousarray(np.array(embeddings, dtype=np.float32))
     labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
     longest: Dict[int, float] = {}
+    count: Dict[int, int] = {}
     for (a, b, _), label in zip(units, labels):
         longest[label] = max(longest.get(label, 0.0), b - a)
-    keep = [k for k, label in enumerate(labels) if longest[label] >= CLUSTER_MIN_LONGEST_S]
+        count[label] = count.get(label, 0) + 1
+    keep = [k for k, label in enumerate(labels)
+            if longest[label] >= CLUSTER_MIN_LONGEST_S and count[label] >= CLUSTER_MIN_UNITS]
+    if not keep:   # 每群都只有一個單位（很短的錄音）：只看最長單位
+        keep = [k for k, label in enumerate(labels) if longest[label] >= CLUSTER_MIN_LONGEST_S]
     if keep and len(keep) < len(units):
         units = [units[k] for k in keep]
         labels = [labels[k] for k in keep]
