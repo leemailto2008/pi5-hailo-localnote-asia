@@ -154,6 +154,7 @@
 - **程式裡不放測試詞表:** 專有名詞只來自使用者輸入的會議詞彙；`hailo_whisper/engine.fix_meeting_terms` 保留但不再往裡加測試資料的詞。
 - **實驗選法:** 先在實錄 5 分／第二次錄／10 分選，再用新錄 10／30（／60）分確認；確認不過或只是持平但更慢就不採用（例：LLM 提示詞帶詞彙，慢 30% 又沒變好）。
 - **高精度逐字稿結果**存在 `/dev/shm/localnote_state/refine_last.json`（RAM 磁碟），服務重啟後還在。
+- **會後自動快修（2026-11-13，f4ab061）:** 高精度逐字稿完成後自動跑會議詞彙＋MacBERT（`transcript_polish.quick_fix`，`PI5_REFINE_QUICK_FIX=0` 可關）；`/api/refine` 的 `transcript` 是修正稿、`transcript_raw` 是原稿。**量測「原稿 → 潤稿」一律從 `transcript_raw` 起算**。會議詞彙存在盒子上（`GET／POST /api/glossary`，`/dev/shm/localnote_state/glossary.txt`）。
 - **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`。
 
 ---
