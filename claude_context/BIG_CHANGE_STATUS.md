@@ -117,6 +117,9 @@
   分析（sv_event.py／sv_event_stats.py）：底噪切片的情緒標記全是 <|EMO_UNKNOWN|>（部分語言 <|nospeech|>）；真人語音切片
   （GS3 2 份＋藍牙 2 份，約 300 段）全是 NEUTRAL／HAPPY、語言 zh／yue，沒有 EMO_UNKNOWN。
   → 過濾：SenseVoice 輸出標記為底噪（EMO_UNKNOWN 或 nospeech）且只剩 ≤ 3 個字就丟掉（真人短回覆「好。」是 NEUTRAL，不受影響）。pytest 652 passed。
+  907b74b：15:49 部署 .228（LN_DEPLOY_FORCE=1：部署守衛擋下是因為 15 分鐘內有自己的底噪測試；備份 20261113_154920）。
+  藍牙底噪 2 分重測：即時稿空的（雜字都被濾掉；改版前同樣測試留下「The. The.」）。15:52 部署 .229（備份 20261113_155218），
+  全靜音切片回 {'text': '그.', 'lang': '<|ko|>', 'emotion': '<|EMO_UNKNOWN|>'} → 會被濾掉。
 
 ## 晨間彙整（2026-11-13 07:25，11-12 白天＋夜間自測改迴圈）
 - 正式版本：.228 程式 192caec（11-12 17:59 部署），之後只有文件；GitHub／GitLab 已同步。.229 從 11-12 10:24 起 ping 不到（停在 0fd0396，沒有今天的改善），回來就 force 更新。
