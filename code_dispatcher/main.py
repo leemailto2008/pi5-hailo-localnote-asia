@@ -1442,7 +1442,7 @@ async def get_mic_config() -> Dict[str, Any]:
 
 
 class LiveAsrRequest(BaseModel):
-    engine: str = Field(..., description="whisper = Hailo-10H Whisper (NPU)；sensevoice = SenseVoice (CPU，藍牙收音時仍用 Whisper)")
+    engine: str = Field(..., description="whisper = Hailo-10H Whisper (NPU)；sensevoice = SenseVoice (CPU 2、3；PI5_LIVE_SV_ON_BT=0 時藍牙收音仍用 Whisper)")
 
 
 def _live_asr_config() -> Dict[str, Any]:

@@ -1613,7 +1613,7 @@ if (btnToggleMicPref) {
 loadMicPref();
 
 /* ---------- 即時逐字稿引擎 (Hailo Whisper／SenseVoice，2026-11-13)，存在伺服器端，下一場錄音生效 ----------
-   SenseVoice 在 CPU 上跑：藍牙收音時後端仍用 Hailo Whisper（錄音中不跑 CPU 推論，避免藍牙斷音）。 */
+   SenseVoice 在 CPU 2、3 上跑；後端設 PI5_LIVE_SV_ON_BT=0 時，藍牙收音仍用 Hailo Whisper（sensevoice_on_bluetooth=false）。 */
 let liveAsr = 'whisper';
 
 function renderLiveAsr(cfg) {
@@ -1627,7 +1627,8 @@ function renderLiveAsr(cfg) {
   if (label) label.textContent = '📝 即時逐字稿' + (sv && !cfg.sensevoice_on_bluetooth ? '（藍牙收音時用 Whisper）' : '');
   btn.title = cfg.sensevoice_unavailable && !sv
     ? '這台不能用 SenseVoice：' + cfg.sensevoice_unavailable
-    : '點擊切換錄音中的即時逐字稿引擎，下一場錄音生效。SenseVoice 較準但用 CPU；藍牙收音時為避免斷音仍用 Hailo Whisper';
+    : '點擊切換錄音中的即時逐字稿引擎，下一場錄音生效。SenseVoice 較準（用 CPU）；Hailo Whisper 用 NPU、CPU 零占用'
+      + (cfg.sensevoice_on_bluetooth ? '' : '。這台設定藍牙收音時仍用 Hailo Whisper');
 }
 
 async function loadLiveAsr() {

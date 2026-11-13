@@ -5,7 +5,7 @@ sv_worker.py — 錄音中的即時逐字稿用 SenseVoice（2026-11-13，使用
 SenseVoiceSmall int8（sherpa-onnx，CPU）在獨立子行程常駐，一次辨識一個即時切片（停頓處切 4–9.5 秒）。
   - 為什麼要子行程：sherpa-onnx 推論期間持有 GIL（11-10 分說話人實測會卡住整個 API），放在 uvicorn 行程網頁會卡。
   - CPU：子行程綁 CPU 2、3、nice 10、LIVE_THREADS 執行緒；錄音的 ffmpeg 與 PipeWire／bluetoothd 綁 0、1（voice_pipeline）。
-  - 藍牙收音時不用（CLAUDE.md 重點一：錄音中不跑 CPU 推論），由 voice_pipeline.live_asr_engine 決定。
+  - 藍牙收音也可用（11-13 實測封包到達與補靜音都沒變差，見 voice_pipeline.LIVE_SV_ON_BT）；由 voice_pipeline.live_asr_engine 決定。
   - 子行程閒置 IDLE_EXIT_SEC 秒自己結束（釋放模型記憶體），下一次呼叫自動重啟；會議錄完主行程也會叫它結束。
   - 模型、語言與後處理（OpenCC s2twp＋台灣用字修正）與錄音後的高精度逐字稿（refine_transcript）相同，只是不切句、不分說話人。
 協定與 stt_worker 相同：stdin/stdout 上的 [4 bytes big-endian 長度][pickle] 訊框；子行程的 print 全部導到 stderr。

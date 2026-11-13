@@ -40,6 +40,7 @@
 - **喇叭出聲、藍牙耳麥的自測只在晚上 19:00 到隔天早上 07:00 做（2026-11-02 使用者指定，取代原本的午休規則）：**
   - 白天 07:00–19:00 不跑任何「PC 喇叭放音」或「用藍牙耳麥收音」的測項（使用者白天會切換 PC 音源、使用耳麥）。
   - 白天仍可做其他工作：數位直送 e2e（null-sink，不出聲）、離線重放、分析、改程式、寫文件。
+  - **例外（2026-11-13 14:08 使用者）：** 藍牙耳麥（RichChipAN）已和 Pi、GS3 喇叭一起放在小房間，**白天也可以測藍牙**——用 .228 的 GS3 喇叭播、耳麥收音（run_suite.py `--play-sink` GS3 `--source` 藍牙節點）。14:12 使用者：**不再做「PC 喇叭→藍牙耳麥」的測試**（耳麥已不在 PC 旁），藍牙一律用 GS3 喇叭測。
   - 開跑前確認 PC 音源輸出是靠近耳麥的喇叭，並看前 30 秒的即時逐字稿有沒有正常內容；只出現重複的幻覺句（例如「I'm a little bit of…」）就代表沒收到聲音，立刻取消。
   - 錄音進行中，不要在 Pi 上跑任何評估或計算。
 - **累積 3～5 個 commit 就自動 push（2026-10-30 使用者指定）：**
@@ -102,6 +103,7 @@
 - **嚴格禁忌 1 (禁止錄音中執行推論):** 
   - 錄音進行中（`is_recording == True`），**絕對禁止**在背景啟動 faster-whisper 或 CTranslate2 等 CPU/矩陣計算密集模型。OpenMP 多核心運算會引起記憶體匯流排與 CPU 爭搶，導致 `wireplumber` 錯過 7.5ms 時間窗口，噴發大量 `spa.bluez5.source.sco: decode failed: -3` 造成嚴重視訊碎裂與斷流。
   - **解決方案:** 錄音期間將 CPU 0/1 與記憶體頻寬 100% 獨占保留給音訊守護行程；待錄音結束退出 ffmpeg 後，再釋放全 4 核心（`cpu_threads=4`）進行高精度全軌 STT。
+  - **2026-11-13 例外（實測）：** 即時稿 SenseVoice（`sv_worker`，綁 CPU 2、3、nice 10、2 執行緒）錄音中跑，藍牙 CVSD 10 分封包到達 99.9%、補靜音 0.1%（Whisper 100.0%／0.0%），沒變差，所以放行。其他 CPU 推論（faster-whisper、高精度稿、MacBERT、評估）錄音中仍禁止。
 - **嚴格禁忌 2 (禁止錄音中執行 HCI 指令):**
   - 錄音期間**絕對禁止**呼叫 `hcitool lq`、`hcitool rssi` 或高頻 `bluetoothctl info` 輪詢。HCI 控制指令會直接阻塞 UART 佇列，導致 SCO 封包丟失引發斷流與 DC 偏移跳變暴音 (Transient Click Artifact)。
   - **解決方案:** 在 `voice_streaming.py` 實裝 `is_any_recording_active()` 全域守衛；API 端點若處於錄音中直接回傳記憶體快取。
@@ -156,7 +158,7 @@
 - **高精度逐字稿結果**存在 `/dev/shm/localnote_state/refine_last.json`（RAM 磁碟），服務重啟後還在。
 - **會後自動快修（2026-11-13，f4ab061）:** 高精度逐字稿完成後自動跑會議詞彙＋MacBERT（`transcript_polish.quick_fix`，`PI5_REFINE_QUICK_FIX=0` 可關）；`/api/refine` 的 `transcript` 是修正稿、`transcript_raw` 是原稿。**量測「原稿 → 潤稿」一律從 `transcript_raw` 起算**。會議詞彙存在盒子上（`GET／POST /api/glossary`，`/dev/shm/localnote_state/glossary.txt`）。
 - **會議詞彙也用在紀要（2026-11-13，33c673c）:** `meeting_glossary.apply_to_text` 在紀要前套到即時稿（錄音中預先整理只套當段，整份 60 分要 0.3 s，錄音中不可每 10 秒整份重算）。
-- **即時稿可選 SenseVoice（2026-11-13，4a462bc）:** 網頁開關＋`/api/config/live_asr`；`sv_worker` 子行程綁 CPU 2、3。藍牙收音時預設仍用 Hailo Whisper（`PI5_LIVE_SV_ON_BT=1` 放行，夜間量測用）。GS3 實測 cer_num 0.12–0.16 → 0.016–0.031。e2e 用 `stt_sv_ratio` 取代 `stt_npu_ratio`。
+- **即時稿可選 SenseVoice（2026-11-13，4a462bc）:** 網頁開關＋`/api/config/live_asr`；`sv_worker` 子行程綁 CPU 2、3。藍牙收音也可用（11-13 GS3 喇叭→耳麥 10 分：封包到達 100.0／99.9%、補靜音 0.0／0.1%，沒變差；`PI5_LIVE_SV_ON_BT=0` 讓藍牙改回 Whisper）。GS3 實測 cer_num 0.12–0.16 → 0.016–0.031。e2e 用 `stt_sv_ratio` 取代 `stt_npu_ratio`。
 - **高精度稿辨識切段（2026-11-13，e19a919）:** 辨識在停頓處切 4–9.5 s 整段做（與即時稿相同），字依時間分回 VAD 句子給分說話人；VAD 句子（約 3 s）上下文太短，cer_num 0.05 → 0.03–0.04。`PI5_REFINE_ASR_SEGMENT=vad` 切回。
 - **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`；`tests/test_bt_link_stats.py` 要 fcntl，Windows 上加 `--ignore`。
 - **PC → Pi 傳大檔:** scp 原樣傳 7 MB tar 會卡住，加 `-C`（壓縮）約 1 分鐘傳完。

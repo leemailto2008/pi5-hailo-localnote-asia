@@ -667,11 +667,13 @@ def save_mic_preference(pref: str) -> str:
 
 
 # 錄音中的即時逐字稿引擎 (2026-11-13 使用者要求「錄音中也用 SenseVoice」)：whisper = Hailo-10H Whisper (NPU，CPU 零占用，原行為)；
-# sensevoice = SenseVoice (sv_worker，CPU 2 執行緒綁 CPU 2、3)。藍牙收音時一律用 whisper：CLAUDE.md 重點一「錄音中不跑 CPU 推論」，
-# 夜間要量藍牙＋SenseVoice 的影響時設 PI5_LIVE_SV_ON_BT=1。存檔，重啟後保留；下一場錄音生效。
+# sensevoice = SenseVoice (sv_worker，CPU 2 執行緒綁 CPU 2、3)。存檔，重啟後保留；下一場錄音生效。
+# 藍牙收音也可用 SenseVoice (CLAUDE.md 重點一「錄音中不跑 CPU 推論」的顧慮實測不成立)：11-13 GS3 喇叭→RichChipAN 耳麥 10 分，
+# 即時 Whisper／SenseVoice：封包到達 100.0／99.9%、補靜音 0.0／0.1%（0.13／0.47 s）、錄音 CPU 2.6／5.5%、cer_num 0.1531／0.0166。
+# PI5_LIVE_SV_ON_BT=0 讓藍牙收音時改回 Whisper。
 LIVE_ASR_CHOICES = ("whisper", "sensevoice")
 LIVE_ASR_PATH = os.path.join(DATA_DIR, "live_asr.json")
-LIVE_SV_ON_BT = os.environ.get("PI5_LIVE_SV_ON_BT", "0").strip() == "1"
+LIVE_SV_ON_BT = os.environ.get("PI5_LIVE_SV_ON_BT", "1").strip() != "0"
 
 
 def load_live_asr_preference() -> str:
@@ -700,7 +702,7 @@ def save_live_asr_preference(engine: str) -> str:
 
 
 def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT) -> str:
-    """這場錄音實際用的即時逐字稿引擎。source = 錄音的 PipeWire 節點；藍牙 (bluez*) 或還不知道時用 whisper。"""
+    """這場錄音實際用的即時逐字稿引擎。source = 錄音的 PipeWire 節點；還不知道來源，或藍牙 (bluez*) 且 sv_on_bt 關掉時用 whisper。"""
     if pref != "sensevoice" or not source:
         return "whisper"
     if source.startswith("bluez") and not sv_on_bt:
