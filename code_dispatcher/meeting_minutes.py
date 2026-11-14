@@ -104,6 +104,66 @@ async def stream_map_notes(prompt: str, keep_alive: Optional[int] = None, hailo_
     return acc.strip(), backend
 
 
+# 長會議逐段整理同時用 Hailo 與 CPU Ollama (2026-11-15)：Hailo 從第一段往後、CPU 從最後一段往前，碰頭為止。
+# 只在錄音結束後的整理階段跑 (processing 狀態不能開始新錄音)；另一條錄音路徑一開始，CPU 那一路立刻關閉串流、把那段交回 Hailo
+# (CLAUDE.md 重點一：錄音中不跑 CPU 推論)。.228 實測同一份即時稿 (.cc_scratch/pe/exp_dual_map.py，claude_context/BIG_CHANGE_STATUS.md #30)：
+# GS3 30 分 194.9／194.5 → 145.8／142.1 s、藍牙 30 分 176.9／180.6 → 157.9／124.0 s、GS3 120 分 829.4 → 566.1 s；
+# recap／議題覆蓋全部不變。Hailo 每段 24–41 s、CPU qwen2.5:3b-opt 每段 49–74 s (每次用完即卸載，見 llm_backend)；
+# 最高 74.7 °C、沒有降頻，可用記憶體最低 3.8 GB。PI5_SUMMARY_DUAL_MAP=0 關閉。
+SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "1") == "1"
+DUAL_MAP_POLL_S = 0.5
+
+
+def _recording_active() -> bool:
+    """任何錄音路徑 (會議錄音、即時口譯串流) 正在錄音。"""
+    try:
+        from voice_streaming import is_any_recording_active
+    except ImportError as e:
+        print(f"[MeetingMinutes] 無法檢查錄音狀態，CPU 整理那一路不啟動: {e}")
+        return True
+    return is_any_recording_active()
+
+
+def _dual_map_available() -> bool:
+    """Hailo 是首選且可用、CPU Ollama 也可用時才兩路同時整理 (Hailo 掛掉時 stream_map_notes 本來就退回 CPU)。"""
+    import llm_backend
+    return (llm_backend.PREFERRED_BACKEND == "hailo" and llm_backend.is_backend_healthy(llm_backend.HAILO_BACKEND)
+            and llm_backend.is_backend_healthy(llm_backend.CPU_BACKEND))
+
+
+async def stream_map_notes_cpu(prompt: str, lang: str = "zh", should_stop: Optional[Callable[[], bool]] = None):
+    """CPU Ollama 那一路的逐段抽重點。should_stop() 變真 (開始錄音) 時取消請求 (關閉連線 Ollama 就停止生成，
+    CPU 預填一段約 40 s 沒有 token，所以另外每 DUAL_MAP_POLL_S 秒檢查一次)。回傳 (文字, backend, 是否被中止)。"""
+    from contextlib import aclosing
+    lim = LANG_LIMITS.get(lang, LANG_LIMITS["zh"])
+
+    async def consume():
+        acc, backend = "", None
+        async with aclosing(aiter_chat_stream(prompt, system=lim["map_sys"], temperature=0.2,
+                                              num_predict=160 if lang == "zh" else 220, timeout=180.0,
+                                              cpu_first=True)) as stream:
+            async for tok, _done, b in stream:
+                backend = b
+                if tok:
+                    acc += tok
+                    if map_notes_complete(acc, max_len=lim["note_len"]):
+                        break
+        return acc.strip(), backend
+
+    task = asyncio.ensure_future(consume())
+    while not task.done():
+        await asyncio.wait({task}, timeout=DUAL_MAP_POLL_S)
+        if not task.done() and should_stop is not None and should_stop():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return "", None, True
+    text, backend = task.result()
+    return text, backend, False
+
+
 def _safe_post(fn, md: str, *args, **kwargs) -> str:
     """紀要後處理 (補待辦、對照逐字稿…) 出錯時沿用前一步的結果，不讓整份紀要變成「處理失敗」
     (11-04 夜間 3 分鐘實錄：merge_recap_into_minutes 的 IndexError 讓已經寫好的紀要整份丟掉)。"""
@@ -1384,41 +1444,97 @@ class MeetingJobManager:
         self.status.metrics["summary_chunks"] = total
         self.status.metrics["summary_premap_used"] = len(notes)
         plan = keep_alive_plan(total, SUMMARY_MAP_SEC_PER_CHUNK, SUMMARY_MAP_KEEP_ALIVE_MAX)
-        for idx, piece in enumerate(chunks, len(notes) + 1):
-            if self._cancellation_token and self._cancellation_token.is_set():
-                return ""
-            self.status.progress = int(60 + (idx - 1) / max(1, total) * 35)
-            self.status.msg = f"📝 長會議分段整理：第 {idx}/{total} 段..."
-            self.notify_status_update()
-            ka = plan[idx - 1]   # None = 這是載入視窗的最後一段，完成即卸載
-            t_req, text = time.time(), ""
-            if idx == total > 1 and is_recap_chunk(piece) and len(piece) <= SUMMARY_RECAP_VERBATIM_MAX * (3 if lang == "en" else 1):
-                # 口頭總結直接用原句 (見 summary_utils.recap_notes)；模型仍常駐時由 finally 的 _release_hailo() 釋放 NPU
-                notes.append(recap_notes(piece))
-                print(f"[MeetingMinutes] 段 {idx}/{total}: 結尾總結 {len(piece)} 字，直接採用原句")
-                self.status.summary_stream = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **limits), lang)
-                continue
-            try:
-                self._hailo_pinned = True
-                text, backend = await stream_map_notes(map_user_prompt(piece, idx, total, lang), keep_alive=ka, lang=lang)
-                if backend is not None:
-                    self.status.metrics["llm_backend"] = backend.label
-                if ka is None and backend is not None and backend.is_hailo:
-                    self._hailo_pinned = False   # 帶預設 keep_alive=0，完成即釋放 NPU
-            except LLMError as e:
-                print(f"[MeetingMinutes] 第 {idx}/{total} 段整理失敗: {e}")
+        base = len(notes)
+        slots: List[Optional[str]] = list(notes) + [None] * len(chunks)   # 第 i 個 = 第 i+1 段的重點
+        todo = list(range(base, total))                                  # 還沒整理的段 (slots 的索引)
+        if todo and total > 1 and is_recap_chunk(chunks[-1]) and \
+                len(chunks[-1]) <= SUMMARY_RECAP_VERBATIM_MAX * (3 if lang == "en" else 1):
+            # 口頭總結直接用原句 (見 summary_utils.recap_notes)；模型仍常駐時由 finally 的 _release_hailo() 釋放 NPU
+            slots[-1] = recap_notes(chunks[-1])
+            todo.pop()
+            print(f"[MeetingMinutes] 段 {total}/{total}: 結尾總結 {len(chunks[-1])} 字，直接採用原句")
+        lock = asyncio.Lock()
+        cpu_done: List[int] = []
+
+        def cancelled() -> bool:
+            return bool(self._cancellation_token and self._cancellation_token.is_set())
+
+        async def take(from_back: bool) -> Optional[int]:
+            async with lock:
+                if not todo:
+                    return None
+                return todo.pop() if from_back else todo.pop(0)
+
+        async def finish(slot: int, text: str, label: str, secs: float) -> None:
+            piece = chunks[slot - base]
             text = compact_notes(text or "", max_len=lim["note_len"])
             if not text:   # LLM 失敗：保留原文開頭，避免這段在紀要中消失
                 text = compact_notes("- " + piece[:lim["note_len"] * 3], max_lines=1, max_len=lim["note_len"] + 20)
-            notes.append(text)
-            print(f"[MeetingMinutes] 段 {idx}/{total}: {len(piece)} → {len(text)} 字 ({time.time() - t_req:.1f}s)")
-            if ka is None and idx < total:
-                await asyncio.sleep(3.0)   # 視窗切換：等 hailo-ollama 卸載完成再送下一段 (避免撞上卸載)
+            slots[slot] = text
+            done = sum(1 for s in slots if s is not None)
+            print(f"[MeetingMinutes] 段 {slot + 1}/{total}: {len(piece)} → {len(text)} 字 ({secs:.1f}s, {label})")
+            self.status.progress = int(60 + done / max(1, total) * 35)
+            self.notify_status_update()
             # 逐段把目前組出的紀要推給前端，使用者不必等全部完成
-            partial = localize_minutes(assemble_long_minutes(notes, body_todos=body_todos, **limits), lang)
+            partial = localize_minutes(assemble_long_minutes([s for s in slots if s is not None],
+                                                             body_todos=body_todos, **limits), lang)
             self.status.summary_stream = partial
             if job_id:
                 await ws_manager.broadcast("summary_stream", {"job_id": job_id, "token": "", "accumulated": partial})
+
+        async def hailo_worker() -> None:
+            while not cancelled():
+                slot = await take(False)
+                if slot is None:
+                    return
+                self.status.msg = f"📝 長會議分段整理：第 {slot + 1}/{total} 段..."
+                self.notify_status_update()
+                ka = plan[slot]   # None = 這是載入視窗的最後一段，完成即卸載
+                t_req, text, label = time.time(), "", "-"
+                try:
+                    self._hailo_pinned = True
+                    text, backend = await stream_map_notes(map_user_prompt(chunks[slot - base], slot + 1, total, lang),
+                                                           keep_alive=ka, lang=lang)
+                    if backend is not None:
+                        self.status.metrics["llm_backend"] = label = backend.label
+                    if ka is None and backend is not None and backend.is_hailo:
+                        self._hailo_pinned = False   # 帶預設 keep_alive=0，完成即釋放 NPU
+                except LLMError as e:
+                    print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段整理失敗: {e}")
+                await finish(slot, text, label, time.time() - t_req)
+                if ka is None and todo:
+                    await asyncio.sleep(3.0)   # 視窗切換：等 hailo-ollama 卸載完成再送下一段 (避免撞上卸載)
+
+        async def cpu_worker() -> None:
+            while not cancelled() and not _recording_active():
+                slot = await take(True)
+                if slot is None:
+                    return
+                t_req = time.time()
+                try:
+                    text, backend, stopped = await stream_map_notes_cpu(
+                        map_user_prompt(chunks[slot - base], slot + 1, total, lang), lang=lang, should_stop=_recording_active)
+                except LLMError as e:
+                    text, backend, stopped = "", None, True
+                    print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 CPU 整理失敗，交回 Hailo: {e}")
+                if stopped:   # 開始錄音 (或 CPU 失敗)：這段交回 Hailo，CPU 那一路不再接新段
+                    async with lock:
+                        todo.append(slot)
+                    print(f"[MeetingMinutes] CPU 整理那一路停止，第 {slot + 1}/{total} 段交回 Hailo")
+                    return
+                cpu_done.append(slot)
+                await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)
+
+        workers = [hailo_worker()]
+        if SUMMARY_DUAL_MAP and len(todo) >= 2 and not _recording_active() and await asyncio.to_thread(_dual_map_available):
+            workers.append(cpu_worker())
+        await asyncio.gather(*workers)
+        if todo and not cancelled():   # CPU 那一路在 Hailo 做完之後才交回的段
+            await hailo_worker()
+        if cancelled():
+            return ""
+        self.status.metrics["summary_cpu_chunks"] = len(cpu_done)
+        notes = [s for s in slots if s is not None]
 
         self.status.metrics["summary_map_s"] = round(time.time() - t_map, 1)
         full_text = assemble_long_minutes(notes, body_todos=body_todos, **limits)
