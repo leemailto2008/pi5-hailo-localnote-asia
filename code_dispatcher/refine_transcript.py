@@ -288,14 +288,20 @@ def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
     if not regions:
         return out
     j = 0
+    prev_k: Optional[int] = None
     for tok, t in zip(tokens, times):
         while j + 1 < len(regions) and regions[j + 1][0] <= t:
             j += 1
         k = j
         if t >= regions[j][1] and j + 1 < len(regions) and regions[j + 1][0] - t < t - regions[j][1]:
             k = j + 1
+        # 標點跟著前一個字 (2026-11-14)：句尾「。」的時間常落在停頓裡、離下一句較近，被分到下一句，
+        # 高精度稿出現「…要討論，。第一個議題」與「說話人2：。…」（5／10／45 分各 10／23／106 行開頭是標點）。
+        if prev_k is not None and tok.strip() and not any(ch.isalnum() for ch in tok):
+            k = prev_k
         out[k][0].append(tok)
         out[k][1].append(t)
+        prev_k = k
     return out
 
 
@@ -376,12 +382,16 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
             stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
             recognizer.decode_stream(stream)
             res = stream.result
-            if len(res.tokens) == len(res.timestamps):
+            if sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")):
+                # 底噪輸出不收字 (2026-11-14)：開頭 2 分鐘沒人講話的 13 片各吐一個「.」，原本會依時間歸到最近的句子，
+                # 高精度稿第一句變成「................好，我們開始…」。
+                pass
+            elif len(res.tokens) == len(res.timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in res.timestamps]
                 all_tokens.extend(res.tokens)
                 all_times.extend(times)
                 span = token_span(times, i0 / SAMPLE_RATE, i1 / SAMPLE_RATE)
-                if span and not sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")):
+                if span:
                     spans.append(span)
             elif res.text.strip():   # 沒有逐字時間（不應發生）：整段文字放在段落中點
                 all_tokens.append(res.text.strip())

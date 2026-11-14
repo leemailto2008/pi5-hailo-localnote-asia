@@ -394,6 +394,16 @@ def test_assign_tokens_by_time_and_gap_goes_to_nearer_sentence():
     assert rt.assign_tokens([], ["字"], [1.0]) == []
 
 
+def test_assign_tokens_keeps_punctuation_with_previous_word():
+    """2026-11-14：句尾「。」時間落在停頓裡、離下一句較近 → 原本分到下一句，高精度稿出現「…討論，。第一個」與行首「。」。"""
+    regions = [(0.0, 2.0), (3.0, 5.0)]
+    out = rt.assign_tokens(regions, ["討", "論", "。", "第", "一", "，", "個"], [0.5, 1.6, 2.8, 3.1, 3.4, 3.6, 3.8])
+    assert out[0][0] == ["討", "論", "。"]
+    assert out[1][0] == ["第", "一", "，", "個"]
+    out = rt.assign_tokens(regions, ["。", "好"], [0.1, 0.4])   # 第一個字就是標點：照時間
+    assert out[0][0] == ["。", "好"]
+
+
 def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):
     _fake_sherpa(monkeypatch)
     # 甲、乙各兩段；中間一段 1.3 s 的嵌入自成一群（只有 1 個單位）→ 不算一個人，借時間上最近的單位
@@ -479,4 +489,51 @@ def test_transcribe_keeps_recognized_text_when_vad_finds_nothing(monkeypatch):
     sentences = rt.transcribe(samples)
     assert sentences, "VAD 沒抓到句子時，辨識出的字不能整份丟掉"
     assert all("你好" in s.text for s in sentences)
-    assert not any(s.text == "그." for s in sentences)       # 底噪片不自成一句
+    assert not any("그" in s.text for s in sentences)       # 底噪片不自成一句，也不黏到最近的句子
+
+
+def test_transcribe_drops_noise_slices_next_to_real_sentences(monkeypatch):
+    """2026-11-14 開頭 2 分鐘沒人講話：13 片底噪「.」原本全部歸到第一句，高精度稿開頭變成「................好，…」。"""
+    import types
+
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    sr = rt.SAMPLE_RATE
+
+    class Vad:   # 有聲音的地方都抓得到（一般音量）
+        def __init__(self, cfg, buffer_size_in_seconds=0):
+            self.pos, self.buf, self.out = 0, [], []
+
+        def accept_waveform(self, x):
+            self.buf.append((self.pos, np.asarray(x)))
+            self.pos += len(x)
+
+        def flush(self):
+            start = None
+            for p, x in self.buf + [(self.pos, np.zeros(1))]:
+                loud = np.max(np.abs(x)) > 0.001
+                if loud and start is None:
+                    start = p
+                elif not loud and start is not None:
+                    self.out.append(types.SimpleNamespace(start=start, samples=np.zeros(p - start)))
+                    start = None
+            self.buf = []
+
+        def empty(self):
+            return not self.out
+
+        @property
+        def front(self):
+            return self.out[0]
+
+        def pop(self):
+            self.out.pop(0)
+
+    monkeypatch.setattr(sys.modules["sherpa_onnx"], "VoiceActivityDetector", Vad)
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    t = np.arange(sr * 8) / sr
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    samples = np.concatenate([np.zeros(sr * 40, dtype=np.float32), speech])
+    sentences = rt.transcribe(samples)
+    assert sentences and all("你好" in s.text for s in sentences)
+    assert not any("그" in s.text for s in sentences)
