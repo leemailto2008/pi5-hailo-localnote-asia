@@ -388,10 +388,17 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         all_tokens: List[str] = []
         all_times: List[float] = []
         spans: List[Tuple[float, float]] = []
+        from audio_splice import live_slice_is_quiet
         slices = pause_slices(samples)
         for n, (i0, i1) in enumerate(slices):
             if should_stop is not None and should_stop():
                 return None
+            if live_slice_is_quiet(samples[i0:i1]):
+                # 跟即時稿一樣用能量快篩 (2026-11-14)：靜音片不辨識。開頭 90 s 靜音的 14 片有 1 片吐「그.」卻標成
+                # NEUTRAL，躲過 sv_is_noise，高精度稿第一句變成「그.」。
+                if on_progress is not None:
+                    on_progress(0.1 + 0.9 * (n + 1) / len(slices))
+                continue
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
             recognizer.decode_stream(stream)

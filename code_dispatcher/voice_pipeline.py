@@ -69,27 +69,8 @@ def slice_bounds(chunk_sec: float, first: bool = False) -> Tuple[float, float]:
     return lo, hi
 
 
-# 即時 STT 的能量快篩：切片峰值與 RMS 都低於門檻 (停頓或微弱環境音) 就不送 STT (meeting_minutes 的切片工作者)。
-# 2026-11-14 由 0.035／0.0025 (-29／-52 dBFS) 降到 0.006／0.0004 (-44／-68 dBFS)：sim_gate.py 把 GS3 聲學錄音衰減後疊回 GS3 實錄房間底噪，
-# 舊門檻在說話聲小 20 dB 時開始丟片、小 25 dB 丟 58／89 片 (事實召回 0.90→0.39)、小 30 dB 全丟；SenseVoice 其實到小 35 dB 都還聽得懂
-# (不擋時事實 0.89–0.91)。新門檻到小 35 dB 只丟 2／89 片；GS3 房間底噪 (峰值 ≤ -47 dB、RMS ≤ -78 dB) 仍然全擋；
-# 漏過的底噪片還有 SenseVoice 底噪過濾 (sv_is_noise)，藍牙 CVSD 嘶聲 (RMS 約 0.02) 本來就過得了舊門檻，不受影響。
-LIVE_SKIP_PEAK = 0.006
-LIVE_SKIP_RMS = 0.0004
-
-
-def live_slice_is_quiet(pcm: np.ndarray) -> bool:
-    """即時切片 (float32，-1～1) 的峰值與 RMS 都低於快篩門檻 → 停頓或房間底噪，不送 STT。"""
-    if pcm.size == 0:
-        return True
-    peak = float(np.max(np.abs(pcm)))
-    rms = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float64))))
-    return peak < LIVE_SKIP_PEAK and rms < LIVE_SKIP_RMS
-
-
-def pcm16_is_quiet(pcm_bytes: bytes) -> bool:
-    """同 live_slice_is_quiet，輸入是 16-bit little-endian PCM (切片器的格式)。"""
-    return live_slice_is_quiet(np.frombuffer(pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0)
+# 能量快篩 (門檻、量測與說明見 audio_splice)：meeting_minutes 從這裡 import。
+from audio_splice import LIVE_SKIP_PEAK, LIVE_SKIP_RMS, live_slice_is_quiet, pcm16_is_quiet  # noqa: E402,F401
 
 
 def to_taiwan_traditional(text: str) -> str:

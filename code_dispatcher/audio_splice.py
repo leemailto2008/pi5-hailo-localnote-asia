@@ -13,6 +13,30 @@ PipeWire 1.4.x 的 bluez5 sco-source 在 mSBC 幀解碼失敗時直接丟棄該�
 """
 import numpy as np
 
+# 能量快篩：切片峰值與 RMS 都低於門檻 (停頓或微弱環境音) 就不送 STT。即時逐字稿 (meeting_minutes 的切片工作者)、
+# 即時切片器 (voice_pipeline：靜音片之後用短切片) 與高精度稿 (refine_transcript 停頓切片) 共用。
+# 2026-11-14 由 0.035／0.0025 (-29／-52 dBFS) 降到 0.006／0.0004 (-44／-68 dBFS)：sim_gate.py 把 GS3 聲學錄音衰減後疊回 GS3 實錄房間底噪，
+# 舊門檻在說話聲小 20 dB 時開始丟片、小 25 dB 丟 58／89 片 (事實召回 0.90→0.39)、小 30 dB 全丟；SenseVoice 其實到小 35 dB 都還聽得懂
+# (不擋時事實 0.89–0.91)。新門檻到小 35 dB 只丟 2／89 片；GS3 房間底噪 (峰值 ≤ -47 dB、RMS ≤ -78 dB) 仍然全擋；
+# 漏過的底噪片還有 SenseVoice 底噪過濾 (sv_is_noise)：粉紅／棕／白噪音 -50～-66 dBFS 過快篩的片，輸出全被濾掉 (noise_sv.py)；
+# 藍牙 CVSD 嘶聲 (RMS 約 0.02) 本來就過得了舊門檻，不受影響。
+LIVE_SKIP_PEAK = 0.006
+LIVE_SKIP_RMS = 0.0004
+
+
+def live_slice_is_quiet(pcm: np.ndarray) -> bool:
+    """切片 (float32，-1～1) 的峰值與 RMS 都低於快篩門檻 → 停頓或房間底噪，不送 STT。"""
+    if pcm.size == 0:
+        return True
+    peak = float(np.max(np.abs(pcm)))
+    rms = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float64))))
+    return peak < LIVE_SKIP_PEAK and rms < LIVE_SKIP_RMS
+
+
+def pcm16_is_quiet(pcm_bytes: bytes) -> bool:
+    """同 live_slice_is_quiet，輸入是 16-bit little-endian PCM (即時切片器的格式)。"""
+    return live_slice_is_quiet(np.frombuffer(pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0)
+
 
 class ZeroSplicer:
     """逐塊餵入 16-bit LE mono PCM bytes，輸出剪除插入式數位零段後的 PCM bytes (固定延遲 xfade_ms)。"""

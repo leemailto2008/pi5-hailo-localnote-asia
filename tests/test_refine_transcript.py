@@ -545,3 +545,36 @@ def test_transcribe_drops_noise_slices_next_to_real_sentences(monkeypatch):
     sentences = rt.transcribe(samples)
     assert sentences and all("你好" in s.text for s in sentences)
     assert not any("그" in s.text for s in sentences)
+
+
+def test_transcribe_skips_quiet_slices_even_if_not_flagged_as_noise(monkeypatch):
+    """2026-11-14 背景噪音那場：開頭靜音 14 片裡 1 片吐「그.」卻標 NEUTRAL（躲過 sv_is_noise）→ 高精度稿第一句「그.」。
+    靜音片（能量快篩）不送辨識。"""
+    import types
+
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    calls = []
+
+    class Rec:
+        def create_stream(self):
+            return types.SimpleNamespace(accept_waveform=lambda sr, x: calls.append(np.asarray(x)))
+
+        def decode_stream(self, st):
+            x = calls[-1]
+            if np.max(np.abs(x)) > 0.001:
+                st.result = types.SimpleNamespace(text="你好。", tokens=["你", "好", "。"], timestamps=[0.5, 0.8, 1.0],
+                                                  lang="<|zh|>", emotion="<|NEUTRAL|>")
+            else:   # 靜音也吐字、而且標 NEUTRAL
+                st.result = types.SimpleNamespace(text="그.", tokens=["그", "."], timestamps=[0.2, 0.3],
+                                                  lang="<|ko|>", emotion="<|NEUTRAL|>")
+
+    monkeypatch.setattr(sys.modules["sherpa_onnx"].OfflineRecognizer, "from_sense_voice", lambda **kw: Rec())
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    sr = rt.SAMPLE_RATE
+    t = np.arange(sr * 8) / sr
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    samples = np.concatenate([np.zeros(sr * 30, dtype=np.float32), speech])
+    sentences = rt.transcribe(samples)
+    assert sentences and not any("그" in s.text for s in sentences)
+    assert all(np.max(np.abs(x)) > 0.001 for x in calls)          # 只有有聲音的片送去辨識
