@@ -1558,7 +1558,10 @@ class MeetingJobManager:
                 await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)
 
         workers = [hailo_worker()]
-        if SUMMARY_DUAL_MAP and len(todo) >= 2 and not _recording_active() and await asyncio.to_thread(_dual_map_available):
+        # 只用在中文：英文長會議 CPU qwen2.5:3b 的重點會寫成「- Budget:」再接幾行子項目，compact_notes 拆成好幾條沒頭沒尾的重點
+        # (2026-11-15 en_long 實錄切兩段試跑，見 BIG_CHANGE_STATUS #36)；英文照舊只用 Hailo。
+        if SUMMARY_DUAL_MAP and lang == "zh" and len(todo) >= 2 and not _recording_active() \
+                and await asyncio.to_thread(_dual_map_available):
             workers.append(cpu_worker())
         await asyncio.gather(*workers)
         if todo and not cancelled():   # CPU 那一路在 Hailo 做完之後才交回的段

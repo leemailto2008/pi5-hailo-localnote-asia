@@ -130,3 +130,10 @@ def test_summary_estimate_matches_measured_durations():
     assert mm.estimate_summary_seconds(100, False) == 25.0
     assert 130 <= mm.estimate_summary_seconds(6000, True) <= 180
     assert 500 <= mm.estimate_summary_seconds(25000, True) <= 620
+
+
+def test_english_meeting_uses_hailo_only(monkeypatch):
+    """英文長會議不開 CPU 那一路（CPU 模型的英文重點會寫成子項目，見 meeting_minutes 註解）。"""
+    monkeypatch.setattr(mm, "detect_language", lambda text: "en")
+    job, calls, _ = _setup(monkeypatch)
+    assert calls["cpu"] == [] and len(calls["hailo"]) == job.status.metrics["summary_chunks"]
