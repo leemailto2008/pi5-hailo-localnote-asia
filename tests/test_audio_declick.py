@@ -79,3 +79,35 @@ def test_block_declick_short_and_empty_input():
     x = _tone(0.03).astype(np.int16)                                  # < 1000 樣本：原樣輸出
     y, n = _run_blocks(x, 1.0, 0.1)
     assert np.array_equal(y, x) and n == 0
+
+
+def test_stop_smooth_job_kills_process_group_and_removes_part(monkeypatch, tmp_path):
+    """2026-11-14：只殺 python 時 ffmpeg 編碼把半成品收尾成 .part 留在記憶體磁碟 → 整個行程群組一起停、刪掉 .part。"""
+    src = tmp_path / "m_1.ogg"
+    part = tmp_path / "m_1.smooth.ogg.part"
+    part.write_bytes(b"partial")
+    calls = []
+
+    class FakeProc:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return -9
+
+        def kill(self):
+            calls.append("kill")
+
+    def fake_popen(argv, **kw):
+        calls.append(("popen", kw.get("start_new_session")))
+        return FakeProc()
+
+    monkeypatch.setattr(audio_declick.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(audio_declick.os, "killpg", lambda pid, sig: calls.append(("killpg", pid)), raising=False)
+    audio_declick.start_smooth_job(str(src))
+    audio_declick.stop_smooth_job()
+    assert ("popen", True) in calls and ("killpg", 4321) in calls
+    assert not part.exists()
+    audio_declick.stop_smooth_job()                                   # 沒有工作時再停一次：不出錯

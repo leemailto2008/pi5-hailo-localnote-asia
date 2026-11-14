@@ -10,6 +10,7 @@
 make_smooth_ogg() 在錄音結束、編碼完成後於背景執行：ffmpeg 解碼 → declick → ffmpeg 以 nice 編碼成 *.smooth.ogg。
 """
 import os
+import signal
 import subprocess
 import time
 from typing import Tuple
@@ -154,28 +155,44 @@ def make_smooth_ogg(src: str, dst: str = "", sr: int = 16000, bitrate: str = "64
 
 # ---- 背景產生：獨立行程 (不佔服務的 GIL)，新錄音開始時會被停掉 (錄音中不做運算) ----
 _bg_proc = None
+_bg_src = ""
 
 
 def start_smooth_job(src: str):
-    """錄音檔完成後在背景產生 *.smooth.ogg；前一個還在跑就先停掉。"""
-    global _bg_proc
+    """錄音檔完成後在背景產生 *.smooth.ogg；前一個還在跑就先停掉。
+    自成一個行程群組 (start_new_session)：停掉時連 ffmpeg 解碼／編碼一起停。"""
+    global _bg_proc, _bg_src
     stop_smooth_job()
     try:
         _bg_proc = subprocess.Popen(["nice", "-n", "10", "python3", os.path.abspath(__file__), src],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        _bg_src = src
     except Exception as e:
         print(f"[Declick] cannot start smooth job: {e}")
-        _bg_proc = None
+        _bg_proc, _bg_src = None, ""
 
 
 def stop_smooth_job():
-    global _bg_proc
+    """新錄音開始時停掉背景修平。2026-11-14 實測：只殺 python 子行程時，串流中的 ffmpeg 編碼會讀到 EOF、
+    把半成品收尾成 *.smooth.ogg.part 留在記憶體磁碟 (4 小時錄音做 4 s 就停：4.5 MB)。改成整個行程群組 SIGKILL 再刪 .part。"""
+    global _bg_proc, _bg_src
     if _bg_proc is not None and _bg_proc.poll() is None:
         try:
-            _bg_proc.kill()
-        except Exception:
-            pass
-    _bg_proc = None
+            if hasattr(os, "killpg"):
+                os.killpg(_bg_proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            else:
+                _bg_proc.kill()
+            _bg_proc.wait(timeout=5)
+        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired) as e:
+            print(f"[Declick] stop smooth job: {e}")
+        if _bg_src:
+            try:
+                os.remove(smooth_path(_bg_src) + ".part")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                print(f"[Declick] cannot remove partial smooth file: {e}")
+    _bg_proc, _bg_src = None, ""
 
 
 if __name__ == "__main__":
