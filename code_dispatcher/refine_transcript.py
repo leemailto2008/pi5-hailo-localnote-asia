@@ -22,6 +22,7 @@ import collections
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -52,6 +53,24 @@ VAD_MIN_SILENCE_S = float(os.environ.get("PI5_VAD_MIN_SILENCE", "0.25"))
 # 唯一差異：即時 SenseVoice 那場 10 分多分出 1 人（只有一句 1.31 s 的「主要是外殼刮傷，」，剛好超過 CLUSTER_MIN_LONGEST_S；已由 CLUSTER_MIN_UNITS 解決）。
 ASR_SEGMENTATION = os.environ.get("PI5_REFINE_ASR_SEGMENT", "pause")
 ASR_SLICE_MIN_S, ASR_SLICE_MAX_S = 4.0, 9.5
+# VAD 漏掉的句子（2026-11-14）：pause 模式的字要分回 VAD 句子，VAD 一句都沒抓到時整份高精度稿是空的。
+# GS3 小聲實錄（測資 -25 dB、錄到平均 -62 dB）：Silero VAD 0 句（音量拉高 30 dB 也只抓到 14 句／27 s，正常約 188 句／403 s），
+# SenseVoice 卻辨識出七成事實。→ 某一片辨識出字、而且那片字的時間範圍跟任何 VAD 句子都不重疊，就用那片字的範圍補一句。
+# 範圍取第一個字前 MISSED_HEAD_S 到最後一個字後 MISSED_TAIL_S（字的時間是起點），不超出該片。底噪輸出（sv_is_noise）不補。
+MISSED_HEAD_S, MISSED_TAIL_S = 0.1, 0.4
+
+# SenseVoice 對底噪的輸出 (11-13 實測)：藍牙耳麥收 2 分鐘房間底噪 (CVSD 嘶聲過了能量快篩) 吐出「.」「哈。」「The.」，
+# 全靜音吐「그.」；這些切片的情緒標記都是 <|EMO_UNKNOWN|> (部分語言 <|nospeech|>)。真人語音切片 (GS3 2 份＋藍牙 2 份，約 300 段)
+# 全部是 NEUTRAL／HAPPY、語言 zh／yue，沒有一段 EMO_UNKNOWN。保守起見只丟「標記為底噪且只剩 ≤ 3 個字」的輸出。
+# 即時逐字稿 (voice_pipeline) 與高精度稿共用這條規則。
+SV_NOISE_MAX_CHARS = 3
+
+
+def sv_is_noise(text: str, lang: str = "", emotion: str = "") -> bool:
+    core = re.sub(r"[\W_]+", "", text or "")
+    return (emotion == "<|EMO_UNKNOWN|>" or lang == "<|nospeech|>") and len(core) <= SV_NOISE_MAX_CHARS
+
+
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
 # pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
 # 分群後再把「群中心餘弦相似度 ≥ CENTROID_MERGE_COS」的群合併（同一人被拆成兩群時中心很近）。
@@ -248,6 +267,20 @@ def pause_slices(samples) -> List[Tuple[int, int]]:
     return out
 
 
+def token_span(times: Sequence[float], start_s: float, end_s: float) -> Optional[Tuple[float, float]]:
+    """一片辨識出的字（起點時間，秒）→ 句子範圍：第一個字前 MISSED_HEAD_S 到最後一個字後 MISSED_TAIL_S，不超出該片。"""
+    if not times:
+        return None
+    return max(start_s, min(times) - MISSED_HEAD_S), min(end_s, max(times) + MISSED_TAIL_S)
+
+
+def add_missed_regions(regions: Sequence[Tuple[float, float]],
+                       spans: Sequence[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """VAD 句子範圍補上 VAD 漏掉的句子：spans 裡跟任何 VAD 句子都不重疊的範圍加進來（見 MISSED_HEAD_S 註解）。"""
+    extra = [s for s in spans if not any(s[0] < b and s[1] > a for a, b in regions)]
+    return sorted([*regions, *extra])
+
+
 def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
                   times: Sequence[float]) -> List[Tuple[List[str], List[float]]]:
     """每個 token 依起點時間（已排序）歸到所在的 VAD 句子；落在兩句之間（VAD 沒收的停頓）就歸到較近的那句。"""
@@ -334,6 +367,7 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     if ASR_SEGMENTATION == "pause":
         all_tokens: List[str] = []
         all_times: List[float] = []
+        spans: List[Tuple[float, float]] = []
         slices = pause_slices(samples)
         for n, (i0, i1) in enumerate(slices):
             if should_stop is not None and should_stop():
@@ -343,13 +377,22 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
             recognizer.decode_stream(stream)
             res = stream.result
             if len(res.tokens) == len(res.timestamps):
+                times = [i0 / SAMPLE_RATE + t for t in res.timestamps]
                 all_tokens.extend(res.tokens)
-                all_times.extend(i0 / SAMPLE_RATE + t for t in res.timestamps)
+                all_times.extend(times)
+                span = token_span(times, i0 / SAMPLE_RATE, i1 / SAMPLE_RATE)
+                if span and not sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")):
+                    spans.append(span)
             elif res.text.strip():   # 沒有逐字時間（不應發生）：整段文字放在段落中點
                 all_tokens.append(res.text.strip())
                 all_times.append((i0 + i1) / 2 / SAMPLE_RATE)
             if on_progress is not None:
                 on_progress(0.1 + 0.9 * (n + 1) / len(slices))
+        n_vad = len(regions)
+        regions = add_missed_regions(regions, spans)
+        if len(regions) > n_vad:
+            logger.info("[refine] VAD missed %d of %d sentence regions; filled from recognized slices",
+                        len(regions) - n_vad, len(regions))
         for (start, end), (toks, tms) in zip(regions, assign_tokens(regions, all_tokens, all_times)):
             text = "".join(toks).strip()
             if text:

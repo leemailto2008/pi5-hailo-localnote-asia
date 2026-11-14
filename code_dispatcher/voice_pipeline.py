@@ -723,15 +723,8 @@ def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT, sv_a
     return "sensevoice"
 
 
-# SenseVoice 對底噪的輸出 (11-13 實測)：藍牙耳麥收 2 分鐘房間底噪 (CVSD 嘶聲過了能量快篩) 吐出「.」「哈。」「The.」，
-# 全靜音吐「그.」；這些切片的情緒標記都是 <|EMO_UNKNOWN|> (部分語言 <|nospeech|>)。真人語音切片 (GS3 2 份＋藍牙 2 份，約 300 段)
-# 全部是 NEUTRAL／HAPPY、語言 zh／yue，沒有一段 EMO_UNKNOWN。保守起見只丟「標記為底噪且只剩 ≤ 3 個字」的輸出。
-SV_NOISE_MAX_CHARS = 3
-
-
-def sv_is_noise(text: str, lang: str = "", emotion: str = "") -> bool:
-    core = re.sub(r"[\W_]+", "", text or "")
-    return (emotion == "<|EMO_UNKNOWN|>" or lang == "<|nospeech|>") and len(core) <= SV_NOISE_MAX_CHARS
+# SenseVoice 底噪輸出過濾：規則與量測見 refine_transcript.sv_is_noise（高精度稿補 VAD 漏句時也用同一條）。
+from refine_transcript import SV_NOISE_MAX_CHARS, sv_is_noise  # noqa: E402,F401
 
 
 def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: Optional[Any] = None,

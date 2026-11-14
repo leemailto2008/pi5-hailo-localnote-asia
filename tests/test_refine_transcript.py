@@ -407,3 +407,76 @@ def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):
     sents = [Sentence(s.start, s.end, s.text) for s in sents]
     assert rt.diarize_sentences(x, sents) is True
     assert len({s.speaker for s in sents}) == 3
+
+
+def test_token_span_pads_and_stays_inside_slice():
+    import pytest
+    assert rt.token_span([4.5, 5.0, 5.2], 4.0, 9.5) == pytest.approx((4.4, 5.6))
+    assert rt.token_span([0.05, 9.4], 0.0, 9.5) == pytest.approx((0.0, 9.5))
+    assert rt.token_span([], 0.0, 1.0) is None
+
+
+def test_add_missed_regions_only_fills_gaps_vad_did_not_cover():
+    regions = [(1.0, 3.0), (10.0, 12.0)]
+    spans = [(2.5, 5.0), (5.5, 8.0), (11.0, 11.5)]       # 第 1、3 個跟 VAD 句子重疊：不補
+    assert rt.add_missed_regions(regions, spans) == [(1.0, 3.0), (5.5, 8.0), (10.0, 12.0)]
+    assert rt.add_missed_regions([], [(4.0, 6.0), (0.5, 2.0)]) == [(0.5, 2.0), (4.0, 6.0)]
+    assert rt.add_missed_regions(regions, []) == regions
+
+
+def _fake_sherpa_asr(monkeypatch):
+    """假的 sherpa_onnx：VAD 一句都抓不到（小聲錄音）；辨識：有聲音的片回「你好。」，沒聲音的片回底噪「그.」。"""
+    import types
+
+    import numpy as np
+
+    class Vad:
+        def __init__(self, cfg, buffer_size_in_seconds=0):
+            pass
+
+        def accept_waveform(self, x):
+            pass
+
+        def empty(self):
+            return True
+
+        def flush(self):
+            pass
+
+    class Stream:
+        def accept_waveform(self, sr, x):
+            self.x = np.asarray(x)
+
+    class Rec:
+        def create_stream(self):
+            return Stream()
+
+        def decode_stream(self, st):
+            if np.max(np.abs(st.x)) > 0.001:
+                st.result = types.SimpleNamespace(text="你好。", tokens=["你", "好", "。"], timestamps=[0.5, 0.8, 1.0],
+                                                  lang="<|zh|>", emotion="<|NEUTRAL|>")
+            else:
+                st.result = types.SimpleNamespace(text="그.", tokens=["그", "."], timestamps=[0.2, 0.3],
+                                                  lang="<|ko|>", emotion="<|EMO_UNKNOWN|>")
+
+    def vad_config():
+        return types.SimpleNamespace(silero_vad=types.SimpleNamespace(window_size=512), sample_rate=0, num_threads=0)
+
+    fake = types.SimpleNamespace(OfflineRecognizer=types.SimpleNamespace(from_sense_voice=lambda **kw: Rec()),
+                                 VadModelConfig=vad_config, VoiceActivityDetector=Vad)
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
+
+
+def test_transcribe_keeps_recognized_text_when_vad_finds_nothing(monkeypatch):
+    """2026-11-14 GS3 小聲實錄：Silero VAD 0 句，舊版字全部分不回句子 → 高精度稿整份空白。"""
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    sr = rt.SAMPLE_RATE
+    t = np.arange(sr * 8) / sr
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    samples = np.concatenate([speech, np.zeros(sr * 8, dtype=np.float32), speech])
+    sentences = rt.transcribe(samples)
+    assert sentences, "VAD 沒抓到句子時，辨識出的字不能整份丟掉"
+    assert all("你好" in s.text for s in sentences)
+    assert not any(s.text == "그." for s in sentences)       # 底噪片不自成一句
