@@ -402,6 +402,11 @@ def test_assign_tokens_keeps_punctuation_with_previous_word():
     assert out[1][0] == ["第", "一", "，", "個"]
     out = rt.assign_tokens(regions, ["。", "好"], [0.1, 0.4])   # 第一個字就是標點：照時間
     assert out[0][0] == ["。", "好"]
+    # 上一片結尾「。」＋下一片開頭「，」（藍牙 10 分「財務部。，」）：連續標點只留一個、句末優先
+    out = rt.assign_tokens(regions, ["部", "。", "，", "第"], [1.5, 1.8, 2.9, 3.1])
+    assert out[0][0] == ["部", "。"] and out[1][0] == ["第"]
+    out = rt.assign_tokens(regions, ["部", "，", "。", "第"], [1.5, 1.8, 2.9, 3.1])
+    assert out[0] == (["部", "。"], [1.5, 2.9])
 
 
 def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):
