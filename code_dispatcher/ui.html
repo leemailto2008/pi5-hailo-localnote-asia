@@ -1799,7 +1799,7 @@ function updateMetricsUI(m) {
         elSttTime.style.color = '#fbbf24';
       } else {
         const recSec = m.record_elapsed || 0;
-        elSttTime.textContent = `採集中: ${recSec.toFixed(0)}s (首片 8s 入隊)`;
+        elSttTime.textContent = `採集中: ${recSec.toFixed(0)}s（等第一段說話）`;
         elSttTime.style.color = '#38bdf8';
       }
     } else if (m.stt_status === 'running') {

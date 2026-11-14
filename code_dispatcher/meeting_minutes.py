@@ -781,6 +781,14 @@ class MeetingJobManager:
                                     chunk_queue.task_done()
                                     continue
 
+                                # 首片「進 STT」＝第一個過了能量快篩的切片成形的時間 (2026-11-14)：開頭沒人講話時，被快篩略過的靜音片不算，
+                                # 否則開頭 2 分鐘靜音會讓網頁「首片推論中」掛 2 分鐘、「推論時差」顯示 127 s (實際推論約 2 s)。
+                                if first_chunk_ready_time is None:
+                                    first_chunk_ready_time = round(enq_t - t0, 1)
+                                    self.status.metrics["first_chunk_time"] = first_chunk_ready_time
+                                    print(f"[MeetingMinutes] 🚀 首段語音切片進 STT！時間: {first_chunk_ready_time}s")
+                                    self.notify_status_update()
+
                                 stt_info: Dict[str, str] = {}
                                 seg_text = await asyncio.to_thread(
                                     speech_to_text_live,
@@ -899,12 +907,8 @@ class MeetingJobManager:
 
             async def _on_pcm_slice(slice_data: bytes, is_final: bool):
                 """PCM 滑動切片即時投遞至隊列"""
-                nonlocal first_chunk_ready_time
-                if first_chunk_ready_time is None and not is_final:
-                    first_chunk_ready_time = round(time.time() - t0, 1)
-                    self.status.metrics["first_chunk_time"] = first_chunk_ready_time
+                if self.status.metrics.get("stt_status") == "waiting" and not is_final:
                     self.status.metrics["stt_status"] = "ingesting"
-                    print(f"[MeetingMinutes] 🚀 首切片成形進 STT！時間: {first_chunk_ready_time}s")
                     self.notify_status_update()
                 await chunk_queue.put((slice_data, is_final, time.time()))
 
