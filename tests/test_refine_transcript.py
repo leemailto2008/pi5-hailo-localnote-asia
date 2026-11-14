@@ -591,3 +591,69 @@ def test_transcribe_drops_tiny_output_of_quiet_slices_even_if_not_flagged_as_noi
     text = "".join(s.text for s in sentences)
     assert "你好" in text and "請大家坐好" in text
     assert "그" not in text
+
+
+def test_isolated_lang_flips_only_single_slice_between_major_language():
+    """2026-11-14 藍牙 30 分：254 片裡 1 片人聲被判成韓文（前後都是中文）→ 用主要語言重解；連續兩片以上、中英夾雜不動。"""
+    zh, en, ko, ja, yue = "<|zh|>", "<|en|>", "<|ko|>", "<|ja|>", "<|yue|>"
+    assert rt.isolated_lang_flips([zh, zh, ko, zh, zh]) == (zh, [2])
+    assert rt.isolated_lang_flips([zh, ko, ko, zh, zh]) == (zh, [])      # 連續兩片：真的換語言
+    assert rt.isolated_lang_flips([zh, en, zh, yue, zh]) == (zh, [])     # 中英夾雜、粵語不重解
+    assert rt.isolated_lang_flips([ko, zh, zh]) == (zh, [])              # 第一片沒有前一片可比
+    assert rt.isolated_lang_flips([zh, zh, ja]) == (zh, [])              # 最後一片沒有後一片可比
+    assert rt.isolated_lang_flips([ja, ja, ko, ja]) == (ja, [2])         # 日文會議裡單片判成韓文
+    assert rt.isolated_lang_flips([zh, "", ko, zh]) == (zh, [])          # 沒有語言標記的鄰片不算主要語言
+    assert rt.isolated_lang_flips([]) == ("", [])
+
+
+def test_transcribe_redecodes_isolated_language_flip_with_major_language(monkeypatch):
+    """前後都是中文、中間一片判成韓文亂碼 → 另建指定中文的辨識器重解那一片；沒有這種片時不建第二個辨識器。"""
+    import types
+
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    created = []
+
+    class Rec:
+        def __init__(self, language):
+            self.language = language
+            created.append(language)
+
+        def create_stream(self):
+            st = types.SimpleNamespace()
+            st.accept_waveform = lambda sr, x: setattr(st, "x", np.asarray(x))
+            return st
+
+        def decode_stream(self, st):
+            peak = np.max(np.abs(st.x))
+            if peak > 0.015 and self.language == "auto":   # 被判成韓文的那片
+                st.result = types.SimpleNamespace(text="연봉責。", tokens=["연", "봉", "責", "。"],
+                                                  timestamps=[0.5, 0.7, 0.9, 1.1], lang="<|ko|>", emotion="<|NEUTRAL|>")
+            elif peak > 0.015:
+                st.result = types.SimpleNamespace(text="楊工程師。", tokens=["楊", "工", "程", "師", "。"],
+                                                  timestamps=[0.5, 0.7, 0.9, 1.1, 1.3], lang="<|zh|>",
+                                                  emotion="<|NEUTRAL|>")
+            elif peak > 0.001:
+                st.result = types.SimpleNamespace(text="你好。", tokens=["你", "好", "。"], timestamps=[0.5, 0.8, 1.0],
+                                                  lang="<|zh|>", emotion="<|NEUTRAL|>")
+            else:
+                st.result = types.SimpleNamespace(text="그.", tokens=["그", "."], timestamps=[0.2, 0.3],
+                                                  lang="<|ko|>", emotion="<|EMO_UNKNOWN|>")
+
+    monkeypatch.setattr(sys.modules["sherpa_onnx"].OfflineRecognizer, "from_sense_voice",
+                        lambda **kw: Rec(kw["language"]))
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    monkeypatch.setattr(rt, "ASR_LANGUAGE", "auto")
+    sr = rt.SAMPLE_RATE
+    t = np.arange(sr * 3) / sr   # 3 s 一段、中間停 6 s：每段剛好落在同一片
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    loud = (0.02 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    gap = np.zeros(sr * 6, dtype=np.float32)
+
+    text = "".join(s.text for s in rt.transcribe(np.concatenate([speech, gap, loud, gap, speech, gap])))
+    assert "楊工程師" in text and "연" not in text and text.count("你好") == 2
+    assert created == ["auto", "zh"]
+
+    created.clear()   # 連續兩片都判成韓文：當成真的換語言，不重解、不建第二個辨識器
+    text = "".join(s.text for s in rt.transcribe(np.concatenate([speech, gap, loud, gap, loud, gap, speech, gap])))
+    assert text.count("연봉") == 2 and created == ["auto"]

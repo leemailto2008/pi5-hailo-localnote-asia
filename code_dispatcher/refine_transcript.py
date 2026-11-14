@@ -71,6 +71,29 @@ def sv_is_noise(text: str, lang: str = "", emotion: str = "") -> bool:
     return (emotion == "<|EMO_UNKNOWN|>" or lang == "<|nospeech|>") and len(core) <= SV_NOISE_MAX_CHARS
 
 
+# 單片語言判錯（2026-11-14）：藍牙 30 分實錄 254 片裡有 1 片（響度正常的人聲）被 SenseVoice 判成韓文，
+# 輸出「연봉 증시에서責치소요시용증.」，原句是「楊工程師負責通知所有使用者。」；同一片指定中文重解得到「陽工程師負責通知所有使用者。」。
+# 前後兩片都是主要語言、只有夾在中間的一片判成日／韓文 → 多半是語言辨識判錯，用主要語言重解；
+# 連續兩片以上才是真的換語言，照原樣保留。中／粵／英是本產品會議的語言與中英夾雜，不重解。
+# sherpa-onnx 2.0.1 的 stream.set_option("language") 對 SenseVoice 無效（輸出不變），ys_log_probs 是空的（沒有信心分數可比），
+# 所以要另建一個指定語言的辨識器（只在真的有這種片時才建）。
+LID_KEEP_LANGS = ("<|zh|>", "<|yue|>", "<|en|>")
+SV_LANG_CODES = {"<|zh|>": "zh", "<|en|>": "en", "<|yue|>": "yue", "<|ja|>": "ja", "<|ko|>": "ko"}
+
+
+def isolated_lang_flips(langs: Sequence[str]) -> Tuple[str, List[int]]:
+    """langs：依時間排序、每個有字的片的 SenseVoice 語言標記。
+    回傳 (主要語言, 要用主要語言重解的片索引)；主要語言 = 出現最多的語言。"""
+    counts = collections.Counter(lg for lg in langs if lg in SV_LANG_CODES)
+    if not counts:
+        return "", []
+    major = counts.most_common(1)[0][0]
+    flips = [i for i in range(1, len(langs) - 1)
+             if langs[i] in SV_LANG_CODES and langs[i] not in LID_KEEP_LANGS and langs[i] != major
+             and langs[i - 1] == major and langs[i + 1] == major]
+    return major, flips
+
+
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
 # pyannote = 舊流程（pyannote 分段 + CAM++ + FastClustering，再把句子對到重疊最長的分段）。
 # 分群後再把「群中心餘弦相似度 ≥ CENTROID_MERGE_COS」的群合併（同一人被拆成兩群時中心很近）。
@@ -390,6 +413,8 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         spans: List[Tuple[float, float]] = []
         from audio_splice import live_slice_is_quiet
         slices = pause_slices(samples)
+        # (i0, i1, text, lang, tokens, timestamps)；底噪片不列入
+        decoded: List[Tuple[int, int, str, str, List[str], List[float]]] = []
         for n, (i0, i1) in enumerate(slices):
             if should_stop is not None and should_stop():
                 return None
@@ -405,18 +430,41 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                 # 靜音片（能量快篩）只吐 ≤ 3 個字也當底噪：開頭 90 s 靜音的 14 片有 1 片吐「그.」卻標 NEUTRAL，躲過 sv_is_noise。
                 # 靜音片不整片跳過：說話聲小 33 dB 的那份，快篩下的片還辨識得出約 60 字（整片跳過 cer_num 0.400 → 0.415）。
                 pass
-            elif len(res.tokens) == len(res.timestamps):
-                times = [i0 / SAMPLE_RATE + t for t in res.timestamps]
-                all_tokens.extend(res.tokens)
+            elif res.text.strip():
+                decoded.append((i0, i1, res.text, getattr(res, "lang", ""), list(res.tokens), list(res.timestamps)))
+            if on_progress is not None:
+                on_progress(0.1 + 0.9 * (n + 1) / len(slices))
+        if ASR_LANGUAGE == "auto":
+            major, flips = isolated_lang_flips([d[3] for d in decoded])
+            if flips:
+                fixed = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                    model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS,
+                    language=SV_LANG_CODES[major], use_itn=True)
+                for k in flips:
+                    if should_stop is not None and should_stop():
+                        return None
+                    i0, i1, old_text, old_lang = decoded[k][:4]
+                    stream = fixed.create_stream()
+                    stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
+                    fixed.decode_stream(stream)
+                    res = stream.result
+                    if not re.sub(r"[\W_]+", "", res.text or ""):
+                        continue   # 指定語言重解沒有字：保留原結果
+                    logger.info("[refine] %.1f-%.1fs language %s re-decoded as %s: %r -> %r",
+                                i0 / SAMPLE_RATE, i1 / SAMPLE_RATE, old_lang, major, old_text, res.text)
+                    decoded[k] = (i0, i1, res.text, major, list(res.tokens), list(res.timestamps))
+                del fixed
+        for i0, i1, text, _lang, tokens, timestamps in decoded:
+            if len(tokens) == len(timestamps):
+                times = [i0 / SAMPLE_RATE + t for t in timestamps]
+                all_tokens.extend(tokens)
                 all_times.extend(times)
                 span = token_span(times, i0 / SAMPLE_RATE, i1 / SAMPLE_RATE)
                 if span:
                     spans.append(span)
-            elif res.text.strip():   # 沒有逐字時間（不應發生）：整段文字放在段落中點
-                all_tokens.append(res.text.strip())
+            else:   # 沒有逐字時間（不應發生）：整段文字放在段落中點
+                all_tokens.append(text.strip())
                 all_times.append((i0 + i1) / 2 / SAMPLE_RATE)
-            if on_progress is not None:
-                on_progress(0.1 + 0.9 * (n + 1) / len(slices))
         n_vad = len(regions)
         regions = add_missed_regions(regions, spans)
         if len(regions) > n_vad:
