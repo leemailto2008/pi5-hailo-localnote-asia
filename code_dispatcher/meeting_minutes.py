@@ -112,6 +112,17 @@ async def stream_map_notes(prompt: str, keep_alive: Optional[int] = None, hailo_
 # 最高 74.7 °C、沒有降頻，可用記憶體最低 3.8 GB。PI5_SUMMARY_DUAL_MAP=0 關閉。
 SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "1") == "1"
 DUAL_MAP_POLL_S = 0.5
+# 最後剩一段時給「預計比較早做完」的那一路 (2026-11-15 服務內 GS3 30 分：Hailo 做完第 3 段的同一秒 CPU 搶到第 4 段，
+# CPU 做了 58 s、Hailo 閒著 → 整理 172 s；同一份實驗稿 Hailo 4 段、CPU 2 段時 142–146 s)。還沒量到時用 .228 實測的每段秒數。
+DUAL_MAP_HAILO_PRIOR_S, DUAL_MAP_CPU_PRIOR_S = 36.0, 60.0
+
+
+def cpu_should_take_last(hailo_secs: List[float], cpu_secs: List[float], hailo_elapsed: Optional[float]) -> bool:
+    """只剩一段時 CPU 要不要接：CPU 做一段的時間 < Hailo 做完手上那段 (hailo_elapsed = 已做了幾秒，None = 閒著) 再做一段的時間。"""
+    h = sum(hailo_secs) / len(hailo_secs) if hailo_secs else DUAL_MAP_HAILO_PRIOR_S
+    c = sum(cpu_secs) / len(cpu_secs) if cpu_secs else DUAL_MAP_CPU_PRIOR_S
+    remaining = 0.0 if hailo_elapsed is None else max(0.0, h - hailo_elapsed)
+    return c < remaining + h
 
 
 def _recording_active() -> bool:
@@ -1455,6 +1466,8 @@ class MeetingJobManager:
             print(f"[MeetingMinutes] 段 {total}/{total}: 結尾總結 {len(chunks[-1])} 字，直接採用原句")
         lock = asyncio.Lock()
         cpu_done: List[int] = []
+        durations: Dict[str, List[float]] = {"hailo": [], "cpu": []}
+        hailo_started: List[Optional[float]] = [None]   # Hailo 手上這段的開始時間；None = 閒著
 
         def cancelled() -> bool:
             return bool(self._cancellation_token and self._cancellation_token.is_set())
@@ -1463,7 +1476,14 @@ class MeetingJobManager:
             async with lock:
                 if not todo:
                     return None
-                return todo.pop() if from_back else todo.pop(0)
+                if from_back and len(todo) == 1:
+                    elapsed = None if hailo_started[0] is None else time.time() - hailo_started[0]
+                    if not cpu_should_take_last(durations["hailo"], durations["cpu"], elapsed):
+                        return None   # 最後一段 Hailo 會比較早做完：CPU 那一路收工
+                slot = todo.pop() if from_back else todo.pop(0)
+                if not from_back:
+                    hailo_started[0] = time.time()
+                return slot
 
         async def finish(slot: int, text: str, label: str, secs: float) -> None:
             piece = chunks[slot - base]
@@ -1501,6 +1521,8 @@ class MeetingJobManager:
                         self._hailo_pinned = False   # 帶預設 keep_alive=0，完成即釋放 NPU
                 except LLMError as e:
                     print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段整理失敗: {e}")
+                durations["hailo"].append(time.time() - t_req)
+                hailo_started[0] = None
                 await finish(slot, text, label, time.time() - t_req)
                 if ka is None and todo:
                     await asyncio.sleep(3.0)   # 視窗切換：等 hailo-ollama 卸載完成再送下一段 (避免撞上卸載)
@@ -1523,6 +1545,7 @@ class MeetingJobManager:
                     print(f"[MeetingMinutes] CPU 整理那一路停止，第 {slot + 1}/{total} 段交回 Hailo")
                     return
                 cpu_done.append(slot)
+                durations["cpu"].append(time.time() - t_req)
                 await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)
 
         workers = [hailo_worker()]

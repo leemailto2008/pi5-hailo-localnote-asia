@@ -113,3 +113,12 @@ def test_stream_map_notes_cpu_cancels_request_when_recording_starts(monkeypatch)
     text, backend, stopped = asyncio.run(run())
     assert stopped and text == "" and backend is None
     assert state["closed"]
+
+
+def test_cpu_takes_last_chunk_only_if_it_finishes_earlier_than_hailo():
+    """2026-11-15 服務內 GS3 30 分：Hailo 做完第 3 段的同一秒 CPU 搶到最後一段，CPU 做 58 s、Hailo 閒著。"""
+    assert not mm.cpu_should_take_last([], [], None)              # 預設 Hailo 36 s、CPU 60 s，Hailo 閒著 → 給 Hailo
+    assert mm.cpu_should_take_last([], [], 0.0)                   # Hailo 才剛開始一段：36 + 36 > 60 → CPU 接
+    assert not mm.cpu_should_take_last([40.0], [58.0], 35.0)      # Hailo 快做完手上那段：5 + 40 < 58 → 給 Hailo
+    assert mm.cpu_should_take_last([40.0], [20.0], None)          # CPU 比較快就給 CPU
+    assert not mm.cpu_should_take_last([40.0], [58.0], 90.0)      # Hailo 已經超時：剩 0 s 估，40 < 58 → 給 Hailo
