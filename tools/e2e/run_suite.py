@@ -109,6 +109,7 @@ def main():
     ap.add_argument("--play-sink", default=None, help="聲學模式：播放用的 PipeWire sink (與 --source 一起給)")
     ap.add_argument("--source", default=None, help="聲學模式：app 錄音用的 PipeWire source")
     a = ap.parse_args()
+    e2e.exit_on_sigterm()
     try:
         e2e.routing(a.play_sink, a.source)
     except ValueError as e:

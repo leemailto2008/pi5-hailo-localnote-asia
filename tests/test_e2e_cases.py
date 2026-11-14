@@ -60,3 +60,23 @@ def test_routing_acoustic_records_given_source_and_plays_given_sink():
 def test_routing_rejects_half_acoustic(play_sink, source):
     with pytest.raises(ValueError):
         e2e.routing(play_sink, source)
+
+def test_sigterm_exits_through_finally_blocks():
+    """2026-11-14：pkill run_suite 後 ffmpeg 播放器還在放 → SIGTERM 改成 SystemExit，run_case 的 finally 會停掉播放器。"""
+    import signal
+
+    import pytest
+    import e2e
+    old = signal.getsignal(signal.SIGTERM)
+    ran = []
+    try:
+        e2e.exit_on_sigterm()
+        with pytest.raises(SystemExit) as exc:
+            try:
+                signal.raise_signal(signal.SIGTERM)
+            finally:
+                ran.append("finally")
+        assert ran == ["finally"]
+        assert exc.value.code == 128 + signal.SIGTERM
+    finally:
+        signal.signal(signal.SIGTERM, old)

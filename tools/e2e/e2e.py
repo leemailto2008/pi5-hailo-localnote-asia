@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -50,6 +51,12 @@ def api_retry(path, body=None, t=30, tries=4):
             if i == tries - 1:
                 raise
             time.sleep(3)
+
+
+def exit_on_sigterm():
+    """pkill（SIGTERM）也走 try/finally 收尾：停播放器、刪強制收音設定、停監看。
+    2026-11-14：砍掉 run_suite 後 ffmpeg 播放器還在放（預設 SIGTERM 直接結束、不跑 finally），下一場測試疊到兩路聲音。"""
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
 
 
 def _api_stats(lat, gaps, timeouts):
@@ -243,6 +250,7 @@ def main():
     ap.add_argument("--play-sink", default=None, help="聲學模式：播放用的 PipeWire sink (例 alsa_output.usb-…)")
     ap.add_argument("--source", default=None, help="聲學模式：app 錄音用的 PipeWire source (例 alsa_input.usb-…)")
     a = ap.parse_args()
+    exit_on_sigterm()
     res = run_case(a.wav, a.fixture, a.label, bypass_summary=a.allow_bypass, out_dir=a.out,
                    play_sink=a.play_sink, source=a.source)
     print(json.dumps({k: v for k, v in res.items() if k not in ("transcript", "summary")}, ensure_ascii=False))
