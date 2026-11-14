@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import time
+import types
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -92,6 +93,81 @@ def isolated_lang_flips(langs: Sequence[str]) -> Tuple[str, List[int]]:
              if langs[i] in SV_LANG_CODES and langs[i] not in LID_KEEP_LANGS and langs[i] != major
              and langs[i - 1] == major and langs[i + 1] == major]
     return major, flips
+
+
+# 沿用即時逐字稿的 SenseVoice 結果 (2026-11-15)：即時稿 11-13 起也是 SenseVoice（同模型、同語言設定、同 ITN），
+# 切片也是停頓處切 4–9.5 秒，錄音後再整段重新辨識是重做一次（30 分 154 s、4 小時 1,242 s，見 BIG_CHANGE_STATUS #37）。
+# 錄音時每個切片的起點（樣本）、長度、tokens／timestamps 存成 <錄音>.live_asr.json；切片跟母帶 OGG 吃的是同一串 PCM
+# （voice_pipeline._deliver：同一份 clean 先寫編碼器再進切片），所以起點就是母帶裡的位置。
+# 能量快篩略過的靜音片、太短的尾巴、SenseVoice 失敗改走 Whisper 的片，照舊從母帶辨識；底噪、單片語言判錯的規則不變。
+# 樣本總數跟母帶差超過 LIVE_ASR_MAX_DRIFT_S 就不沿用（整段重新辨識）。PI5_REFINE_REUSE_LIVE=0 關閉。
+LIVE_ASR_REUSE = os.environ.get("PI5_REFINE_REUSE_LIVE", "1").strip() != "0"
+LIVE_ASR_MAX_DRIFT_S = 1.0
+LIVE_ASR_KEEP = 3          # localnote_state 裡只留最近幾場的 .live_asr.json
+LIVE_ASR_SUFFIX = ".live_asr.json"
+
+
+def live_asr_path(audio_path: str) -> str:
+    """<錄音快取>/m_x.ogg → <錄音快取的上一層>/localnote_state/m_x.live_asr.json
+    (不放錄音快取資料夾：那裡的檔案數算進錄音環形緩衝的保留筆數)。PI5_REFINE_LIVE_ASR_FILE 可指定 (離線實驗用)。"""
+    override = os.environ.get("PI5_REFINE_LIVE_ASR_FILE")
+    if override:
+        return override
+    cache_dir = os.path.dirname(os.path.abspath(audio_path))
+    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    return os.path.join(os.path.dirname(cache_dir), "localnote_state", stem + LIVE_ASR_SUFFIX)
+
+
+def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_samples: int) -> Optional[str]:
+    """錄音結束時存即時切片的辨識結果；同資料夾舊的只留最近 LIVE_ASR_KEEP 場。存不了回 None（高精度稿就整段重新辨識）。"""
+    path = live_asr_path(audio_path)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".part", "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "sample_rate": SAMPLE_RATE, "total_samples": int(total_samples),
+                       "slices": list(slices)}, f, ensure_ascii=False)
+        os.replace(path + ".part", path)
+        old = sorted((p for p in (os.path.join(os.path.dirname(path), n) for n in os.listdir(os.path.dirname(path)))
+                      if p.endswith(LIVE_ASR_SUFFIX)), key=os.path.getmtime)
+        for p in old[:-LIVE_ASR_KEEP]:
+            os.remove(p)
+    except OSError as e:
+        logger.warning("[refine] live ASR results not saved (%s): %s", path, e)
+        return None
+    return path
+
+
+def load_live_asr(audio_path: str, n_samples: int) -> Optional[List[Dict[str, Any]]]:
+    """讀回即時切片；切片不連續、或樣本總數跟母帶差超過 LIVE_ASR_MAX_DRIFT_S 就回 None。
+    最後一片若比母帶短，補一片「從母帶辨識」蓋到結尾。"""
+    path = live_asr_path(audio_path)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        logger.warning("[refine] live ASR results unreadable (%s): %s", path, e)
+        return None
+    slices = [s for s in data.get("slices") or [] if int(s.get("n", 0)) > 0]
+    pos = 0
+    for s in slices:
+        if int(s["s"]) != pos:
+            logger.warning("[refine] live ASR slices not contiguous at %d (expected %d); re-decode everything", s["s"], pos)
+            return None
+        pos += int(s["n"])
+    if abs(pos - n_samples) > LIVE_ASR_MAX_DRIFT_S * SAMPLE_RATE:
+        logger.warning("[refine] live ASR covers %.2f s but audio is %.2f s; re-decode everything",
+                       pos / SAMPLE_RATE, n_samples / SAMPLE_RATE)
+        return None
+    out = []
+    for s in slices:
+        if s["s"] >= n_samples:
+            break
+        out.append({**s, "n": min(int(s["n"]), n_samples - int(s["s"]))})
+    if pos < n_samples:
+        out.append({"s": pos, "n": n_samples - pos, "src": "tail"})
+    return out
 
 
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
@@ -342,14 +418,24 @@ def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
     return out
 
 
-def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None) -> Optional[List[Sentence]]:
+def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None,
+               live_slices: Optional[Sequence[Dict[str, Any]]] = None,
+               stats: Optional[Dict[str, Any]] = None) -> Optional[List[Sentence]]:
     """VAD 切句後逐句辨識，再依靈敏 VAD 的短停頓把句子切成小段（見 FINE_VAD_MIN_SILENCE_S；
-    後段的 cont=True）。被 should_stop 中止時回傳 None。"""
+    後段的 cont=True）。被 should_stop 中止時回傳 None。
+    live_slices（load_live_asr）：pause 模式改用錄音時的切片，SenseVoice 已辨識過的片直接沿用（見 LIVE_ASR_REUSE）；
+    stats 填入 reused_slices／decoded_slices。"""
     import sherpa_onnx
 
-    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-        model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=ASR_LANGUAGE, use_itn=True
-    )
+    _rec: List[Any] = []
+
+    def recognizer_() -> Any:
+        """要辨識才載入（整場沿用即時稿、又沒有要補辨識的片時，就不必載入模型）。"""
+        if not _rec:
+            _rec.append(sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=ASR_LANGUAGE,
+                use_itn=True))
+        return _rec[0]
 
     def make_vad(min_silence: float, min_speech: float):
         cfg = sherpa_onnx.VadModelConfig()
@@ -376,9 +462,9 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                 regions.append((start, start + len(seg.samples) / SAMPLE_RATE))
                 vad.pop()
                 continue
-            stream = recognizer.create_stream()
+            stream = recognizer_().create_stream()
             stream.accept_waveform(SAMPLE_RATE, seg.samples)
-            recognizer.decode_stream(stream)
+            recognizer_().decode_stream(stream)
             res = stream.result
             text = res.text.strip()
             if text:
@@ -412,16 +498,28 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         all_times: List[float] = []
         spans: List[Tuple[float, float]] = []
         from audio_splice import live_slice_is_quiet
-        slices = pause_slices(samples)
+        if live_slices:
+            slices = [(int(s["s"]), int(s["s"]) + int(s["n"])) for s in live_slices]
+        else:
+            slices = pause_slices(samples)
+        reused = 0
         # (i0, i1, text, lang, tokens, timestamps)；底噪片不列入
         decoded: List[Tuple[int, int, str, str, List[str], List[float]]] = []
         for n, (i0, i1) in enumerate(slices):
             if should_stop is not None and should_stop():
                 return None
-            stream = recognizer.create_stream()
-            stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
-            recognizer.decode_stream(stream)
-            res = stream.result
+            live = live_slices[n] if live_slices else None
+            if (live is not None and live.get("src") == "sv" and live.get("tokens") is not None
+                    and len(live["tokens"]) == len(live.get("ts") or [])):
+                res = types.SimpleNamespace(text=live.get("text") or "", lang=live.get("lang", ""),
+                                            emotion=live.get("emotion", ""), tokens=list(live["tokens"]),
+                                            timestamps=list(live["ts"]))
+                reused += 1
+            else:
+                stream = recognizer_().create_stream()
+                stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
+                recognizer_().decode_stream(stream)
+                res = stream.result
             if sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")) or (
                     live_slice_is_quiet(samples[i0:i1])
                     and len(re.sub(r"[\W_]+", "", res.text or "")) <= SV_NOISE_MAX_CHARS):
@@ -434,6 +532,10 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                 decoded.append((i0, i1, res.text, getattr(res, "lang", ""), list(res.tokens), list(res.timestamps)))
             if on_progress is not None:
                 on_progress(0.1 + 0.9 * (n + 1) / len(slices))
+        if stats is not None:
+            stats.update(reused_slices=reused, decoded_slices=len(slices) - reused)
+        if live_slices:
+            logger.info("[refine] reused live SenseVoice results for %d of %d slices", reused, len(slices))
         if ASR_LANGUAGE == "auto":
             major, flips = isolated_lang_flips([d[3] for d in decoded])
             if flips:
@@ -814,8 +916,12 @@ def refine(path: str, should_stop: StopFn = None,
     out: Dict[str, Any] = {"engine": ENGINE_LABEL, **pipeline_labels(), "audio_s": round(audio_s, 1), "stopped": False}
 
     t0 = time.time()
-    sentences = transcribe(samples, should_stop, lambda f: report("asr", f))
+    live = load_live_asr(path, len(samples)) if LIVE_ASR_REUSE and ASR_SEGMENTATION == "pause" else None
+    asr_stats: Dict[str, Any] = {}
+    sentences = transcribe(samples, should_stop, lambda f: report("asr", f), live_slices=live, stats=asr_stats)
     out["asr_s"] = round(time.time() - t0, 1)
+    out["asr_reused_slices"] = asr_stats.get("reused_slices", 0)
+    out["asr_decoded_slices"] = asr_stats.get("decoded_slices")
     if sentences is None:
         out.update(stopped=True, phase="asr", transcript="", speakers=0, sentences=[])
         return out

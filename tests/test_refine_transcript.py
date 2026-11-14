@@ -147,23 +147,20 @@ def test_mixed_chinese_after_english_still_uses_fullwidth_comma():
 
 def test_transcribe_passes_auto_language_to_sensevoice(monkeypatch):
     # 11-11：language="zh" 把英文會議辨成亂碼中文；預設改 auto。
-    import types
-
-    import pytest
+    import numpy as np
 
     captured = {}
-
-    class _Stop(Exception):
-        pass
+    _fake_sherpa_asr(monkeypatch)
+    orig = sys.modules["sherpa_onnx"].OfflineRecognizer.from_sense_voice
 
     def from_sense_voice(**kwargs):
         captured.update(kwargs)
-        raise _Stop()
+        return orig(**kwargs)
 
-    fake = types.SimpleNamespace(OfflineRecognizer=types.SimpleNamespace(from_sense_voice=from_sense_voice))
-    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
-    with pytest.raises(_Stop):
-        rt.transcribe([])
+    monkeypatch.setattr(sys.modules["sherpa_onnx"].OfflineRecognizer, "from_sense_voice", from_sense_voice)
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    t = np.arange(rt.SAMPLE_RATE * 6) / rt.SAMPLE_RATE
+    rt.transcribe((0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32))
     assert rt.ASR_LANGUAGE == "auto"
     assert captured["language"] == "auto"
 
@@ -657,3 +654,71 @@ def test_transcribe_redecodes_isolated_language_flip_with_major_language(monkeyp
     created.clear()   # 連續兩片都判成韓文：當成真的換語言，不重解、不建第二個辨識器
     text = "".join(s.text for s in rt.transcribe(np.concatenate([speech, gap, loud, gap, loud, gap, speech, gap])))
     assert text.count("연봉") == 2 and created == ["auto"]
+
+
+def test_live_asr_saved_next_to_cache_and_loaded_back(monkeypatch, tmp_path):
+    """即時切片結果存在錄音快取上一層的 localnote_state；只留最近 LIVE_ASR_KEEP 場；
+    不連續或總長差太多就不沿用；比母帶短一點補一片 tail。"""
+    import os
+    monkeypatch.delenv("PI5_REFINE_LIVE_ASR_FILE", raising=False)
+    cache = tmp_path / "audio_cache"
+    cache.mkdir()
+    sr = rt.SAMPLE_RATE
+    slices = [{"s": 0, "n": 6 * sr, "src": "sv", "tokens": ["你", "好"], "ts": [0.5, 0.8], "text": "你好", "lang": "<|zh|>"},
+              {"s": 6 * sr, "n": 5 * sr, "src": "other"}]
+    for i in range(rt.LIVE_ASR_KEEP + 2):
+        p = rt.save_live_asr(str(cache / f"m_{i}.ogg"), slices, 11 * sr)
+        assert p == str(tmp_path / "localnote_state" / f"m_{i}.live_asr.json")
+        os.utime(p, (1000 + i, 1000 + i))
+    kept = sorted(os.listdir(tmp_path / "localnote_state"))
+    assert kept == [f"m_{i}.live_asr.json" for i in range(2, rt.LIVE_ASR_KEEP + 2)]
+
+    last = str(cache / f"m_{rt.LIVE_ASR_KEEP + 1}.ogg")
+    got = rt.load_live_asr(last, 11 * sr + 4000)            # 母帶多 0.25 s：補一片 tail
+    assert [s["src"] for s in got] == ["sv", "other", "tail"] and got[-1]["n"] == 4000
+    assert rt.load_live_asr(last, 13 * sr) is None           # 差 2 s：不沿用
+    assert rt.load_live_asr(str(cache / "m_0.ogg"), 11 * sr) is None   # 已被清掉
+
+    rt.save_live_asr(last, [slices[0], {"s": 7 * sr, "n": 4 * sr, "src": "other"}], 11 * sr)
+    assert rt.load_live_asr(last, 11 * sr) is None           # 不連續：不沿用
+
+
+def test_transcribe_reuses_live_sensevoice_slices_and_decodes_the_rest(monkeypatch):
+    """SenseVoice 即時辨識過的片直接沿用（不再辨識）；靜音片／Whisper 片照舊從母帶辨識。"""
+    import types
+
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    calls = []
+
+    class Rec:
+        def create_stream(self):
+            st = types.SimpleNamespace()
+            st.accept_waveform = lambda sr, x: setattr(st, "x", np.asarray(x))
+            return st
+
+        def decode_stream(self, st):
+            calls.append(len(st.x))
+            st.result = types.SimpleNamespace(text="大家好。", tokens=["大", "家", "好", "。"],
+                                              timestamps=[0.3, 0.5, 0.7, 0.9], lang="<|zh|>", emotion="<|NEUTRAL|>")
+
+    monkeypatch.setattr(sys.modules["sherpa_onnx"].OfflineRecognizer, "from_sense_voice", lambda **kw: Rec())
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    sr = rt.SAMPLE_RATE
+    t = np.arange(sr * 6) / sr
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    samples = np.concatenate([speech, speech, speech])
+    live = [{"s": 0, "n": 6 * sr, "src": "sv", "text": "你好。", "lang": "<|zh|>", "emotion": "<|NEUTRAL|>",
+             "tokens": ["你", "好", "。"], "ts": [0.5, 0.8, 1.0]},
+            {"s": 6 * sr, "n": 6 * sr, "src": "other"},
+            {"s": 12 * sr, "n": 6 * sr, "src": "sv", "text": "謝謝。", "lang": "<|zh|>", "emotion": "<|NEUTRAL|>",
+             "tokens": ["謝", "謝", "。"], "ts": [0.5, 0.8, 1.0]}]
+    stats = {}
+    text = "".join(s.text for s in rt.transcribe(samples, live_slices=live, stats=stats))
+    assert calls == [6 * sr]                                  # 只辨識了中間那片
+    assert stats == {"reused_slices": 2, "decoded_slices": 1}
+    assert text.index("你好") < text.index("大家好") < text.index("謝謝")
+
+    calls.clear()                                             # 沒有即時結果：照舊全部自己切、自己辨識
+    rt.transcribe(samples, stats=stats)
+    assert len(calls) >= 2 and stats["reused_slices"] == 0

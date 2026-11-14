@@ -90,9 +90,12 @@ def _child_main() -> None:
                 stream = recognizer.create_stream()
                 stream.accept_waveform(SAMPLE_RATE, np.asarray(payload, dtype=np.float32))
                 recognizer.decode_stream(stream)
-                text = to_taiwan_traditional(stream.result.text.strip())
-                _write_frame(proto_out, {"ok": True, "text": text, "lang": getattr(stream.result, "lang", ""),
-                                         "emotion": getattr(stream.result, "emotion", ""),
+                res = stream.result
+                text = to_taiwan_traditional(res.text.strip())
+                # tokens／timestamps（原始輸出、秒、相對切片開頭）：錄音後的高精度逐字稿直接沿用，不必整段重新辨識（refine_transcript.load_live_asr）
+                _write_frame(proto_out, {"ok": True, "text": text, "raw_text": res.text, "lang": getattr(res, "lang", ""),
+                                         "emotion": getattr(res, "emotion", ""),
+                                         "tokens": list(res.tokens), "timestamps": [round(float(t), 3) for t in res.timestamps],
                                          "inference_time_ms": round((time.perf_counter() - t0) * 1000)})
             else:
                 _write_frame(proto_out, {"ok": False, "error": f"unknown command {cmd!r}"})

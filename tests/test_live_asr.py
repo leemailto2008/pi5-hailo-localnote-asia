@@ -71,3 +71,21 @@ def test_sensevoice_noise_outputs_are_dropped_only_when_marked_and_short(monkeyp
     monkeypatch.setattr(svw.sv_worker, "transcribe",
                         lambda a: {"text": "The.", "lang": "<|en|>", "emotion": "<|EMO_UNKNOWN|>", "inference_time_ms": 300})
     assert vp.speech_to_text_live(audio, "sensevoice") == ""
+
+
+def test_speech_to_text_live_hands_raw_sensevoice_result_to_refine(monkeypatch):
+    """高精度逐字稿沿用即時結果：SenseVoice 成功時 sv_out 拿到 tokens／timestamps（底噪也照給，由高精度稿自己過濾）；失敗改走 Whisper 時 sv_out 不動。"""
+    audio = np.zeros(16000, dtype=np.float32)
+    res = {"text": "The.", "raw_text": "The.", "lang": "<|en|>", "emotion": "<|EMO_UNKNOWN|>",
+           "tokens": ["The", "."], "timestamps": [0.2, 0.4], "inference_time_ms": 300}
+    monkeypatch.setattr(svw.sv_worker, "transcribe", lambda a: res)
+    out = {}
+    assert vp.speech_to_text_live(audio, "sensevoice", sv_out=out) == ""
+    assert out["tokens"] == ["The", "."] and out["timestamps"] == [0.2, 0.4]
+
+    def boom(a):
+        raise RuntimeError("sv worker transcribe failed: EOF")
+    monkeypatch.setattr(svw.sv_worker, "transcribe", boom)
+    monkeypatch.setattr(vp, "speech_to_text", lambda a, c=None, info_out=None: "惠斯珀")
+    out = {}
+    assert vp.speech_to_text_live(audio, "sensevoice", sv_out=out) == "惠斯珀" and out == {}

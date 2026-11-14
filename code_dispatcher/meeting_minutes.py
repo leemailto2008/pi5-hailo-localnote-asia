@@ -801,6 +801,9 @@ class MeetingJobManager:
             live_segments: List[str] = []
             curr_preview: str = ""
             chunk_worker_done = asyncio.Event()
+            # 每個切片在母帶裡的位置與 SenseVoice 原始結果：錄音後的高精度逐字稿沿用 (refine_transcript.save_live_asr)
+            live_asr_slices: List[Dict[str, Any]] = []
+            live_asr_pos = 0
 
             # 即時逐字稿引擎 (2026-11-13)：預設／網頁選 SenseVoice 時用 SenseVoice (sv_worker，CPU 2、3)，網頁選 Whisper 或這台不能用時 Hailo Whisper。
             # 錄音開始、知道收音來源 (rec_stats["source"]) 後決定一次，整場不變；用 SenseVoice 時先載入模型。
@@ -825,6 +828,7 @@ class MeetingJobManager:
             async def _chunk_stt_worker():
                 """背景即時解算滑動切片 PCM 音訊"""
                 nonlocal first_chunk_ready_time, first_stt_output_time, first_stt_latency, last_done_enq_t, curr_preview
+                nonlocal live_asr_pos
                 try:
                     while True:
                         item = await chunk_queue.get()
@@ -834,6 +838,9 @@ class MeetingJobManager:
                         pcm_bytes = item[0]
                         is_final = item[1]
                         enq_t = item[2] if len(item) > 2 else time.time()
+                        live_rec: Dict[str, Any] = {"s": live_asr_pos, "n": len(pcm_bytes or b"") // 2, "src": "other"}
+                        live_asr_pos += live_rec["n"]
+                        live_asr_slices.append(live_rec)
 
                         if pcm_bytes and len(pcm_bytes) >= 16000 and not self._cancellation_token.is_set():
                             try:
@@ -856,13 +863,19 @@ class MeetingJobManager:
                                     self.notify_status_update()
 
                                 stt_info: Dict[str, str] = {}
+                                sv_res: Dict[str, Any] = {}
                                 seg_text = await asyncio.to_thread(
                                     speech_to_text_live,
                                     pcm_np,
                                     decide_live_engine(),
                                     self._thread_cancellation_token,
-                                    info_out=stt_info
+                                    info_out=stt_info,
+                                    sv_out=sv_res
                                 )
+                                if sv_res.get("tokens") is not None:
+                                    live_rec.update(src="sv", text=sv_res.get("raw_text", ""), lang=sv_res.get("lang", ""),
+                                                    emotion=sv_res.get("emotion", ""), tokens=sv_res["tokens"],
+                                                    ts=sv_res.get("timestamps") or [])
                                 stt_combo.add(stt_info)
                                 self.status.metrics.update(stt_combo.describe())
                                 last_done_enq_t = enq_t
@@ -1088,6 +1101,13 @@ class MeetingJobManager:
             if live_engine == "sensevoice":   # 切片都轉完了：結束 SenseVoice 子行程，記憶體留給紀要與高精度逐字稿
                 from sv_worker import sv_worker
                 await asyncio.to_thread(sv_worker.shutdown)
+            if chunk_worker_done.is_set() and any(s.get("src") == "sv" for s in live_asr_slices):
+                # 切片全部辨識完才存 (逾時沒轉完就不存，高精度逐字稿整段重新辨識)
+                import refine_transcript
+                saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos)
+                if saved:
+                    n_sv = sum(1 for s in live_asr_slices if s.get("src") == "sv")
+                    print(f"[MeetingMinutes] 即時 SenseVoice 結果已存 ({n_sv}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
 
             # Broadcast reset frame upon recording completion
             try:

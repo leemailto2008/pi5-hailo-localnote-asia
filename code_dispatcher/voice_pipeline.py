@@ -733,9 +733,11 @@ from refine_transcript import SV_NOISE_MAX_CHARS, sv_is_noise  # noqa: E402,F401
 
 
 def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: Optional[Any] = None,
-                        info_out: Optional[Dict[str, str]] = None) -> Optional[str]:
+                        info_out: Optional[Dict[str, str]] = None,
+                        sv_out: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """錄音中的即時切片。engine = whisper → speech_to_text (Hailo Whisper，失敗退 CPU)；
-    sensevoice → sv_worker，這段失敗就改走 speech_to_text (逐字稿區的 ASR 會列出兩種引擎各幾段)。"""
+    sensevoice → sv_worker，這段失敗就改走 speech_to_text (逐字稿區的 ASR 會列出兩種引擎各幾段)。
+    sv_out：SenseVoice 這段成功時填入 sv_worker 的原始結果 (tokens／timestamps／lang／emotion，底噪也照填)，給高精度逐字稿沿用。"""
     if engine == "sensevoice":
         from sv_worker import LIVE_POST_LABEL, live_label, sv_worker
         try:
@@ -743,6 +745,8 @@ def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: O
         except RuntimeError as e:
             print(f"[VoicePipeline] SenseVoice 即時切片失敗，這段改用 Hailo Whisper：{e}")
         else:
+            if sv_out is not None:
+                sv_out.update(res)
             if info_out is not None:
                 info_out.update(engine=live_label(), vad="", post=LIVE_POST_LABEL)
             text = res.get("text", "")
