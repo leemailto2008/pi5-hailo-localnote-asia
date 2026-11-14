@@ -547,9 +547,14 @@ def test_transcribe_drops_noise_slices_next_to_real_sentences(monkeypatch):
     assert not any("그" in s.text for s in sentences)
 
 
-def test_transcribe_skips_quiet_slices_even_if_not_flagged_as_noise(monkeypatch):
+def _is_quiet(x):
+    from audio_splice import live_slice_is_quiet
+    return live_slice_is_quiet(x)
+
+
+def test_transcribe_drops_tiny_output_of_quiet_slices_even_if_not_flagged_as_noise(monkeypatch):
     """2026-11-14 背景噪音那場：開頭靜音 14 片裡 1 片吐「그.」卻標 NEUTRAL（躲過 sv_is_noise）→ 高精度稿第一句「그.」。
-    靜音片（能量快篩）不送辨識。"""
+    靜音片（能量快篩）只吐 ≤ 3 個字 → 當底噪；吐出長句（很小聲的人）照收。"""
     import types
 
     import numpy as np
@@ -562,8 +567,13 @@ def test_transcribe_skips_quiet_slices_even_if_not_flagged_as_noise(monkeypatch)
 
         def decode_stream(self, st):
             x = calls[-1]
-            if np.max(np.abs(x)) > 0.001:
+            peak = np.max(np.abs(x))
+            if peak > 0.006:
                 st.result = types.SimpleNamespace(text="你好。", tokens=["你", "好", "。"], timestamps=[0.5, 0.8, 1.0],
+                                                  lang="<|zh|>", emotion="<|NEUTRAL|>")
+            elif peak > 0.0001:   # 很小聲的人（快篩算靜音片）但辨識出一整句
+                st.result = types.SimpleNamespace(text="請大家坐好。", tokens=["請", "大", "家", "坐", "好", "。"],
+                                                  timestamps=[0.5, 0.7, 0.9, 1.1, 1.3, 1.5],
                                                   lang="<|zh|>", emotion="<|NEUTRAL|>")
             else:   # 靜音也吐字、而且標 NEUTRAL
                 st.result = types.SimpleNamespace(text="그.", tokens=["그", "."], timestamps=[0.2, 0.3],
@@ -574,7 +584,10 @@ def test_transcribe_skips_quiet_slices_even_if_not_flagged_as_noise(monkeypatch)
     sr = rt.SAMPLE_RATE
     t = np.arange(sr * 8) / sr
     speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
-    samples = np.concatenate([np.zeros(sr * 30, dtype=np.float32), speech])
+    faint = (0.0005 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)   # 峰值 -66 dB、RMS -69 dB：快篩算靜音片
+    assert _is_quiet(faint)
+    samples = np.concatenate([np.zeros(sr * 30, dtype=np.float32), faint, np.zeros(sr * 8, dtype=np.float32), speech])
     sentences = rt.transcribe(samples)
-    assert sentences and not any("그" in s.text for s in sentences)
-    assert all(np.max(np.abs(x)) > 0.001 for x in calls)          # 只有有聲音的片送去辨識
+    text = "".join(s.text for s in sentences)
+    assert "你好" in text and "請大家坐好" in text
+    assert "그" not in text

@@ -393,19 +393,17 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         for n, (i0, i1) in enumerate(slices):
             if should_stop is not None and should_stop():
                 return None
-            if live_slice_is_quiet(samples[i0:i1]):
-                # 跟即時稿一樣用能量快篩 (2026-11-14)：靜音片不辨識。開頭 90 s 靜音的 14 片有 1 片吐「그.」卻標成
-                # NEUTRAL，躲過 sv_is_noise，高精度稿第一句變成「그.」。
-                if on_progress is not None:
-                    on_progress(0.1 + 0.9 * (n + 1) / len(slices))
-                continue
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, samples[i0:i1])
             recognizer.decode_stream(stream)
             res = stream.result
-            if sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")):
+            if sv_is_noise(res.text, getattr(res, "lang", ""), getattr(res, "emotion", "")) or (
+                    live_slice_is_quiet(samples[i0:i1])
+                    and len(re.sub(r"[\W_]+", "", res.text or "")) <= SV_NOISE_MAX_CHARS):
                 # 底噪輸出不收字 (2026-11-14)：開頭 2 分鐘沒人講話的 13 片各吐一個「.」，原本會依時間歸到最近的句子，
                 # 高精度稿第一句變成「................好，我們開始…」。
+                # 靜音片（能量快篩）只吐 ≤ 3 個字也當底噪：開頭 90 s 靜音的 14 片有 1 片吐「그.」卻標 NEUTRAL，躲過 sv_is_noise。
+                # 靜音片不整片跳過：說話聲小 33 dB 的那份，快篩下的片還辨識得出約 60 字（整片跳過 cer_num 0.400 → 0.415）。
                 pass
             elif len(res.tokens) == len(res.timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in res.timestamps]
