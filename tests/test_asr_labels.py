@@ -60,3 +60,29 @@ def test_hailo_vad_label_reports_disabled_gate(monkeypatch):
     from hailo_whisper import engine
     monkeypatch.setattr(engine, "WHISPER_VAD", False)
     assert "關閉" in engine.vad_label()
+
+
+def _slice(peak_db: float, rms_db: float, seconds: float = 6.0):
+    """指定峰值與 RMS (dBFS) 的 6 秒切片：隨機訊號調到 RMS，再放一個峰值樣本 (快篩只看這兩個數)。"""
+    import numpy as np
+    x = np.random.default_rng(1).standard_normal(int(16000 * seconds))
+    x *= 10 ** (rms_db / 20) / np.sqrt(np.mean(x ** 2))
+    x = np.clip(x, -10 ** (peak_db / 20), 10 ** (peak_db / 20))
+    x[len(x) // 2] = 10 ** (peak_db / 20)
+    return x.astype(np.float32)
+
+
+def test_live_gate_skips_room_noise_but_keeps_quiet_speech():
+    """2026-11-14 sim_gate.py：GS3 房間底噪 (峰值 ≤ -47 dB、RMS ≤ -78 dB) 照樣擋；
+    說話聲小 30 dB 的切片 (中位數峰值 -35 dB、RMS -60 dB，SenseVoice 聽得懂) 舊門檻整片丟掉，不能再擋。"""
+    import numpy as np
+    assert mm.live_slice_is_quiet(_slice(-47.0, -78.0))
+    assert mm.live_slice_is_quiet(np.zeros(0, dtype=np.float32))
+    assert not mm.live_slice_is_quiet(_slice(-35.0, -60.0))
+    assert not mm.live_slice_is_quiet(_slice(-43.0, -66.0))     # 小 35 dB 的 p10 切片
+    assert not mm.live_slice_is_quiet(_slice(-5.0, -30.0))      # 一般音量
+
+
+def test_live_slicing_label_shows_current_gate():
+    label = mm.live_slicing_label(8.0)
+    assert f"峰值 < {mm.LIVE_SKIP_PEAK:g}" in label and f"RMS < {mm.LIVE_SKIP_RMS:g}" in label
