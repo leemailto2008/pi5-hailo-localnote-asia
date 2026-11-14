@@ -1978,9 +1978,7 @@ def _start_refine(job_id: str) -> Dict[str, Any]:
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="找不到這場會議的錄音檔（服務重啟後記憶體磁碟會清空）")
 
-    # 進度權重依 Pi 實測耗時（11-13，辨識改停頓處切段後）：辨識、分說話人、快修（會議詞彙＋MacBERT）
-    # 5 分鐘 27.4／7.4／3.7 s、10 分鐘 53.3／14.3／6.4 s，約 71／20／9。
-    weights = {"asr": (0.0, 0.71), "diarize": (0.71, 0.20), "fix": (0.91, 0.09)}
+    weights = refine_transcript.progress_weights(path)
 
     def on_progress(phase: str, frac: float) -> None:
         start, span = weights.get(phase, (0.0, 0.0))

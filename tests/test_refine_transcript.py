@@ -722,3 +722,18 @@ def test_transcribe_reuses_live_sensevoice_slices_and_decodes_the_rest(monkeypat
     calls.clear()                                             # 沒有即時結果：照舊全部自己切、自己辨識
     rt.transcribe(samples, stats=stats)
     assert len(calls) >= 2 and stats["reused_slices"] == 0
+
+
+def test_progress_weights_follow_whether_live_slices_are_reused(monkeypatch, tmp_path):
+    """沿用即時切片時辨識只剩 VAD（約 36%），分說話人與快修佔大半；沒有 .live_asr.json 照舊 71／20／9。"""
+    monkeypatch.delenv("PI5_REFINE_LIVE_ASR_FILE", raising=False)
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    cache = tmp_path / "audio_cache"
+    cache.mkdir()
+    ogg = str(cache / "m_1.ogg")
+    assert rt.progress_weights(ogg)["asr"] == (0.0, 0.71)
+    rt.save_live_asr(ogg, [{"s": 0, "n": 16000, "src": "other"}], 16000)
+    w = rt.progress_weights(ogg)
+    assert w["asr"] == (0.0, 0.36) and abs(sum(span for _, span in w.values()) - 1.0) < 1e-9
+    monkeypatch.setattr(rt, "LIVE_ASR_REUSE", False)
+    assert rt.progress_weights(ogg)["asr"] == (0.0, 0.71)

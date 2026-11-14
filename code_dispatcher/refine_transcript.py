@@ -137,6 +137,15 @@ def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_sampl
     return path
 
 
+def progress_weights(audio_path: str) -> Dict[str, Tuple[float, float]]:
+    """網頁進度條：各階段 (起點, 佔比)。依 Pi 實測耗時（辨識、分說話人、快修＝會議詞彙＋MacBERT）：
+    整段重新辨識 5 分 27.4／7.4／3.7 s、10 分 53.3／14.3／6.4 s → 約 71／20／9（11-13）；
+    沿用即時切片（有 .live_asr.json）10 分 11.4／13.5／8.0 s、30 分 32.3／37.6／20.2 s → 約 36／42／22（11-15）。"""
+    if LIVE_ASR_REUSE and ASR_SEGMENTATION == "pause" and os.path.isfile(live_asr_path(audio_path)):
+        return {"asr": (0.0, 0.36), "diarize": (0.36, 0.42), "fix": (0.78, 0.22)}
+    return {"asr": (0.0, 0.71), "diarize": (0.71, 0.20), "fix": (0.91, 0.09)}
+
+
 def load_live_asr(audio_path: str, n_samples: int) -> Optional[List[Dict[str, Any]]]:
     """讀回即時切片；切片不連續、或樣本總數跟母帶差超過 LIVE_ASR_MAX_DRIFT_S 就回 None。
     最後一片若比母帶短，補一片「從母帶辨識」蓋到結尾。"""
