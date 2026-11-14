@@ -83,6 +83,16 @@ def test_live_gate_skips_room_noise_but_keeps_quiet_speech():
     assert not mm.live_slice_is_quiet(_slice(-5.0, -30.0))      # 一般音量
 
 
+def test_pcm16_gate_matches_float_gate():
+    """切片器用 16-bit PCM 判斷剛切下的是不是靜音片（是 → 下一片用短切片）。"""
+    import numpy as np
+    for peak_db, rms_db in ((-47.0, -78.0), (-35.0, -60.0), (-5.0, -30.0)):
+        x = _slice(peak_db, rms_db)
+        pcm = (x * 32768).astype("<i2").tobytes()
+        assert vp.pcm16_is_quiet(pcm) == mm.live_slice_is_quiet(x)
+    assert vp.pcm16_is_quiet(np.zeros(16000, dtype="<i2").tobytes())
+
+
 def test_live_slicing_label_shows_current_gate():
     label = mm.live_slicing_label(8.0)
     assert f"峰值 < {mm.LIVE_SKIP_PEAK:g}" in label and f"RMS < {mm.LIVE_SKIP_RMS:g}" in label

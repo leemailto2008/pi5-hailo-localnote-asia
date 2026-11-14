@@ -32,8 +32,9 @@ if os.path.exists(_agent_dir) and _agent_dir not in sys.path:
 
 from voice_memory import get_in_memory_cache_dir
 from last_meeting import load_last_meeting, save_last_meeting
-from voice_pipeline import (NoMicrophoneError, live_asr_engine, load_live_asr_preference, record_audio_from_mic,
-                            slice_bounds, speech_to_text, speech_to_text_live)
+from voice_pipeline import (LIVE_SKIP_PEAK, LIVE_SKIP_RMS, NoMicrophoneError, live_asr_engine, live_slice_is_quiet,
+                            load_live_asr_preference, record_audio_from_mic, slice_bounds, speech_to_text,
+                            speech_to_text_live)
 
 AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 
@@ -175,22 +176,7 @@ LANG_LIMITS = {
 
 
 
-# 即時 STT 的能量快篩：切片峰值與 RMS 都低於門檻 (停頓或微弱環境音) 就不送 STT
-# 2026-11-14 由 0.035／0.0025 (-29／-52 dBFS) 降到 0.006／0.0004 (-44／-68 dBFS)：sim_gate.py 把 GS3 聲學錄音衰減後疊回 GS3 實錄房間底噪，
-# 舊門檻在說話聲小 20 dB 時開始丟片、小 25 dB 丟 58／89 片 (事實召回 0.90→0.39)、小 30 dB 全丟；SenseVoice 其實到小 35 dB 都還聽得懂
-# (不擋時事實 0.89–0.91)。新門檻到小 35 dB 只丟 2／89 片；GS3 房間底噪 (峰值 ≤ -47 dB、RMS ≤ -78 dB) 仍然全擋；
-# 漏過的底噪片還有 SenseVoice 底噪過濾 (sv_is_noise)，藍牙 CVSD 嘶聲 (RMS 約 0.02) 本來就過得了舊門檻，不受影響。
-LIVE_SKIP_PEAK = 0.006
-LIVE_SKIP_RMS = 0.0004
-
-
-def live_slice_is_quiet(pcm: np.ndarray) -> bool:
-    """即時切片 (float32，-1～1) 的峰值與 RMS 都低於快篩門檻 → 停頓或房間底噪，不送 STT。"""
-    if pcm.size == 0:
-        return True
-    peak = float(np.max(np.abs(pcm)))
-    rms = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float64))))
-    return peak < LIVE_SKIP_PEAK and rms < LIVE_SKIP_RMS
+# 即時 STT 的能量快篩 (LIVE_SKIP_PEAK／LIVE_SKIP_RMS、live_slice_is_quiet) 在 voice_pipeline：切片器也用它決定下一片要不要用短切片。
 
 
 def live_slicing_label(chunk_sec: float) -> str:
