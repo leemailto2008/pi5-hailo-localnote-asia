@@ -125,6 +125,15 @@ def cpu_should_take_last(hailo_secs: List[float], cpu_secs: List[float], hailo_e
     return c < remaining + h
 
 
+def estimate_summary_seconds(chars: int, hierarchical: bool) -> float:
+    """紀要預估秒數 (進度條用)。舊式 max(25, 字數/1400×16)：5 分 (約 1,050 字) 估 25 s、實際 74–126 s，進度條 25 s 就到 96% 然後停一分多鐘。
+    .228 實測 (2026-11-14／15，Hailo qwen3:1.7b 約 4.2 token/s)：單次整理 5 分 (約 1,055 字) 11 份 74–126 s、平均 95 s ≈ 0.09 s／字；
+    逐段＋兩路同時：10 分 3 段 71 s、30 分 7 段 146–148 s、120 分 24 段 561 s、240 分 46 段 1,138 s ≈ 30 s＋每 1,100 字 24 s。"""
+    if hierarchical:
+        return 30.0 + chars / 1100.0 * 24.0
+    return max(25.0, chars * 0.09)
+
+
 def _recording_active() -> bool:
     """任何錄音路徑 (會議錄音、即時口譯串流) 正在錄音。"""
     try:
@@ -1253,7 +1262,7 @@ class MeetingJobManager:
             llm_start = time.time()
 
             is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[detect_language(transcript)]["single_max"])
-            est_total_llm_sec = max(25.0, float(len(transcript.strip()) / 1400.0) * 16.0)
+            est_total_llm_sec = estimate_summary_seconds(len(transcript.strip()), is_long_hierarchical)
 
             async def _llm_ticker():
                 while not llm_done_event.is_set() and not self._cancellation_token.is_set():

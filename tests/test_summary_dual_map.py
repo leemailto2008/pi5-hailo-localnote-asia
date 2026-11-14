@@ -122,3 +122,11 @@ def test_cpu_takes_last_chunk_only_if_it_finishes_earlier_than_hailo():
     assert not mm.cpu_should_take_last([40.0], [58.0], 35.0)      # Hailo 快做完手上那段：5 + 40 < 58 → 給 Hailo
     assert mm.cpu_should_take_last([40.0], [20.0], None)          # CPU 比較快就給 CPU
     assert not mm.cpu_should_take_last([40.0], [58.0], 90.0)      # Hailo 已經超時：剩 0 s 估，40 < 58 → 給 Hailo
+
+
+def test_summary_estimate_matches_measured_durations():
+    """進度條的紀要預估：5 分（約 1,055 字）單次整理實測 74–126 s，舊估計 25 s；逐段＋兩路同時 30 分 146 s、120 分 561 s。"""
+    assert 80 <= mm.estimate_summary_seconds(1055, False) <= 110
+    assert mm.estimate_summary_seconds(100, False) == 25.0
+    assert 130 <= mm.estimate_summary_seconds(6000, True) <= 180
+    assert 500 <= mm.estimate_summary_seconds(25000, True) <= 620
