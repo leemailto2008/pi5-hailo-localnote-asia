@@ -407,6 +407,9 @@ def test_assign_tokens_keeps_punctuation_with_previous_word():
     assert out[0][0] == ["部", "。"] and out[1][0] == ["第"]
     out = rt.assign_tokens(regions, ["部", "，", "。", "第"], [1.5, 1.8, 2.9, 3.1])
     assert out[0] == (["部", "。"], [1.5, 2.9])
+    # % 不是句讀：「良率是85%。」不能變「良率是85。」（c42dd09 第一版 A/B 抓到：5 分事實召回 0.925 → 0.866）
+    out = rt.assign_tokens(regions, ["85", "%", "。", "第"], [1.5, 1.7, 2.9, 3.1])
+    assert out[0][0] == ["85", "%", "。"]
 
 
 def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):

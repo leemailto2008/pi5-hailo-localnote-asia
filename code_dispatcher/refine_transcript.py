@@ -156,6 +156,13 @@ _PUNCT = "。！？!?，,、；;：:…"
 _ASCII_PUNCT = ".!?,;:"
 _SENT_END = "。！？!?."   # assign_tokens：連續標點只留一個時，句末標點優先於逗號
 
+
+def _is_punct_token(tok: str) -> bool:
+    """整個 token 都是句讀標點（不含 %、括號、引號：「85%」的 % 不能被句號取代）。"""
+    s = tok.strip()
+    return bool(s) and all(ch in _PUNCT or ch in _ASCII_PUNCT for ch in s)
+
+
 Turn = Tuple[float, float, int]
 StopFn = Optional[Callable[[], bool]]
 ProgressFn = Optional[Callable[[float], None]]
@@ -298,11 +305,10 @@ def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
             k = j + 1
         # 標點跟著前一個字 (2026-11-14)：句尾「。」的時間常落在停頓裡、離下一句較近，被分到下一句，
         # 高精度稿出現「…要討論，。第一個議題」與「說話人2：。…」（5／10／45 分各 10／23／106 行開頭是標點）。
-        punct = bool(tok.strip()) and not any(ch.isalnum() for ch in tok)
-        if prev_k is not None and punct:
+        if prev_k is not None and _is_punct_token(tok):
             k = prev_k
             last = out[k][0][-1] if out[k][0] else ""
-            if last.strip() and not any(ch.isalnum() for ch in last):
+            if _is_punct_token(last):
                 # 連續標點只留一個、句末優先：上一片結尾「。」＋下一片開頭「，」會變成「財務部。，」（藍牙 10 分 2 處）
                 if tok.strip() in _SENT_END and last.strip() not in _SENT_END:
                     out[k][0][-1], out[k][1][-1] = tok, t
