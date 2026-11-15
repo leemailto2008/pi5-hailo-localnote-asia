@@ -128,8 +128,22 @@ def test_summary_estimate_matches_measured_durations():
     """進度條的紀要預估：5 分（約 1,055 字）單次整理實測 74–126 s，舊估計 25 s；逐段＋兩路同時 30 分 146 s、120 分 561 s。"""
     assert 80 <= mm.estimate_summary_seconds(1055, False) <= 110
     assert mm.estimate_summary_seconds(100, False) == 25.0
-    assert 130 <= mm.estimate_summary_seconds(6000, True) <= 180
-    assert 500 <= mm.estimate_summary_seconds(25000, True) <= 620
+    assert 130 <= mm.estimate_summary_seconds(6000, True, dual=True) <= 180
+    assert 500 <= mm.estimate_summary_seconds(25000, True, dual=True) <= 620
+    # 只用 Hailo（預設）：11-14 實測 30 分約 6,050 字 185–196 s、120 分約 24,940 字 826–868 s、240 分 48,627 字 1,660 s
+    assert 180 <= mm.estimate_summary_seconds(6050, True) <= 220
+    assert 800 <= mm.estimate_summary_seconds(24940, True) <= 880
+    assert 1600 <= mm.estimate_summary_seconds(48627, True) <= 1720
+
+
+def test_dual_map_is_off_by_default():
+    """2026-11-15：CPU 那一路讓整理階段 RAM 峰值多約 2 GB（超過 e2e 門檻 3500 MB）→ 預設關閉，PI5_SUMMARY_DUAL_MAP=1 才開。"""
+    import os
+
+    import pytest
+    if "PI5_SUMMARY_DUAL_MAP" in os.environ:
+        pytest.skip("環境變數已指定 PI5_SUMMARY_DUAL_MAP")
+    assert mm.SUMMARY_DUAL_MAP is False
 
 
 def test_english_meeting_uses_hailo_only(monkeypatch):

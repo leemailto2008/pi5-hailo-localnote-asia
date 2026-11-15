@@ -109,8 +109,12 @@ async def stream_map_notes(prompt: str, keep_alive: Optional[int] = None, hailo_
 # (CLAUDE.md 重點一：錄音中不跑 CPU 推論)。.228 實測同一份即時稿 (.cc_scratch/pe/exp_dual_map.py，claude_context/BIG_CHANGE_STATUS.md #30)：
 # GS3 30 分 194.9／194.5 → 145.8／142.1 s、藍牙 30 分 176.9／180.6 → 157.9／124.0 s、GS3 120 分 829.4 → 566.1 s；
 # recap／議題覆蓋全部不變。Hailo 每段 24–41 s、CPU qwen2.5:3b-opt 每段 49–74 s (每次用完即卸載，見 llm_backend)；
-# 最高 74.7 °C、沒有降頻，可用記憶體最低 3.8 GB。PI5_SUMMARY_DUAL_MAP=0 關閉。
-SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "1") == "1"
+# 最高 74.7 °C、沒有降頻，可用記憶體最低 3.8 GB。
+# 預設關閉（2026-11-15 11:00）：CPU 那一路要把 qwen2.5:3b-opt 載進記憶體（.228 實測 MemAvailable 少 2.2 GB；
+# options.use_mmap=true 也少 2.0 GB，ollama 0.40.4），整理階段的 RAM 峰值從 1.8–2.4 GB 變 3.4–4.3 GB，
+# 開了之後 12 場 10 分以上的 e2e 有 10 場超過 tools/e2e/thresholds.json 的 ram_peak_mb_max 3500
+# → 「變快但記憶體變差」，依「沒有變差才採用」先關；要用的話 PI5_SUMMARY_DUAL_MAP=1（見 BIG_CHANGE_STATUS #43）。
+SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "0") == "1"
 DUAL_MAP_POLL_S = 0.5
 # 最後剩一段時給「預計比較早做完」的那一路 (2026-11-15 服務內 GS3 30 分：Hailo 做完第 3 段的同一秒 CPU 搶到第 4 段，
 # CPU 做了 58 s、Hailo 閒著 → 整理 172 s；同一份實驗稿 Hailo 4 段、CPU 2 段時 142–146 s)。還沒量到時用 .228 實測的每段秒數。
@@ -125,12 +129,15 @@ def cpu_should_take_last(hailo_secs: List[float], cpu_secs: List[float], hailo_e
     return c < remaining + h
 
 
-def estimate_summary_seconds(chars: int, hierarchical: bool) -> float:
+def estimate_summary_seconds(chars: int, hierarchical: bool, dual: bool = False) -> float:
     """紀要預估秒數 (進度條用)。舊式 max(25, 字數/1400×16)：5 分 (約 1,050 字) 估 25 s、實際 74–126 s，進度條 25 s 就到 96% 然後停一分多鐘。
     .228 實測 (2026-11-14／15，Hailo qwen3:1.7b 約 4.2 token/s)：單次整理 5 分 (約 1,055 字) 11 份 74–126 s、平均 95 s ≈ 0.09 s／字；
-    逐段＋兩路同時：10 分 3 段 71 s、30 分 7 段 146–148 s、120 分 24 段 561 s、240 分 46 段 1,138 s ≈ 30 s＋每 1,100 字 24 s。"""
-    if hierarchical:
+    逐段只用 Hailo (11-14 的 14 場，10／15／30／45／120／240 分)：最小平方 1.0 s＋0.034 s／字，誤差 −24～＋22 s；
+    逐段＋兩路同時 (dual)：10 分 3 段 71 s、30 分 7 段 146–148 s、120 分 24 段 561 s、240 分 46 段 1,138 s ≈ 30 s＋每 1,100 字 24 s。"""
+    if hierarchical and dual:
         return 30.0 + chars / 1100.0 * 24.0
+    if hierarchical:
+        return max(25.0, chars * 0.034)
     return max(25.0, chars * 0.09)
 
 
@@ -1281,8 +1288,10 @@ class MeetingJobManager:
             llm_done_event = asyncio.Event()
             llm_start = time.time()
 
-            is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[detect_language(transcript)]["single_max"])
-            est_total_llm_sec = estimate_summary_seconds(len(transcript.strip()), is_long_hierarchical)
+            summary_lang = detect_language(transcript)
+            is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[summary_lang]["single_max"])
+            est_total_llm_sec = estimate_summary_seconds(len(transcript.strip()), is_long_hierarchical,
+                                                         dual=SUMMARY_DUAL_MAP and summary_lang == "zh")
 
             async def _llm_ticker():
                 while not llm_done_event.is_set() and not self._cancellation_token.is_set():
