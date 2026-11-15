@@ -737,3 +737,77 @@ def test_progress_weights_follow_whether_live_slices_are_reused(monkeypatch, tmp
     assert w["asr"] == (0.0, 0.36) and abs(sum(span for _, span in w.values()) - 1.0) < 1e-9
     monkeypatch.setattr(rt, "LIVE_ASR_REUSE", False)
     assert rt.progress_weights(ogg)["asr"] == (0.0, 0.71)
+
+
+def _fine_vad_fake(monkeypatch, fail_fine=False):
+    """有聲音的地方都抓得到的假 VAD；記下靈敏 VAD（FINE_VAD_MIN_SILENCE_S）在哪條執行緒被餵。"""
+    import threading
+    import types
+
+    import numpy as np
+    _fake_sherpa_asr(monkeypatch)
+    seen = {"fine_threads": set(), "main_threads": set()}
+
+    class Vad:
+        def __init__(self, cfg, buffer_size_in_seconds=0):
+            self.fine = cfg.silero_vad.min_silence_duration == rt.FINE_VAD_MIN_SILENCE_S
+            self.pos, self.buf, self.out = 0, [], []
+
+        def accept_waveform(self, x):
+            seen["fine_threads" if self.fine else "main_threads"].add(threading.current_thread().name)
+            if self.fine and fail_fine:
+                raise RuntimeError("fine vad broke")
+            self.buf.append((self.pos, np.asarray(x)))
+            self.pos += len(x)
+
+        def flush(self):
+            start = None
+            for p, x in self.buf + [(self.pos, np.zeros(1))]:
+                loud = np.max(np.abs(x)) > 0.001
+                if loud and start is None:
+                    start = p
+                elif not loud and start is not None:
+                    self.out.append(types.SimpleNamespace(start=start, samples=np.zeros(p - start)))
+                    start = None
+            self.buf = []
+
+        def empty(self):
+            return not self.out
+
+        @property
+        def front(self):
+            return self.out[0]
+
+        def pop(self):
+            self.out.pop(0)
+
+    monkeypatch.setattr(sys.modules["sherpa_onnx"], "VoiceActivityDetector", Vad)
+    monkeypatch.setattr(rt, "ASR_SEGMENTATION", "pause")
+    sr = rt.SAMPLE_RATE
+    t = np.arange(sr * 4) / sr
+    speech = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    return seen, np.concatenate([speech, np.zeros(sr * 2, dtype=np.float32), speech])
+
+
+def test_transcribe_runs_fine_vad_in_its_own_thread(monkeypatch):
+    """2026-11-15：兩個 VAD 互不相依，靈敏 VAD 改到另一條執行緒（藍牙 30 分 33.2 → 19.4 s，範圍相同）。"""
+    import threading
+    seen, samples = _fine_vad_fake(monkeypatch)
+    sentences = rt.transcribe(samples)
+    assert "".join(s.text for s in sentences).count("你好") == 2
+    assert any(s.cont for s in sentences)          # 靈敏 VAD 的停頓有用到（假 VAD 在兩段之間切開）
+    assert seen["fine_threads"] == {"refine-fine-vad"}
+    assert "refine-fine-vad" not in seen["main_threads"]
+    assert not any(th.name == "refine-fine-vad" for th in threading.enumerate())
+
+
+def test_transcribe_raises_fine_vad_error_and_stops_thread_on_cancel(monkeypatch):
+    import threading
+
+    import pytest
+    _, samples = _fine_vad_fake(monkeypatch, fail_fine=True)
+    with pytest.raises(RuntimeError, match="fine vad broke"):
+        rt.transcribe(samples)
+    _, samples = _fine_vad_fake(monkeypatch)
+    assert rt.transcribe(samples, should_stop=lambda: True) is None
+    assert not any(th.name == "refine-fine-vad" for th in threading.enumerate())

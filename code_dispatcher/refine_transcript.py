@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import types
 from dataclasses import asdict, dataclass, field
@@ -481,26 +482,58 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                 raw.append((start, start + len(seg.samples) / SAMPLE_RATE, text,
                             list(res.tokens), [start + t for t in res.timestamps]))
             vad.pop()
+
+    total = len(samples)
+    # 靈敏 VAD 跟切句 VAD 互不相依 → 另一條執行緒跑（sherpa-onnx 推論時放開 GIL）。2026-11-15 .228 藍牙 30 分母帶
+    # （.cc_scratch/pe/vad_bench2.py）：兩個 VAD 依序 33.2 s → 19.4 s，切出的範圍完全相同。
+    # 仍然每個 window 餵一次：一次餵多個 window 時 sherpa-onnx 會合併判斷，切出的範圍就不同了（vad_bench.py）。
+    fine_stop = threading.Event()
+    fine_error: List[BaseException] = []
+
+    def drain_fine() -> None:
         while not fine_vad.empty():
             seg = fine_vad.front
             fine_regions.append((seg.start / SAMPLE_RATE, (seg.start + len(seg.samples)) / SAMPLE_RATE))
             fine_vad.pop()
 
+    def run_fine_vad() -> None:
+        try:
+            for j in range(0, total, window):
+                if fine_stop.is_set():
+                    return
+                fine_vad.accept_waveform(samples[j:j + window])
+                drain_fine()
+            fine_vad.flush()
+            drain_fine()
+        except Exception as e:   # 交給主執行緒重新拋出
+            fine_error.append(e)
+
+    fine_thread = threading.Thread(target=run_fine_vad, name="refine-fine-vad", daemon=True)
+    fine_thread.start()
+
+    def stop_fine_vad() -> None:
+        fine_stop.set()
+        fine_thread.join()
+
     check_every = window * 200  # 約每 6.4 秒音訊檢查一次中止與進度
-    total = len(samples)
-    for i in range(0, total, window):
-        chunk = samples[i:i + window]
-        vad.accept_waveform(chunk)
-        fine_vad.accept_waveform(chunk)
+    try:
+        for i in range(0, total, window):
+            vad.accept_waveform(samples[i:i + window])
+            drain()
+            if i % check_every == 0:
+                if should_stop is not None and should_stop():
+                    stop_fine_vad()
+                    return None
+                if on_progress is not None:   # pause 模式 VAD 只切句、很快，辨識另算（進度 10% 之後）
+                    on_progress(i / total * (0.1 if ASR_SEGMENTATION == "pause" else 1.0))
+        vad.flush()
         drain()
-        if i % check_every == 0:
-            if should_stop is not None and should_stop():
-                return None
-            if on_progress is not None:   # pause 模式 VAD 只切句、很快，辨識另算（進度 10% 之後）
-                on_progress(i / total * (0.1 if ASR_SEGMENTATION == "pause" else 1.0))
-    vad.flush()
-    fine_vad.flush()
-    drain()
+    except BaseException:
+        stop_fine_vad()
+        raise
+    fine_thread.join()
+    if fine_error:
+        raise fine_error[0]
 
     if ASR_SEGMENTATION == "pause":
         all_tokens: List[str] = []
