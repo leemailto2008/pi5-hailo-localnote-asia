@@ -443,7 +443,12 @@
    （兩個 VAD 每個 window 各轉一次 float32）→ 80eb696：每 200 個 window 轉一次再逐 window 餵 → pcm_ab3.log：19.0／19.1 s、37.2／37.3 s，輸出完全相同。
    sherpa 執行緒 4 vs 3（refine240_thr.sh，80eb696，4 小時母帶單獨跑，每次先等降到 52 °C 以下）：
    4 執行緒 483.5 s、最高 70.5 °C、RAM +1,039 MB；3 執行緒 483.9 s、最高 68.3 °C、+1,053 MB；逐字稿、句子、說話人完全相同（只有說明字串「CPU 4／3 執行緒」不同）。
-   → 4 小時沿用即時切片時，第 4 條執行緒沒有加速、只多 2.2 °C。再量短的與整段重新辨識（thr_ab.sh）。
+   → 4 小時沿用即時切片時，第 4 條執行緒沒有加速、只多 2.2 °C。再量短的與整段重新辨識（thr_ab.sh → thr_ab.log）：
+   藍牙 30 分沿用 4 執行緒 99.6／99.7 s、3 執行緒 99.6／100.1 s；GS3 10 分整段重新辨識 65.0 → 66.6 s（辨識 50.1 → 51.7 s）；輸出都相同。
+   → 7c1420b：只有紀要整理中提早跑的那次用 3 條（main.EARLY_REFINE_THREADS，env_overrides 傳 PI5_SHERPA_THREADS），done 之後或手動按的照舊 4；
+   測試 +1，pytest 702 passed。23:24 部署（備份 20261115_232443）→ GS3 5 分冒煙（20261115_232506_5min）suite PASS：cer／fact 照常、recap 1.0、topic 1.0、
+   紀要 107.8 s、errors 0；高精度稿提早跑、沿用 44 片、整份 18.0 s、4 人、說明欄位「CPU 3 執行緒」；run_acoustic.sh 沒有重跑。
+   23:33 開跑 GS3 240 分第三場（v240_7c14.log），看 ram_peak／swap_growth／cpu_temp。
 6. 錄音中預先整理（premap）維持關閉：CLAUDE.md 規則要使用者確認，不自行改預設。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
