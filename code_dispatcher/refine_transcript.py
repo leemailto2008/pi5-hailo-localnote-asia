@@ -316,8 +316,33 @@ def check_available() -> Optional[str]:
     return None
 
 
-def load_audio(path: str):
-    """用 ffmpeg 解成 16 kHz 單聲道 float32。"""
+class Pcm16:
+    """16 kHz 單聲道母帶：存 int16，切片時才轉 float32（只支援切片與 len）。
+    整段先轉 float32 再切跟切完才轉，值完全相同；記憶體減半。2026-11-15 .228 4 小時母帶高精度稿單獨跑：
+    MemAvailable 少 1,547 MB、swap +147 MB（整段 float32 920 MB＋解碼的 int16 bytes 460 MB 同時存在）。"""
+
+    __slots__ = ("pcm",)
+
+    def __init__(self, pcm) -> None:
+        self.pcm = pcm
+
+    def __len__(self) -> int:
+        return int(self.pcm.shape[0])
+
+    def __getitem__(self, key):
+        import numpy as np
+        if not isinstance(key, slice):
+            raise TypeError("Pcm16 只支援切片")
+        return self.pcm[key].astype(np.float32) / 32768.0
+
+    def to_float32(self):
+        """整段 float32（只有 pyannote 分說話人流程要整段陣列）。"""
+        import numpy as np
+        return self.pcm.astype(np.float32) / 32768.0
+
+
+def load_audio(path: str) -> Pcm16:
+    """用 ffmpeg 解成 16 kHz 單聲道 int16（Pcm16，切片時才轉 float32）。"""
     import numpy as np
 
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(SAMPLE_RATE), "-"]
@@ -329,10 +354,10 @@ def load_audio(path: str):
         raise RefineError(f"音檔解碼失敗：{e.stderr.decode('utf-8', 'replace')[:200]}") from e
     except subprocess.TimeoutExpired as e:
         raise RefineError("音檔解碼逾時") from e
-    samples = np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
-    if samples.size == 0:
+    pcm = np.frombuffer(proc.stdout, dtype=np.int16)
+    if pcm.size == 0:
         raise RefineError("音檔沒有內容")
-    return samples
+    return Pcm16(pcm)
 
 
 def token_pieces(start: float, end: float, tokens: Sequence[str], times: Sequence[float],
@@ -662,7 +687,8 @@ def diarize(samples, should_stop: StopFn = None, on_progress: ProgressFn = None)
             return 1  # 非 0 = 要求 sherpa 中止
         return 0
 
-    result = sd.process(samples, callback=callback).sort_by_start_time()
+    audio = samples.to_float32() if isinstance(samples, Pcm16) else samples
+    result = sd.process(audio, callback=callback).sort_by_start_time()
     if stopped:
         return None
     return [(r.start, r.end, r.speaker) for r in result]

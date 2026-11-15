@@ -811,3 +811,36 @@ def test_transcribe_raises_fine_vad_error_and_stops_thread_on_cancel(monkeypatch
     _, samples = _fine_vad_fake(monkeypatch)
     assert rt.transcribe(samples, should_stop=lambda: True) is None
     assert not any(th.name == "refine-fine-vad" for th in threading.enumerate())
+
+
+def test_pcm16_slices_match_whole_float32_conversion():
+    """2026-11-15：母帶改存 int16、切片時才轉 float32（4 小時母帶記憶體 920 → 460 MB），值要與整段先轉完全相同。"""
+    import numpy as np
+    import pytest
+    rng = np.random.default_rng(0)
+    pcm = rng.integers(-32768, 32767, size=50_000, dtype=np.int16)
+    whole = pcm.astype(np.float32) / 32768.0
+    x = rt.Pcm16(pcm)
+    assert len(x) == 50_000
+    for a, b in ((0, 512), (1234, 9999), (49_900, 60_000), (10, 10)):
+        got = x[a:b]
+        assert got.dtype == np.float32 and np.array_equal(got, whole[a:b])
+    assert np.array_equal(x.to_float32(), whole)
+    with pytest.raises(TypeError):
+        x[5]
+
+
+def test_load_audio_returns_pcm16(monkeypatch):
+    import subprocess
+    import types
+
+    import numpy as np
+    import pytest
+    pcm = np.array([0, 16384, -32768, 32767], dtype=np.int16)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=pcm.tobytes()))
+    x = rt.load_audio("/x.ogg")
+    assert isinstance(x, rt.Pcm16) and len(x) == 4
+    assert np.array_equal(x[0:4], pcm.astype(np.float32) / 32768.0)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=b""))
+    with pytest.raises(rt.RefineError):
+        rt.load_audio("/x.ogg")
