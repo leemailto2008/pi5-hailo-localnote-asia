@@ -27,7 +27,14 @@ MODEL_DIR = os.environ.get("PI5_CSC_MODEL_DIR", "/home/pi/models/macbert4csc")
 MIN_PROB = 0.5            # 跨行視窗下的門檻（11-12 上下文實驗，見檔頭）
 WINDOW_CHARS = 120        # 每次送模型的字數（遠低於 BERT 的 512 token 上限）
 THREADS = 4
-LABEL = "MacBERT4CSC（ONNX，CPU 4 執行緒）"
+
+
+def engine_label(threads: int = THREADS) -> str:
+    """網頁顯示用的引擎說明（實際用的執行緒數）。"""
+    return f"MacBERT4CSC（ONNX，CPU {threads} 執行緒）"
+
+
+LABEL = engine_label()
 
 _CJK_RE = re.compile(r"^[一-鿿]$")
 _LABEL_RE = re.compile(r"^說話人\d+：")
@@ -76,6 +83,7 @@ class CscCorrector:
         model = os.path.join(model_dir, "model.onnx")
         if not os.path.isfile(model):
             raise RuntimeError(f"缺少中文糾錯模型 {model}（bash tools/ci/setup_csc_model.sh）")
+        self.label = engine_label(threads)
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads
         self._np = np

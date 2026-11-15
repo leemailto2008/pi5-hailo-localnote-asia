@@ -593,3 +593,18 @@ def test_quick_fix_passes_csc_threads(monkeypatch):
     assert _run(tp.quick_fix("說話人1：行成4天。", [], csc_threads=3))["status"] == "done"
     assert _run(tp.quick_fix("說話人1：行成4天。", []))["status"] == "done"
     assert seen == [3, None]
+
+
+def test_csc_engine_label_shows_actual_threads(monkeypatch):
+    """網頁「自動修同音字」的引擎說明寫實際用的執行緒數（11-16 前固定寫 4）。"""
+    import csc_corrector as cc
+    assert cc.engine_label(3) == "MacBERT4CSC（ONNX，CPU 3 執行緒）"
+    assert cc.LABEL == cc.engine_label(cc.THREADS)
+    _quick_fix_on(monkeypatch)
+
+    class _LabeledCsc(_FakeCsc):
+        def __init__(self, *args, threads=cc.THREADS, **kwargs):
+            self.label = cc.engine_label(threads)
+
+    monkeypatch.setattr(cc, "CscCorrector", _LabeledCsc)
+    assert _run(tp.quick_fix("說話人1：行成4天。", [], csc_threads=3))["engine"] == "MacBERT4CSC（ONNX，CPU 3 執行緒）"

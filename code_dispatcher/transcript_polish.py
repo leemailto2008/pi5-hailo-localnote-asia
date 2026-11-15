@@ -415,7 +415,7 @@ async def _run_fix_csc(chunk: str, stats: Dict[str, Any], should_stop: Optional[
                        corrector: Any) -> Optional[str]:
     """MacBERT4CSC 引擎：在背景執行緒跑（onnxruntime 是同步的，不能卡住 API 的事件迴圈）。"""
     from csc_corrector import LABEL
-    stats["backend"] = LABEL
+    stats["backend"] = getattr(corrector, "label", LABEL)
     out = await asyncio.to_thread(corrector.correct, chunk, should_stop)
     if out is None:
         return None
