@@ -74,3 +74,29 @@ def test_job_started_or_done():
     assert not job_started_or_done({"state": "error", "job": "m_1"}, "m_1")
     assert not job_started_or_done({"state": "idle"}, "m_1")
     assert not job_started_or_done({"state": "done", "job": ""}, "")
+
+
+def test_broadcast_audio_ready_sends_peaks_and_swallows_errors(monkeypatch, capsys):
+    """錄音後波形峰值改到背景算（4 小時母帶 21.9 s，原本算進逐字稿收尾）；算不出來只記 log。"""
+    import asyncio
+    import sys
+    import types
+    sent = []
+
+    async def broadcast(kind, payload):
+        sent.append((kind, payload))
+
+    monkeypatch.setitem(sys.modules, "ws_manager", types.SimpleNamespace(ws_manager=types.SimpleNamespace(broadcast=broadcast)))
+    monkeypatch.setitem(sys.modules, "two_layer_audio",
+                        types.SimpleNamespace(extract_waveform_peaks=lambda path, n: [0.1] * n))
+    m = _manager()
+    asyncio.run(m._broadcast_audio_ready("m_9", "/dev/shm/audio_cache/m_9.ogg", 600))
+    assert sent == [("audio_ready", {"job_id": "m_9", "audio_url": "/audio/m_9.ogg", "duration": 600, "peaks": [0.1] * 200})]
+
+    def boom(path, n):
+        raise RuntimeError("ffmpeg died")
+
+    monkeypatch.setitem(sys.modules, "two_layer_audio", types.SimpleNamespace(extract_waveform_peaks=boom))
+    asyncio.run(m._broadcast_audio_ready("m_10", "/x.ogg", 1))
+    assert "ffmpeg died" in capsys.readouterr().out
+    assert len(sent) == 1

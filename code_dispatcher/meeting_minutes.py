@@ -508,6 +508,7 @@ class MeetingJobManager:
         self._record_task: Optional[asyncio.Task] = None
         self._chunk_worker_task: Optional[asyncio.Task] = None
         self._premap_task: Optional[asyncio.Task] = None
+        self._peaks_task: Optional[asyncio.Task] = None   # 錄音後背景算波形峰值 (留參考，避免被回收)
         self._premap_prefix: str = ""          # 錄音中已預先整理的逐字稿前段 (tidy_live_transcript 後)
         self._premap_notes: List[str] = []     # 對應的各段重點 (compact_notes 後)
         self._hailo_pinned: bool = False   # map 階段讓 hailo-ollama 模型常駐 NPU 中
@@ -559,6 +560,22 @@ class MeetingJobManager:
             self.on_meeting_done(job_id)
         except Exception as e:  # 掛勾是附加功能 (自動高精度逐字稿)，失敗不能讓會議變成 error
             print(f"[MeetingMinutes] on_meeting_done({job_id}) 失敗: {e}")
+
+    async def _broadcast_audio_ready(self, job_id: str, raw_ogg: str, duration_sec: int) -> None:
+        """算母帶波形峰值後廣播 audio_ready (網頁波形圖)；失敗只記 log (網頁會自己載入母帶畫波形)。"""
+        try:
+            from ws_manager import ws_manager
+            from two_layer_audio import extract_waveform_peaks
+            # 長會議 (最長 4 小時) 解碼整段母帶需數十秒：丟到執行緒，避免卡住 event loop
+            peaks = await asyncio.to_thread(extract_waveform_peaks, raw_ogg, 200)
+            await ws_manager.broadcast("audio_ready", {
+                "job_id": job_id,
+                "audio_url": f"/audio/{job_id}.ogg",
+                "duration": duration_sec,
+                "peaks": peaks
+            })
+        except Exception as pe:
+            print(f"[MeetingMinutes] Notice precomputing peaks: {pe}")
 
     def _transcript_ready(self, job_id: str) -> None:
         """通知 on_transcript_ready；它的錯誤只記 log，不影響紀要整理。"""
@@ -1156,20 +1173,9 @@ class MeetingJobManager:
                     return
                 raise RuntimeError("麥克風收音失敗，請確認藍牙耳麥已開機並保持連線。")
 
-            # 錄音完成立即向前端廣播音檔就緒事件，波形圖 0 延遲秒開試聽！
-            try:
-                from ws_manager import ws_manager
-                from two_layer_audio import extract_waveform_peaks
-                # 長會議 (最長 4 小時) 解碼整段母帶需數十秒：丟到執行緒，避免卡住 event loop
-                peaks = await asyncio.to_thread(extract_waveform_peaks, raw_ogg, 200)
-                await ws_manager.broadcast("audio_ready", {
-                    "job_id": job_id,
-                    "audio_url": f"/audio/{job_id}.ogg",
-                    "duration": duration_sec,
-                    "peaks": peaks
-                })
-            except Exception as pe:
-                print(f"[MeetingMinutes] Notice precomputing peaks: {pe}")
+            # 錄音完成向前端廣播音檔就緒事件 (波形峰值)。背景做、不等它：4 小時母帶解碼算峰值要 21.9 s
+            # (2026-11-15 .228，.cc_scratch/pe/tail_bench.py)，原本整段算進逐字稿收尾，240 分 stt_tail_wait 26.2 s (門檻 15 s)。
+            self._peaks_task = asyncio.create_task(self._broadcast_audio_ready(job_id, raw_ogg, duration_sec))
 
             # --- PHASE 2: Transcribe Finalization ---
             if self._cancellation_token.is_set():
