@@ -1958,6 +1958,10 @@ class RefineRequest(BaseModel):
 # 會議紀要完成後自動跑高精度逐字稿 (SenseVoice＋分說話人)：潤稿也預設用它當來源 (11-11 量測：CER 比即時稿低 4–8 個百分點)。
 # 紀要只用 Hailo 時 (CPU 閒著) 逐字稿一收尾就開始 (_auto_refine_early)，否則 state=done 之後才跑；錄音一開始就停。PI5_AUTO_REFINE=0 關閉。
 AUTO_REFINE = os.environ.get("PI5_AUTO_REFINE", "1").strip() != "0"
+# 紀要整理中提早跑的高精度稿用 3 條 sherpa 執行緒（2026-11-15 .228，80eb696，refine240_thr.sh／thr_ab.sh）：
+# 4 小時沿用即時切片 4 → 3 執行緒 483.5 → 483.9 s、最高 70.5 → 68.3 °C；藍牙 30 分 99.6–99.7 → 99.6–100.1 s；
+# 整段重新辨識 10 分 65.0 → 66.6 s；輸出完全相同。服務內 4 小時那場同時有紀要（Hailo）＋快修，最高 75.5 °C（門檻 75）。
+EARLY_REFINE_THREADS = 3
 
 
 def _start_refine(job_id: str, during_summary: bool = False) -> Dict[str, Any]:
@@ -1989,7 +1993,9 @@ def _start_refine(job_id: str, during_summary: bool = False) -> Dict[str, Any]:
     async def runner(job: SingleJob) -> Dict[str, Any]:
         from transcript_polish import quick_fix
         # 子行程執行：sherpa-onnx 分說話人整段持有 GIL，放在本行程的執行緒會卡住整個 API (11-10 實測)。
-        result = await refine_transcript.run_in_subprocess(path, is_any_recording_active, on_progress)
+        result = await refine_transcript.run_in_subprocess(
+            path, is_any_recording_active, on_progress,
+            env_overrides={"PI5_SHERPA_THREADS": str(EARLY_REFINE_THREADS)} if during_summary else None)
         if result.get("stopped") or not (result.get("transcript") or "").strip():
             return result
         # 會後自動快修：會議詞彙＋MacBERT（transcript_polish.quick_fix）；transcript 換成修正稿，原稿留在 transcript_raw。

@@ -844,3 +844,13 @@ def test_load_audio_returns_pcm16(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=b""))
     with pytest.raises(rt.RefineError):
         rt.load_audio("/x.ogg")
+
+
+def test_run_in_subprocess_passes_env_overrides():
+    """紀要整理中提早跑的高精度稿用 PI5_SHERPA_THREADS=3（main.EARLY_REFINE_THREADS）傳給子行程。"""
+    import os
+    script = _EMIT + "import os\nemit({'result': {'transcript': os.environ.get('PI5_SHERPA_THREADS', 'unset'), 'speakers': 1}})\n"
+    res = asyncio.run(rt.run_in_subprocess("x.ogg", cmd=_child(script), env_overrides={"PI5_SHERPA_THREADS": "3"}))
+    assert res["transcript"] == "3"
+    res = asyncio.run(rt.run_in_subprocess("x.ogg", cmd=_child(script)))
+    assert res["transcript"] == os.environ.get("PI5_SHERPA_THREADS", "unset")

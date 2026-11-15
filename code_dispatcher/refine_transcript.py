@@ -1036,13 +1036,16 @@ def refine(path: str, should_stop: StopFn = None,
 
 async def run_in_subprocess(path: str, should_stop: StopFn = None,
                             on_progress: Optional[Callable[[str, float], None]] = None,
-                            cmd: Optional[List[str]] = None) -> Dict[str, Any]:
+                            cmd: Optional[List[str]] = None,
+                            env_overrides: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """在子行程執行 refine()（見檔頭「執行方式」）。should_stop() 每秒檢查一次，成立就終止子行程，
-    回傳 stopped=True 與已完成的部分（辨識完就有逐字稿，只是沒分人）。cmd 只給測試替換子行程用。"""
+    回傳 stopped=True 與已完成的部分（辨識完就有逐字稿，只是沒分人）。cmd 只給測試替換子行程用；
+    env_overrides 加到子行程的環境變數（例如 PI5_SHERPA_THREADS）。"""
     argv = cmd or ["nice", "-n", str(CHILD_NICE), sys.executable, "-m", "refine_transcript", path]
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=os.path.dirname(os.path.abspath(__file__)),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=CHILD_LINE_LIMIT,
+        env={**os.environ, **env_overrides} if env_overrides else None,
     )
     partial: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
