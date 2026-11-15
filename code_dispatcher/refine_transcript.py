@@ -514,6 +514,14 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     # 仍然每個 window 餵一次：一次餵多個 window 時 sherpa-onnx 會合併判斷，切出的範圍就不同了（vad_bench.py）。
     fine_stop = threading.Event()
     fine_error: List[BaseException] = []
+    block = window * 200   # 母帶（Pcm16）一次轉 200 個 window 的 float32，再一個 window 一個 window 餵（逐 window 轉多 1–2% 時間）
+
+    def windows():
+        """依序產生 (樣本位置, 一個 window 的 float32)。"""
+        for b in range(0, total, block):
+            chunk = samples[b:b + block]
+            for k in range(0, len(chunk), window):
+                yield b + k, chunk[k:k + window]
 
     def drain_fine() -> None:
         while not fine_vad.empty():
@@ -523,10 +531,10 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
 
     def run_fine_vad() -> None:
         try:
-            for j in range(0, total, window):
+            for _, chunk in windows():
                 if fine_stop.is_set():
                     return
-                fine_vad.accept_waveform(samples[j:j + window])
+                fine_vad.accept_waveform(chunk)
                 drain_fine()
             fine_vad.flush()
             drain_fine()
@@ -542,8 +550,8 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
 
     check_every = window * 200  # 約每 6.4 秒音訊檢查一次中止與進度
     try:
-        for i in range(0, total, window):
-            vad.accept_waveform(samples[i:i + window])
+        for i, chunk in windows():
+            vad.accept_waveform(chunk)
             drain()
             if i % check_every == 0:
                 if should_stop is not None and should_stop():
