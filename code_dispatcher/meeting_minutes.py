@@ -112,7 +112,7 @@ async def stream_map_notes(prompt: str, keep_alive: Optional[int] = None, hailo_
 # 最高 74.7 °C、沒有降頻，可用記憶體最低 3.8 GB。
 # 預設關閉（2026-11-15 11:00）：CPU 那一路要把 qwen2.5:3b-opt 載進記憶體（.228 實測 MemAvailable 少 2.2 GB；
 # options.use_mmap=true 也少 2.0 GB，ollama 0.40.4），整理階段的 RAM 峰值從 1.8–2.4 GB 變 3.4–4.3 GB，
-# 開了之後 12 場 10 分以上的 e2e 有 10 場超過 tools/e2e/thresholds.json 的 ram_peak_mb_max 3500
+# 開了之後 11 場 10 分以上的 e2e 有 10 場超過 tools/e2e/thresholds.json 的 ram_peak_mb_max 3500
 # → 「變快但記憶體變差」，依「沒有變差才採用」先關；要用的話 PI5_SUMMARY_DUAL_MAP=1（見 BIG_CHANGE_STATUS #43）。
 SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "0") == "1"
 DUAL_MAP_POLL_S = 0.5
