@@ -31,6 +31,11 @@ def meeting_busy_reason(recording_active: bool, meeting_state: Optional[str]) ->
     return None
 
 
+def job_started_or_done(snapshot: Dict[str, Any], job_id: str) -> bool:
+    """SingleJob.snapshot() 是不是這場會議、而且還在跑或已完成 (被中止／出錯的可以再跑)。"""
+    return bool(job_id) and snapshot.get("job") == job_id and snapshot.get("state") in ("running", "done")
+
+
 class JobBusyError(RuntimeError):
     """已有同名工作在跑。"""
 

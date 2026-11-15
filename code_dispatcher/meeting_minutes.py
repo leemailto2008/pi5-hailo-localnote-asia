@@ -151,6 +151,15 @@ def _recording_active() -> bool:
     return is_any_recording_active()
 
 
+def summary_may_use_cpu(lang: str) -> bool:
+    """紀要整理會不會用到 CPU：兩路同時 (中文)、或 Hailo 不是首選／不可用 (退回 CPU Ollama)。
+    不會用到時 main.py 在整理的同時就開始高精度逐字稿 (CPU)，不必等紀要做完。"""
+    import llm_backend
+    if SUMMARY_DUAL_MAP and lang == "zh":
+        return True
+    return not (llm_backend.PREFERRED_BACKEND == "hailo" and llm_backend.is_backend_healthy(llm_backend.HAILO_BACKEND))
+
+
 def _dual_map_available() -> bool:
     """Hailo 是首選且可用、CPU Ollama 也可用時才兩路同時整理 (Hailo 掛掉時 stream_map_notes 本來就退回 CPU)。"""
     import llm_backend
@@ -504,6 +513,8 @@ class MeetingJobManager:
         self._hailo_pinned: bool = False   # map 階段讓 hailo-ollama 模型常駐 NPU 中
         # 一場會議整理完成 (state=done) 後呼叫 on_meeting_done(job_id)：main.py 用來自動跑高精度逐字稿
         self.on_meeting_done: Optional[Callable[[str], None]] = None
+        # 逐字稿收尾完成、紀要整理要開始而且整理不用 CPU 時呼叫 on_transcript_ready(job_id)：main.py 用來提早開始高精度逐字稿
+        self.on_transcript_ready: Optional[Callable[[str], None]] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.offline_detector = OfflineDetector(check_interval=10.0)
         self._last_cpu_time: float = 0.0
@@ -548,6 +559,15 @@ class MeetingJobManager:
             self.on_meeting_done(job_id)
         except Exception as e:  # 掛勾是附加功能 (自動高精度逐字稿)，失敗不能讓會議變成 error
             print(f"[MeetingMinutes] on_meeting_done({job_id}) 失敗: {e}")
+
+    def _transcript_ready(self, job_id: str) -> None:
+        """通知 on_transcript_ready；它的錯誤只記 log，不影響紀要整理。"""
+        if self.on_transcript_ready is None:
+            return
+        try:
+            self.on_transcript_ready(job_id)
+        except Exception as e:  # 掛勾是附加功能 (提早跑高精度逐字稿)，失敗不能讓會議變成 error
+            print(f"[MeetingMinutes] on_transcript_ready({job_id}) 失敗: {e}")
 
     def _save_last_meeting(self) -> None:
         if self.result:
@@ -1289,6 +1309,15 @@ class MeetingJobManager:
             llm_start = time.time()
 
             summary_lang = detect_language(transcript)
+            # 紀要只用 Hailo 時 CPU 閒著：高精度逐字稿 (CPU) 現在就開始，不等紀要做完 (見 main._auto_refine_early)
+            if self.on_transcript_ready is not None:
+                try:
+                    summary_cpu = await asyncio.to_thread(summary_may_use_cpu, summary_lang)
+                except Exception as e:  # 查不到就照舊：紀要做完才跑高精度逐字稿
+                    print(f"[MeetingMinutes] 無法判斷紀要會不會用 CPU，高精度逐字稿等紀要做完再跑: {e}")
+                    summary_cpu = True
+                if not summary_cpu:
+                    self._transcript_ready(job_id)
             is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[summary_lang]["single_max"])
             est_total_llm_sec = estimate_summary_seconds(len(transcript.strip()), is_long_hierarchical,
                                                          dual=SUMMARY_DUAL_MAP and summary_lang == "zh")

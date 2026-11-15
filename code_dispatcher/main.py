@@ -130,6 +130,7 @@ async def startup_event():
     try:
         from meeting_minutes import minutes_manager
         minutes_manager.on_meeting_done = _auto_refine
+        minutes_manager.on_transcript_ready = _auto_refine_early
         asyncio.create_task(minutes_manager.offline_detector.start())
         print("[Startup] OfflineDetector background watchdog started.")
     except Exception as e:
@@ -1866,7 +1867,7 @@ def _fix_engines() -> Dict[str, Any]:
 # 同步回應一定超過前端逾時。潤稿狀態只放記憶體（服務重啟就消失，前端會看到 state=idle）；
 # 高精度逐字稿的結果另存在 RAM 磁碟（不寫實體磁碟），部署／重啟服務後還在，潤稿也還能選它當來源（重開機才清掉，與錄音檔一樣）。
 # 放在錄音快取旁邊的資料夾，不放進 AUDIO_CACHE_DIR：那裡的檔案數會算進錄音環形緩衝的保留筆數。
-from single_job import SingleJob, meeting_busy_reason  # noqa: E402
+from single_job import SingleJob, job_started_or_done, meeting_busy_reason  # noqa: E402
 
 _STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(AUDIO_CACHE_DIR)), "localnote_state")
 _polish_job = SingleJob("polish")
@@ -1955,16 +1956,17 @@ class RefineRequest(BaseModel):
 
 
 # 會議紀要完成後自動跑高精度逐字稿 (SenseVoice＋分說話人)：潤稿也預設用它當來源 (11-11 量測：CER 比即時稿低 4–8 個百分點)。
-# 只在 state=done 之後跑 (紀要生成中不跑)；錄音一開始就停。PI5_AUTO_REFINE=0 關閉。
+# 紀要只用 Hailo 時 (CPU 閒著) 逐字稿一收尾就開始 (_auto_refine_early)，否則 state=done 之後才跑；錄音一開始就停。PI5_AUTO_REFINE=0 關閉。
 AUTO_REFINE = os.environ.get("PI5_AUTO_REFINE", "1").strip() != "0"
 
 
-def _start_refine(job_id: str) -> Dict[str, Any]:
-    """啟動高精度逐字稿背景工作；不能啟動就丟 HTTPException (409 忙碌／503 不可用／400、404 沒有錄音)。"""
+def _start_refine(job_id: str, during_summary: bool = False) -> Dict[str, Any]:
+    """啟動高精度逐字稿背景工作；不能啟動就丟 HTTPException (409 忙碌／503 不可用／400、404 沒有錄音)。
+    during_summary：紀要整理中 (只用 Hailo、CPU 閒著) 提早開始，只擋錄音中。"""
     from voice_streaming import is_any_recording_active
     from meeting_minutes import minutes_manager
     import refine_transcript
-    busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
+    busy = meeting_busy_reason(is_any_recording_active(), None if during_summary else minutes_manager.status.state)
     if busy:
         raise HTTPException(status_code=409, detail=busy)
     if _refine_job.running:
@@ -2006,9 +2008,25 @@ def _start_refine(job_id: str) -> Dict[str, Any]:
     return _refine_job.start(runner, job=job_id, phase="load", progress=0)
 
 
-def _auto_refine(job_id: str) -> None:
-    """minutes_manager.on_meeting_done：會議整理完自動啟動高精度逐字稿；不能啟動 (已在跑、沒裝模型…) 只記 log。"""
+def _auto_refine_early(job_id: str) -> None:
+    """minutes_manager.on_transcript_ready：紀要只用 Hailo 時，逐字稿一收尾就開始高精度逐字稿 (CPU 閒著，不必等紀要做完)。
+    不能啟動只記 log，紀要做完時 _auto_refine 會再試。"""
     if not AUTO_REFINE:
+        return
+    try:
+        _start_refine(job_id, during_summary=True)
+        print(f"[AutoRefine] 紀要整理中提早開始高精度逐字稿：{job_id}")
+    except HTTPException as e:
+        print(f"[AutoRefine] 紀要整理中沒有提早開始 {job_id}：{e.detail}")
+
+
+def _auto_refine(job_id: str) -> None:
+    """minutes_manager.on_meeting_done：會議整理完自動啟動高精度逐字稿；不能啟動 (已在跑、沒裝模型…) 只記 log。
+    這場已經提早跑了 (還在跑或已完成) 就不再跑。"""
+    if not AUTO_REFINE:
+        return
+    if job_started_or_done(_refine_job.snapshot(), job_id):
+        print(f"[AutoRefine] {job_id} 的高精度逐字稿已在紀要整理時開始")
         return
     try:
         _start_refine(job_id)

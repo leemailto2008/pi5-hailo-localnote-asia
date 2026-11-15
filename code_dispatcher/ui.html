@@ -2504,12 +2504,15 @@ function syncRefineBox() {
   syncPolishSource();
 }
 document.addEventListener('ln-state', syncRefineBox);
-// 會議整理完成後後端會自動跑高精度逐字稿 (AUTO_REFINE)：狀態變成 done 時看一下，在跑就接著顯示進度。
+// 後端會自動跑高精度逐字稿 (AUTO_REFINE；紀要只用 Hailo 時整理中就開始)：狀態變成 done 時看一下，
+// 在跑就接著顯示進度；整理中已經跑完 (同一場會議) 就直接顯示結果。
 document.addEventListener('ln-state', ev => {
   if (MOCK || ev.detail !== 'done' || refineBusy) return;
   setTimeout(() => {
-    api(API.refine).then(job => {
-      if (job && job.state === 'running' && !refineBusy) runRefine(false);
+    Promise.all([api(API.refine), api(API.status)]).then(([job, st]) => {
+      if (!job || refineBusy) return;
+      if (job.state === 'running') runRefine(false);
+      else if (st && job.job && job.job === st.job && (job.state === 'done' || job.state === 'stopped')) renderRefine(job);
     }).catch(err => console.warn('auto refine check failed', err));
   }, 1500);
 });
