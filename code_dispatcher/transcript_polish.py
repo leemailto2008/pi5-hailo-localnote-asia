@@ -466,6 +466,7 @@ async def polish_transcript(
     source: str = "live",
     engine: Optional[str] = None,
     glossary: Optional[Sequence[str]] = None,
+    csc_threads: Optional[int] = None,
 ) -> Dict[str, Any]:
     """逐段潤稿。單段 LLM 失敗時保留原文並計入 failed_chunks，不中斷其他段。
     engine：修同音字的引擎（llm／csc）；省略 = FIX_ENGINE（服務預設）。rewrite 不看它。
@@ -515,7 +516,8 @@ async def polish_transcript(
     if fix_engine == "csc":
         try:
             from csc_corrector import CscCorrector
-            corrector = await asyncio.to_thread(CscCorrector)   # 載入約 4 s；這次潤稿用完就釋放
+            # 載入約 4 s；這次潤稿用完就釋放。csc_threads：onnxruntime 執行緒數（省略 = csc_corrector.THREADS）
+            corrector = await asyncio.to_thread(CscCorrector, **({"threads": csc_threads} if csc_threads else {}))
         except ImportError as e:
             raise RuntimeError("中文糾錯引擎缺少套件（onnxruntime、tokenizers、opencc）：" + str(e)) from e
     pre_corrector = await _load_pre_csc() if corrector is None else None     # LLM 潤稿（fix＋llm、rewrite）才先跑 MacBERT
@@ -600,8 +602,10 @@ QUICK_FIX = os.environ.get("PI5_REFINE_QUICK_FIX", "1").strip() != "0"
 
 async def quick_fix(text: str, glossary: Optional[Sequence[str]] = None,
                     should_stop: Optional[Callable[[], bool]] = None,
-                    on_progress: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
+                    on_progress: Optional[Callable[[int, int], None]] = None,
+                    csc_threads: Optional[int] = None) -> Dict[str, Any]:
     """高精度逐字稿的快修：會議詞彙＋MacBERT（polish_transcript 的 fix／csc，與量測同一條路），排版照原稿（restore_layout）。
+    csc_threads：MacBERT 的 onnxruntime 執行緒數（紀要整理中提早跑時 main.py 給 3，見 main.EARLY_REFINE_THREADS）。
     回傳 {"status": "done"|"stopped"|"skipped"|"error", ...}；done 帶 text（修正後全文）與修改處數。
     不丟例外：快修失敗只影響這一步，高精度逐字稿本身照常交出。"""
     if not QUICK_FIX:
@@ -614,7 +618,7 @@ async def quick_fix(text: str, glossary: Optional[Sequence[str]] = None,
         return {"status": "skipped", "reason": "沒有逐字稿"}
     try:
         res = await polish_transcript(text, "fix", on_progress=on_progress, should_stop=should_stop,
-                                      source="refine", engine="csc", glossary=glossary)
+                                      source="refine", engine="csc", glossary=glossary, csc_threads=csc_threads)
     except (RuntimeError, ImportError, OSError, ValueError) as e:
         logger.warning("[quick_fix] failed, keep the original transcript: %s", e)
         return {"status": "error", "reason": str(e) or type(e).__name__}

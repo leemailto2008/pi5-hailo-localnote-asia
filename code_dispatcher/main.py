@@ -1961,6 +1961,9 @@ AUTO_REFINE = os.environ.get("PI5_AUTO_REFINE", "1").strip() != "0"
 # 紀要整理中提早跑的高精度稿用 3 條 sherpa 執行緒（2026-11-15 .228，80eb696，refine240_thr.sh／thr_ab.sh）：
 # 4 小時沿用即時切片 4 → 3 執行緒 483.5 → 483.9 s、最高 70.5 → 68.3 °C；藍牙 30 分 99.6–99.7 → 99.6–100.1 s；
 # 整段重新辨識 10 分 65.0 → 66.6 s；輸出完全相同。服務內 4 小時那場同時有紀要（Hailo）＋快修，最高 75.5 °C（門檻 75）。
+# 之後的快修（MacBERT，uvicorn 內）也用 3（11-16，.cc_scratch/pe/csc_bench.py，4 小時高精度稿 59,535 字）：
+# 4 執行緒 119.0／119.6 s、最高 73.8／74.9 °C；3 執行緒 131.9／132.1 s、最高 71.0／70.5 °C；輸出完全相同。
+# 服務內 75.5 °C 那一秒正是快修（uvicorn CPU 386%）；多的十幾秒仍在紀要做完之前（4 小時紀要約 1,620 s）。
 EARLY_REFINE_THREADS = 3
 
 
@@ -2002,7 +2005,8 @@ def _start_refine(job_id: str, during_summary: bool = False) -> Dict[str, Any]:
         on_progress("fix", 0.0)
         terms = await asyncio.to_thread(meeting_glossary.terms)
         fix = await quick_fix(result["transcript"], terms, is_any_recording_active,
-                              lambda done, total: on_progress("fix", done / max(total, 1)))
+                              lambda done, total: on_progress("fix", done / max(total, 1)),
+                              csc_threads=EARLY_REFINE_THREADS if during_summary else None)
         if fix["status"] == "done":
             result["transcript_raw"] = result["transcript"]
             result["transcript"] = fix.pop("text")

@@ -577,3 +577,19 @@ def test_quick_fix_skips_stops_and_reports_errors(monkeypatch):
         raise RuntimeError("缺少 pypinyin")
     monkeypatch.setattr(tp, "polish_transcript", boom)
     assert _run(tp.quick_fix("說話人1：行成")) == {"status": "error", "reason": "缺少 pypinyin"}
+
+
+def test_quick_fix_passes_csc_threads(monkeypatch):
+    """紀要整理中提早跑的快修用 3 條 onnxruntime 執行緒（main.EARLY_REFINE_THREADS）；沒給就用 CscCorrector 的預設。"""
+    import csc_corrector as cc
+    _quick_fix_on(monkeypatch)
+    seen = []
+
+    class _ThreadsCsc(_FakeCsc):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs.get("threads"))
+
+    monkeypatch.setattr(cc, "CscCorrector", _ThreadsCsc)
+    assert _run(tp.quick_fix("說話人1：行成4天。", [], csc_threads=3))["status"] == "done"
+    assert _run(tp.quick_fix("說話人1：行成4天。", []))["status"] == "done"
+    assert seen == [3, None]
