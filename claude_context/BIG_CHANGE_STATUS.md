@@ -534,6 +534,9 @@
    MacBERT（CscCorrector，約 814 MB）用完就丟，glibc 沒把空出的 heap 還給系統（推測，下一步用 malloc_trim 驗證）。
    → transcript_polish.release_freed_memory：polish_transcript 結束（含例外）後 gc＋malloc_trim(0)，日誌記前後 RSS；
    因錄音開始而停下時不做。部署後再跑一次 rss_seq 比較。
+   13:41 部署 f430683（含 0b64981 範例標籤；備份 20261116_134154）→ rss_seq 第二輪（rss_seq.log；第一輪改名 rss_seq_36ed.log）：
+   4 場都 PASS；VmRSS 440 → 620 → 560 → 560 → 544 MB（第一輪 440 → 929 → 970 → 973 → 1,280）。日誌每場
+   「[mem] polish refine/csc: malloc_trim(1) RSS 828 → 591／938 → 546／957 → 546／934 → 530 MB」→ 證實是 MacBERT 用完沒還給系統，已解決。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
