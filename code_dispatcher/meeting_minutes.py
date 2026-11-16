@@ -1629,6 +1629,14 @@ class MeetingJobManager:
                         todo.append(slot)
                     print(f"[MeetingMinutes] CPU 整理那一路停止，第 {slot + 1}/{total} 段交回 Hailo")
                     return
+                if not compact_notes(text or "", max_len=lim["note_len"]):
+                    # CPU qwen2.5:3b 遇到跟範例議題無關的內容會只照抄範例標籤：podcast 最後一段重跑 2 次都是
+                    # 「- 教育訓練：-／- 客戶訂單：-／- 預算：」(11-16，exp_last_chunk.py)，compact_notes 全部不收 → 原本退回逐字稿原句。
+                    # 交回 Hailo 重做（同一段 Hailo 寫得出重點）；CPU 那一路收工，不然從後面拿會又拿到同一段。
+                    async with lock:
+                        todo.append(slot)
+                    print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 CPU 沒有寫出重點，交回 Hailo")
+                    return
                 cpu_done.append(slot)
                 durations["cpu"].append(time.time() - t_req)
                 await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)

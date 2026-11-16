@@ -23,7 +23,7 @@ def _transcript():
     return "".join(topics)
 
 
-def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None):
+def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None, cpu_template_only=False):
     calls = {"hailo": [], "cpu": []}
     monkeypatch.setattr(mm, "map_user_prompt", lambda piece, idx, total, lang="zh": f"IDX={idx}")
 
@@ -39,6 +39,8 @@ def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None)
         await asyncio.sleep(0.025)
         if cpu_stop_after is not None and len(calls["cpu"]) > cpu_stop_after:
             return "", None, True
+        if cpu_template_only:   # 11-16 podcast：CPU 只照抄範例標籤
+            return "- 教育訓練：-\n- 客戶訂單：-\n- 預算：", _Backend(False), False
         return f"- 第{idx}段重點：王專員追蹤交期", _Backend(False), False
 
     monkeypatch.setattr(mm, "stream_map_notes", fake_hailo)
@@ -80,6 +82,15 @@ def test_dual_map_cpu_stops_when_recording_starts_and_hailo_takes_the_chunk(monk
     assert sorted(calls["hailo"]) == list(range(1, total + 1))   # 交回的那段也由 Hailo 做完
     assert job.status.metrics["summary_cpu_chunks"] == 0
     assert f"第{total}段重點" in out
+
+
+def test_cpu_notes_with_only_template_labels_go_back_to_hailo(monkeypatch):
+    job, calls, out = _setup(monkeypatch, cpu_template_only=True)
+    total = job.status.metrics["summary_chunks"]
+    assert calls["cpu"] == [total]                                  # CPU 第一段就只寫範例標籤 → 收工
+    assert sorted(calls["hailo"]) == list(range(1, total + 1))      # 那段由 Hailo 重做
+    assert job.status.metrics["summary_cpu_chunks"] == 0
+    assert f"第{total}段重點" in out and "教育訓練" not in out
 
 
 def test_dual_map_off_or_recording_uses_hailo_only(monkeypatch):
