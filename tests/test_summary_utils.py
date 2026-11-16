@@ -1252,10 +1252,9 @@ def test_strip_unspoken_example_labels():
     # 逐字稿有講到的標籤留著（測資會議「第一個議題是教育訓練」）
     spoken = summary_utils.strip_unspoken_example_labels(md, "第一個議題是教育訓練，明年預算80萬", labels)
     assert spoken == md
-    # 英文標籤不分大小寫；只動條目開頭，句中的詞不動
+    # 英文標籤不分大小寫；拿掉標籤後句中還有沒講過的範例詞（budget）的條目整條拿掉（11-17，見 drops_notes_made_of_the_example）
     en = "- training: new hires\n- Customer order: 300 units\n- We reviewed the budget: fine"
-    assert summary_utils.strip_unspoken_example_labels(en, "we hired two people", labels) == \
-        "- new hires\n- 300 units\n- We reviewed the budget: fine"
+    assert summary_utils.strip_unspoken_example_labels(en, "we hired two people", labels) == "- new hires\n- 300 units"
     assert summary_utils.strip_unspoken_example_labels("", "x", labels) == ""
 
 
@@ -1282,3 +1281,13 @@ def test_compact_notes_drops_placeholder_and_transcript_copies():
     assert summary_utils.compact_notes(raw) == "- 預算：無人機採購80萬\n- 決議：無異議通過"
     # LLM 失敗時的原文備援照收（不然這段會從紀要消失）
     assert summary_utils.compact_notes("- 比如說醫生啊，嗯以前醫生就是怎樣", keep_transcript=True) == "- 比如說醫生啊，嗯以前醫生就是怎樣"
+
+
+def test_strip_unspoken_example_labels_drops_notes_made_of_the_example():
+    # 11-17 podcast 第八次：CPU 照範例編出「教育訓練的重要性」這種整條，標籤拿掉也還是範例詞 → 整條拿掉
+    labels = ("教育訓練", "客戶訂單", "預算")
+    notes = "- 教育訓練：教育訓練的重要性\n- 客戶訂單：客戶訂單的價值\n- 預算：AI可降低設計成本\n- 經濟發展：經濟發展與技術取代"
+    assert summary_utils.strip_unspoken_example_labels(notes, "AI 會降低設計成本，經濟發展也會改變", labels) == \
+        "- AI可降低設計成本\n- 經濟發展：經濟發展與技術取代"
+    # 逐字稿有講到就不動（測資會議）
+    assert summary_utils.strip_unspoken_example_labels(notes, "教育訓練、客戶訂單、預算都有講", labels) == notes
