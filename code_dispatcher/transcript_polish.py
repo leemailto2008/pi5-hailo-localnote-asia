@@ -458,7 +458,55 @@ async def _run_rewrite(chunk: str, stats: Dict[str, Any], should_stop: Optional[
     return "\n".join(lines)
 
 
+def _vm_rss_mb() -> Optional[int]:
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        return None
+    return None
+
+
+def release_freed_memory(tag: str) -> None:
+    """MacBERT（CscCorrector，RSS 約 814 MB）在 API 行程裡載入、用完就丟，但 glibc 不一定把釋放的記憶體還給系統：
+    11-16 .228 重啟後連跑 4 場 5 分會議（每場會後快修載一次 MacBERT），uvicorn VmRSS 440 → 929 → 970 → 973 → 1,280 MB。
+    用完後 gc＋malloc_trim(0) 把空出來的 heap 還回去；日誌記前後 RSS。沒有 glibc（開發機）就略過。"""
+    import ctypes
+    import gc
+
+    gc.collect()
+    before = _vm_rss_mb()
+    try:
+        trimmed = ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError) as e:
+        logger.debug("[mem] malloc_trim unavailable: %s", e)
+        return
+    print(f"[mem] {tag}: malloc_trim({trimmed}) RSS {before} → {_vm_rss_mb()} MB")
+
+
 async def polish_transcript(
+    text: str,
+    mode: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    source: str = "live",
+    engine: Optional[str] = None,
+    glossary: Optional[Sequence[str]] = None,
+    csc_threads: Optional[int] = None,
+) -> Dict[str, Any]:
+    """逐段潤稿（見 _polish_transcript）；結束後（含例外）把 MacBERT 用過的記憶體還給系統。
+    因為錄音開始而停下時不整理（錄音中不搶 CPU），留到下一次潤稿結束。"""
+    try:
+        return await _polish_transcript(text, mode, on_progress=on_progress, should_stop=should_stop, source=source,
+                                        engine=engine, glossary=glossary, csc_threads=csc_threads)
+    finally:
+        if should_stop is None or not should_stop():
+            release_freed_memory(f"polish {source}/{engine or FIX_ENGINE}")
+
+
+async def _polish_transcript(
     text: str,
     mode: str,
     on_progress: Optional[Callable[[int, int], None]] = None,

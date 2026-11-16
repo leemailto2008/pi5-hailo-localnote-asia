@@ -608,3 +608,24 @@ def test_csc_engine_label_shows_actual_threads(monkeypatch):
 
     monkeypatch.setattr(cc, "CscCorrector", _LabeledCsc)
     assert _run(tp.quick_fix("說話人1：行成4天。", [], csc_threads=3))["engine"] == "MacBERT4CSC（ONNX，CPU 3 執行緒）"
+
+
+def test_polish_transcript_releases_memory_even_on_error(monkeypatch):
+    # 11-16：MacBERT 在 API 行程裡用完就丟，uvicorn RSS 一場比一場大 → 潤稿結束（含例外）後 malloc_trim
+    calls = []
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(tp, "_polish_transcript", boom)
+    monkeypatch.setattr(tp, "release_freed_memory", lambda tag: calls.append(tag))
+    with pytest.raises(RuntimeError):
+        asyncio.run(tp.polish_transcript("甲說", "fix", engine="csc", source="refine"))
+    assert calls == ["polish refine/csc"]
+    # 因為錄音開始而停下：不整理（錄音中不搶 CPU）
+    with pytest.raises(RuntimeError):
+        asyncio.run(tp.polish_transcript("甲說", "fix", should_stop=lambda: True))
+    assert calls == ["polish refine/csc"]
+
+
+def test_release_freed_memory_does_not_raise():
+    tp.release_freed_memory("test")   # Linux 有 glibc 就真的 trim；開發機沒有 libc.so.6 就略過
