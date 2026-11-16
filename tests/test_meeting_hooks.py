@@ -56,6 +56,7 @@ def test_summary_may_use_cpu(monkeypatch):
     assert mm.summary_may_use_cpu("en") is False
     monkeypatch.setattr(mm, "SUMMARY_DUAL_MAP", True)
     assert mm.summary_may_use_cpu("zh") is True       # 中文兩路同時：CPU 那一路會用
+    assert mm.summary_may_use_cpu("zh", hierarchical=False) is False   # 短會議單次整理不開 CPU 那一路
     assert mm.summary_may_use_cpu("en") is False      # 英文不走兩路同時
     monkeypatch.setattr(mm, "SUMMARY_DUAL_MAP", False)
     healthy["hailo"] = False

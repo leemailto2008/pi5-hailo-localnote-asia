@@ -76,11 +76,13 @@ SUMMARY_MAP_SEC_PER_CHUNK = int(os.environ.get("PI5_SUMMARY_MAP_SEC_PER_CHUNK", 
 SUMMARY_MAP_KEEP_ALIVE_MAX = 1800
 # 錄音中預先整理 (2026-11-01)：長會議錄音時，已經穩定的前段逐字稿先逐段交給 LLM 抽重點，錄音結束只剩最後 1–3 段。
 # 只在 NPU 共用模式 (Whisper 與 qwen3 同時常駐) 下啟用；LLM 在 NPU 上跑，228 實測整機 CPU 平均 1.7%、單核最高 9%。
-# 預設關閉：CLAUDE.md「錄音中禁止背景推論」規則需使用者確認後才改預設。PI5_SUMMARY_PREMAP=1 開啟。
+# 11-16 之前預設關閉：CLAUDE.md「錄音中禁止背景推論」規則需使用者確認後才改預設。
 # 2026-11-01 228 實測代價：同一段 10 分鐘喇叭→藍牙錄音中固定時間打 4 次 LLM 請求 (stage/llm_bursts.py)，
 # LLM 在跑的 47 s 時窗內藍牙 mSBC 壞幀 4.2 次/s、超過 20 ms 的封包間隔 0.41 次/s；時窗外 1.7 次/s、0.03 次/s。
 # 4 個時窗全部偏高 (不是 RF 起伏)。換來的是 30 分鐘會議紀要 242 s → 82–123 s。CPU 沒有變忙，推測是 NPU 滿載時的干擾。
-SUMMARY_PREMAP = os.environ.get("PI5_SUMMARY_PREMAP", "0") == "1"
+# (11-01 那時藍牙還是 mSBC、即時稿是 Hailo Whisper；10-22 起 HFP 固定 CVSD、11-13 起即時稿是 CPU SenseVoice。)
+# 2026-11-16 08:42 使用者決定：預設開。PI5_SUMMARY_PREMAP=0 關閉。錄音中只用 Hailo (hailo_only=True)，不會退回 CPU。
+SUMMARY_PREMAP = os.environ.get("PI5_SUMMARY_PREMAP", "1") == "1"
 SUMMARY_PREMAP_LAG = int(os.environ.get("PI5_SUMMARY_PREMAP_LAG", "1000"))     # 尾端保留不預先整理的字數
 SUMMARY_PREMAP_POLL_S = 10.0
 
@@ -113,8 +115,9 @@ async def stream_map_notes(prompt: str, keep_alive: Optional[int] = None, hailo_
 # 預設關閉（2026-11-15 11:00）：CPU 那一路要把 qwen2.5:3b-opt 載進記憶體（.228 實測 MemAvailable 少 2.2 GB；
 # options.use_mmap=true 也少 2.0 GB，ollama 0.40.4），整理階段的 RAM 峰值從 1.8–2.4 GB 變 3.4–4.3 GB，
 # 開了之後 11 場 10 分以上的 e2e 有 10 場超過 tools/e2e/thresholds.json 的 ram_peak_mb_max 3500
-# → 「變快但記憶體變差」，依「沒有變差才採用」先關；要用的話 PI5_SUMMARY_DUAL_MAP=1（見 BIG_CHANGE_STATUS #43）。
-SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "0") == "1"
+# → 「變快但記憶體變差」，依「沒有變差才採用」先關（見 BIG_CHANGE_STATUS #43）。
+# 2026-11-16 08:42 使用者決定：開，e2e RAM 門檻跟著調（tools/e2e/thresholds.json ram_peak_mb_max）。PI5_SUMMARY_DUAL_MAP=0 關閉。
+SUMMARY_DUAL_MAP = os.environ.get("PI5_SUMMARY_DUAL_MAP", "1") == "1"
 DUAL_MAP_POLL_S = 0.5
 # 最後剩一段時給「預計比較早做完」的那一路 (2026-11-15 服務內 GS3 30 分：Hailo 做完第 3 段的同一秒 CPU 搶到第 4 段，
 # CPU 做了 58 s、Hailo 閒著 → 整理 172 s；同一份實驗稿 Hailo 4 段、CPU 2 段時 142–146 s)。還沒量到時用 .228 實測的每段秒數。
@@ -151,11 +154,12 @@ def _recording_active() -> bool:
     return is_any_recording_active()
 
 
-def summary_may_use_cpu(lang: str) -> bool:
-    """紀要整理會不會用到 CPU：兩路同時 (中文)、或 Hailo 不是首選／不可用 (退回 CPU Ollama)。
-    不會用到時 main.py 在整理的同時就開始高精度逐字稿 (CPU)，不必等紀要做完。"""
+def summary_may_use_cpu(lang: str, hierarchical: bool = True) -> bool:
+    """紀要整理會不會用到 CPU：兩路同時 (中文長會議逐段整理)、或 Hailo 不是首選／不可用 (退回 CPU Ollama)。
+    不會用到時 main.py 在整理的同時就開始高精度逐字稿 (CPU)，不必等紀要做完。
+    hierarchical=False (短會議單次整理) 不會開 CPU 那一路。"""
     import llm_backend
-    if SUMMARY_DUAL_MAP and lang == "zh":
+    if SUMMARY_DUAL_MAP and lang == "zh" and hierarchical:
         return True
     return not (llm_backend.PREFERRED_BACKEND == "hailo" and llm_backend.is_backend_healthy(llm_backend.HAILO_BACKEND))
 
@@ -1315,16 +1319,16 @@ class MeetingJobManager:
             llm_start = time.time()
 
             summary_lang = detect_language(transcript)
+            is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[summary_lang]["single_max"])
             # 紀要只用 Hailo 時 CPU 閒著：高精度逐字稿 (CPU) 現在就開始，不等紀要做完 (見 main._auto_refine_early)
             if self.on_transcript_ready is not None:
                 try:
-                    summary_cpu = await asyncio.to_thread(summary_may_use_cpu, summary_lang)
+                    summary_cpu = await asyncio.to_thread(summary_may_use_cpu, summary_lang, is_long_hierarchical)
                 except Exception as e:  # 查不到就照舊：紀要做完才跑高精度逐字稿
                     print(f"[MeetingMinutes] 無法判斷紀要會不會用 CPU，高精度逐字稿等紀要做完再跑: {e}")
                     summary_cpu = True
                 if not summary_cpu:
                     self._transcript_ready(job_id)
-            is_long_hierarchical = bool(len(transcript.strip()) > LANG_LIMITS[summary_lang]["single_max"])
             est_total_llm_sec = estimate_summary_seconds(len(transcript.strip()), is_long_hierarchical,
                                                          dual=SUMMARY_DUAL_MAP and summary_lang == "zh")
 

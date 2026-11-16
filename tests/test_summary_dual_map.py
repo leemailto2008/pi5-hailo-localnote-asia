@@ -136,14 +136,15 @@ def test_summary_estimate_matches_measured_durations():
     assert 1600 <= mm.estimate_summary_seconds(48627, True) <= 1720
 
 
-def test_dual_map_is_off_by_default():
-    """2026-11-15：CPU 那一路讓整理階段 RAM 峰值多約 2 GB（超過 e2e 門檻 3500 MB）→ 預設關閉，PI5_SUMMARY_DUAL_MAP=1 才開。"""
+def test_dual_map_and_premap_are_on_by_default():
+    """2026-11-16 使用者決定：兩路同時（多約 2 GB，e2e RAM 門檻跟著調）與錄音中預先整理預設開；=0 關閉。"""
     import os
 
     import pytest
-    if "PI5_SUMMARY_DUAL_MAP" in os.environ:
-        pytest.skip("環境變數已指定 PI5_SUMMARY_DUAL_MAP")
-    assert mm.SUMMARY_DUAL_MAP is False
+    if "PI5_SUMMARY_DUAL_MAP" in os.environ or "PI5_SUMMARY_PREMAP" in os.environ:
+        pytest.skip("環境變數已指定 PI5_SUMMARY_DUAL_MAP／PI5_SUMMARY_PREMAP")
+    assert mm.SUMMARY_DUAL_MAP is True
+    assert mm.SUMMARY_PREMAP is True
 
 
 def test_english_meeting_uses_hailo_only(monkeypatch):

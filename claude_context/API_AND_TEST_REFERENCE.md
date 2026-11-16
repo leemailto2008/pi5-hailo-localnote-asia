@@ -105,7 +105,7 @@ python tools/e2e/speaker_selftest.py --pi http://192.168.50.228 --wav <path_to_m
 | `stt_tail_wait_max_s` | `<= 10s` (30m+ 為 `15s`) | 錄音結束後等待最後一段 STT 完成之秒數上限 |
 | `rec_cpu_avg_max` | `<= 15%` | 錄音期間平均 CPU 佔用率上限（確保零爭搶） |
 | `cpu_temp_max` | `<= 75°C` | 樹莓派 CPU 最高溫度上限 |
-| `ram_peak_mb_max` | `<= 3500 MB` | 記憶體峰值上限 |
+| `ram_peak_mb_max` | `<= 4800 MB` | 記憶體峰值上限（2026-11-16 由 3500 調高：紀要兩路同時，CPU 模型整理時約 +2.2 GB） |
 | `swap_growth_mb_max` | `<= 64 MB` | Swap 增長量上限（防記憶體洩漏） |
 | `api_max_gap_s_max` | `<= 8s` | `/api/status` 輪詢最大無回應間隙上限 |
 
