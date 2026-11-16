@@ -1291,3 +1291,9 @@ def test_strip_unspoken_example_labels_drops_notes_made_of_the_example():
         "- AI可降低設計成本\n- 經濟發展：經濟發展與技術取代"
     # 逐字稿有講到就不動（測資會議）
     assert summary_utils.strip_unspoken_example_labels(notes, "教育訓練、客戶訂單、預算都有講", labels) == notes
+
+
+def test_compact_notes_drops_no_specific_content_notes():
+    # 11-17 podcast 第九次 CPU 那段
+    raw = "- 客戶訂單：沒有具體訂單內容\n- 客戶回饋：沒有具體客戶回饋内容\n- 記載：醫生記錄病人狀況\n- 預算：8萬元"
+    assert summary_utils.compact_notes(raw) == "- 記載：醫生記錄病人狀況\n- 預算：8萬元"
