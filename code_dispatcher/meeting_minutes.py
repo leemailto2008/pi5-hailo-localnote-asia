@@ -1643,6 +1643,9 @@ class MeetingJobManager:
             return ""
         self.status.metrics["summary_cpu_chunks"] = len(cpu_done)
         notes = [s for s in slots if s is not None]
+        # 長會議沒有單次的 LLM 原文；存逐段重點（compact_notes 之後、組紀要之前）給 e2e／實錄存檔追查
+        # (11-16 podcast 紀要出現「- AI記錄：蔣」這種條目，事後查不到是模型寫的還是後處理切的)
+        self.status.summary_raw = "\n\n".join(notes)
 
         self.status.metrics["summary_map_s"] = round(time.time() - t_map, 1)
         full_text = assemble_long_minutes(notes, body_todos=body_todos, **limits)
