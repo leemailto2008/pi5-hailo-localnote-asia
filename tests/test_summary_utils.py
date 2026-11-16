@@ -1241,3 +1241,19 @@ def test_replacement_char_in_split_heading_does_not_hide_summary():
     out = su.ensure_sections(su.clean_summary_markdown(su.to_internal_sections(raw)))
     assert out.startswith("## 摘要\n- 供應商交期延至10月10日\n- ERP 2月3日上線"), out
     assert su.SECTION_MISSING_NOTE not in out and "## 要" not in out and "�" not in out
+
+
+def test_strip_unspoken_example_labels():
+    # 11-16 podcast：沒談教育訓練，紀要卻寫「- 教育訓練：AI可取代SOP流程」（照抄提示詞範例）→ 拿掉標籤、留內容
+    labels = ("教育訓練", "客戶訂單", "預算", "Training", "Customer order", "Budget")
+    md = "## 摘要\n- 教育訓練：AI可取代SOP流程\n- 預算: 機器人取代人力\n- AI推拿師：普及到家家戶戶\n\n## 決議\n- 無"
+    out = summary_utils.strip_unspoken_example_labels(md, "AI 會取代很多工作，推拿師也是", labels)
+    assert out == "## 摘要\n- AI可取代SOP流程\n- 機器人取代人力\n- AI推拿師：普及到家家戶戶\n\n## 決議\n- 無"
+    # 逐字稿有講到的標籤留著（測資會議「第一個議題是教育訓練」）
+    spoken = summary_utils.strip_unspoken_example_labels(md, "第一個議題是教育訓練，明年預算80萬", labels)
+    assert spoken == md
+    # 英文標籤不分大小寫；只動條目開頭，句中的詞不動
+    en = "- training: new hires\n- Customer order: 300 units\n- We reviewed the budget: fine"
+    assert summary_utils.strip_unspoken_example_labels(en, "we hired two people", labels) == \
+        "- new hires\n- 300 units\n- We reviewed the budget: fine"
+    assert summary_utils.strip_unspoken_example_labels("", "x", labels) == ""

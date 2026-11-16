@@ -516,6 +516,19 @@
      （09:04 重啟後 1.0 GB → 第三場開始 1.4 GB）；swap 沒增加、峰值時 available 3.0 GB。門檻不改，查 uvicorn 成長（rss_seq.sh，部署後跑）。
    分說話人實驗進度：9 份 GS3＋2 份藍牙 10 分，min(8／15／30 s, 1%) 全部與現行相同（4 人、100%）；固定 15 s（不乘 1%）把 5 分會議
    只講兩句的真人併掉（4 份 3 人、97.7%）→ 不用固定值。
+   分說話人實驗結果（15 份全跑完）：有標準答案 12 份中 11 份 min(8／15／30 s, 1%) 與現行完全相同；藍牙 30 分（20261113_1450）
+   5 人 99.64% → 4 人 100%。podcast GS3 實錄 10 → 2 人（1,013／562 s）、數位前半 3 → 2、數位後半（30–63 分，沒看過）4 → 2。
+   8／15／30 全同 → 取 15。36ed8a6（CLUSTER_MIN_TOTAL_S=15、FRAC=0.01；同時帶藍牙 codec 日誌 describe_bt_codec）。
+   測試：.228 沒裝 pytest → 在雲端工作區跑 git archive：706 passed、1 skipped、1 failed（test_assemble_prefers_topic_diversity
+   「200臺」≠「200台」，工作區 opencc 版本差異，summary_utils 本次沒改）。git archive 要加 -c core.autocrlf=false（第一次 tar 帶 CRLF，
+   deploy_on_pi.sh 「set: pipefail\r」失敗、服務沒動）。12:03 部署 .228（備份 20261116_120333）。
+   紀要 MAP 提示詞 A/B（exp_map_prompt.py，cur／neutral × 4 份 × 3 次）第 1 輪：podcast cur 標籤「教育訓練」「預算」逐字稿裡沒有
+   （= 範例），neutral 沒有範例詞；GS3 30 分兩者 recap／topic 都 1.0。
+   A/B 3 次全部結果：podcast cur 3 次各 2 個範例標籤（教育訓練＋預算／客戶訂單）、neutral 0；GS3 30／藍牙 30 兩者 6 次都 1.0／1.0；
+   GS3 60 分 cur 3 次 recap 1.0／topic 1.0，neutral topic 3 次 0.8、recap 2 次 0.833（沒寫出真的有講的「教育訓練」議題名）。
+   → 不換提示詞（60 分變差）。改加後處理 strip_unspoken_example_labels：條目開頭是範例標籤、逐字稿又沒講過才拿掉標籤留內容。
+   離線套到 cur 的 12 份紀要：podcast 6 個抄來的標籤全拿掉；GS3 30／藍牙 30／GS3 60 分 9 份一字不變（scoring 相同）。
+   13:05 rss_seq 開跑（12:03 重啟後第一場前 uvicorn VmRSS 440 MB）。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 

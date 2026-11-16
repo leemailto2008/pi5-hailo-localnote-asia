@@ -3,7 +3,7 @@
 import difflib
 import re
 import unicodedata
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 # 小模型 (qwen3:1.7b) 的紀要偶爾混出簡體字：2026-10-29 檢查 228 的 29 份 e2e／實錄紀要，11 份含簡體 (应、许、条、温…)，
 # 例如「应商」讓議題關鍵字比對落空。逐字稿已由 Whisper 引擎轉成台灣繁體 (OpenCC s2twp)，紀要也走同一套轉換；沒有 OpenCC 時原樣輸出。
@@ -392,6 +392,22 @@ def drop_unspoken_years(md: str, transcript: str) -> str:
     tr = transcript or ""
     md = _EN_DATE_YEAR_RE.sub(lambda m: m.group(0) if m.group(2) in tr else m.group(1), md)
     return _ZH_DATE_YEAR_RE.sub(lambda m: m.group(0) if m.group(1) in tr else "", md)
+
+
+def strip_unspoken_example_labels(md: str, transcript: str, labels: Sequence[str]) -> str:
+    """條目開頭的「- 教育訓練：」若是逐段整理提示詞裡的範例標籤、逐字稿又沒講過，就是模型照抄範例：拿掉標籤、留內容。
+    2026-11-16 podcast（談 AI 與工作，沒有教育訓練、預算、客戶訂單）：現行提示詞 3 次紀要都有 2 個這種標籤
+    (「教育訓練：AI可取代SOP流程」)。提示詞拿掉範例 (.cc_scratch/pe/exp_map_prompt.py) 雖然不會抄，但 60 分測資 3 次
+    topic 都掉到 0.8、recap 2 次 0.833 (現行 3 次都 1.0)，所以留著範例、改在這裡把沒講過的拿掉。
+    離線套用到現行提示詞的 12 份紀要：podcast 3 份的 6 個抄來的標籤都拿掉；GS3 30／藍牙 30／GS3 60 分 9 份一字不變。"""
+    if not md or not labels:
+        return md or ""
+    tr = (transcript or "").lower()
+    unspoken = [x for x in labels if x and x.lower() not in tr]
+    if not unspoken:
+        return md
+    pat = re.compile(r"^(\s*[-*]\s*)(?:" + "|".join(re.escape(x) for x in unspoken) + r")\s*[：:]\s*", re.IGNORECASE | re.MULTILINE)
+    return pat.sub(r"\1", md)
 
 
 _EN_BY_NAME_RE = re.compile(r"\bby\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b")

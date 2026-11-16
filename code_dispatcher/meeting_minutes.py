@@ -53,7 +53,7 @@ except Exception as _fix_err:   # 開發環境找不到時，只是少了跨切�
 from summary_utils import (assemble_long_minutes, clean_summary_markdown, compact_notes, ensure_sections, fill_decisions_from_transcript,
                            cut_glued_topic_numbers, detect_language, drop_listed_todos_from_summary, drop_placeholder_items, drop_recap_echo_bullets,
                            drop_duplicate_bullets,
-                           drop_unspoken_years, fill_missing_topics,
+                           drop_unspoken_years, fill_missing_topics, strip_unspoken_example_labels,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
                            clean_live_segment, live_join_sep, map_notes_complete, minutes_extra_start, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
@@ -239,6 +239,8 @@ MINUTES_SYSTEM_MSG = (
     "決議最多 3 點，每點 30 字以內，沒有就寫「- 無」。若會議最後有總結，以總結內容為準。"
     "不要開場白，不要解釋，不要重複規則，三段寫完就結束。"
 )
+# 逐段整理提示詞裡的範例標籤（中、英）。逐字稿沒講過卻出現在紀要條目開頭的，由 strip_unspoken_example_labels 拿掉（11-16 podcast）。
+MAP_EXAMPLE_LABELS = ("教育訓練", "客戶訂單", "預算", "Training", "Customer order", "Budget")
 MAP_SYSTEM_MSG = (
     "你是會議記錄員，只用台灣繁體中文條列會議重點。規則：每個議題一行，最多 4 行，每行 35 字以內，"
     "每行以「- 議題名稱：」開頭（例如「- 教育訓練：」「- 客戶訂單：」「- 預算：」），"
@@ -1354,6 +1356,7 @@ class MeetingJobManager:
                 llm_ticker_task.cancel()
             raw_markdown = _safe_post(ground_todo_table, raw_markdown, transcript)   # 待辦的負責人／時間必須出自逐字稿
             raw_markdown = _safe_post(drop_unspoken_years, raw_markdown, transcript)  # 模型自己補的年份 (逐字稿沒說) 拿掉
+            raw_markdown = _safe_post(strip_unspoken_example_labels, raw_markdown, transcript, MAP_EXAMPLE_LABELS)   # 照抄提示詞範例的標籤
             raw_markdown = _safe_post(fill_decisions_from_transcript, raw_markdown, transcript)   # 決議段空白但逐字稿有明講
             raw_markdown = _safe_post(drop_listed_todos_from_summary, raw_markdown)   # 摘要裡已列在待辦表的「待辦事項是…」半句拿掉
             raw_markdown = _safe_post(cut_glued_topic_numbers, raw_markdown)   # 條目尾巴黏著的「第N個議題」
@@ -1444,6 +1447,7 @@ class MeetingJobManager:
                 transcript, _ = await asyncio.to_thread(apply_meeting_glossary, self.result.transcript)   # 會後才填／改的詞彙，重新整理時也用上
                 raw_markdown = _safe_post(ground_todo_table, await self._generate_summary_llm(transcript, job_id=job_id), transcript)
                 raw_markdown = _safe_post(drop_unspoken_years, raw_markdown, transcript)
+                raw_markdown = _safe_post(strip_unspoken_example_labels, raw_markdown, transcript, MAP_EXAMPLE_LABELS)
                 raw_markdown = _safe_post(fill_decisions_from_transcript, raw_markdown, transcript)
                 raw_markdown = _safe_post(drop_listed_todos_from_summary, raw_markdown)
                 raw_markdown = _safe_post(cut_glued_topic_numbers, raw_markdown)
