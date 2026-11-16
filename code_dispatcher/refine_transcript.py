@@ -218,6 +218,16 @@ CLUSTER_MIN_LONGEST_S = 1.25
 # （4 份變 3 人、逐句 97.8%），不用。
 # 代價：整場只講一段（≥ 1.25 s）的人會併到時間上最近的人。PI5_CLUSTER_MIN_UNITS=1 切回。
 CLUSTER_MIN_UNITS = int(os.environ.get("PI5_CLUSTER_MIN_UNITS", "2"))
+# 群的單位總時長 < min(CLUSTER_MIN_TOTAL_S, CLUSTER_MIN_TOTAL_FRAC × 全部單位總時長) 也不算一個人 (2026-11-16)。
+# podcast 真人對談 30 分 (主持人＋來賓 2 人) 分出 12 人：兩個主要群占 1,498 s，另外 10 群各 2.4–12.0 s、全是 1–3 s 的短句
+# (附和、搶話、開場配樂下的主持人)；合成會議只有 4 個 TTS 聲音，量不到這種情況。
+# 量測 (.cc_scratch/pe/exp_diar_minor.py，同一次辨識比 5 種設定)：有標準答案的 12 份 (GS3 9＋藍牙 3，實際 4 人)，
+# min(8／15／30 s, 1%) 11 份與現行完全相同，藍牙 30 分由 5 人 99.64% 變 4 人 100%；podcast GS3 實錄 10 → 2 人、
+# podcast 數位前半 3 → 2、後半 (沒看過的 33 分) 4 → 2。8／15／30 結果全同，取中間 15。
+# 只用固定 15 s (不乘 1%) 會把 5 分會議只講兩句的真人併掉 (4 份變 3 人、97.7%)：短會議的門檻要跟著會議長度縮小。
+# 代價：30 分以上的會議裡總共講不到 15 s 的人會併到時間上最近的人。PI5_CLUSTER_MIN_TOTAL_S=0 關閉。
+CLUSTER_MIN_TOTAL_S = float(os.environ.get("PI5_CLUSTER_MIN_TOTAL_S", "15"))
+CLUSTER_MIN_TOTAL_FRAC = float(os.environ.get("PI5_CLUSTER_MIN_TOTAL_FRAC", "0.01"))
 WINDOW_S = 1.5
 WINDOW_HOP_S = 0.75
 WINDOW_SPLIT_MIN_S = 3.0
@@ -785,11 +795,14 @@ def diarize_sentences(samples, sentences: List[Sentence], should_stop: StopFn = 
     labels = merge_close_clusters(clustering(emb), emb, CENTROID_MERGE_COS)
     longest: Dict[int, float] = {}
     count: Dict[int, int] = {}
+    total: Dict[int, float] = {}
     for (a, b, _), label in zip(units, labels):
         longest[label] = max(longest.get(label, 0.0), b - a)
         count[label] = count.get(label, 0) + 1
+        total[label] = total.get(label, 0.0) + (b - a)
+    min_total = min(CLUSTER_MIN_TOTAL_S, CLUSTER_MIN_TOTAL_FRAC * sum(total.values()))
     keep = [k for k, label in enumerate(labels)
-            if longest[label] >= CLUSTER_MIN_LONGEST_S and count[label] >= CLUSTER_MIN_UNITS]
+            if longest[label] >= CLUSTER_MIN_LONGEST_S and count[label] >= CLUSTER_MIN_UNITS and total[label] >= min_total]
     if not keep:   # 每群都只有一個單位（很短的錄音）：只看最長單位
         keep = [k for k, label in enumerate(labels) if longest[label] >= CLUSTER_MIN_LONGEST_S]
     if keep and len(keep) < len(units):

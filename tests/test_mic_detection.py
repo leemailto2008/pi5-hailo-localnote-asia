@@ -68,6 +68,25 @@ def test_native_bluetooth_source_is_selected(pw):
     assert asyncio.run(vp.ensure_bluetooth_recording_ready()) == "bluez_input_internal.A0_D1_2A_42_12_34.0"
 
 
+def test_bluetooth_codec_is_logged(pw, capsys):
+    # 11-16：藍牙一律走 mSBC；兩種節點名稱都要把 codec 寫進日誌，落到 CVSD 要看得出來。
+    pw([DUMMY_SINK, BT_DEV, BT_SRC])
+    asyncio.run(vp.ensure_bluetooth_recording_ready())
+    assert "msbc (16 kHz 寬頻)" in capsys.readouterr().out
+    cvsd_src = _node(93, "PipeWire:Interface:Node", **{"media.class": "Audio/Source", "node.name": "bluez_input.A0:D1:2A:42:12:34",
+                                                       "api.bluez5.codec": "cvsd"})
+    pw([DUMMY_SINK, BT_DEV, cvsd_src])
+    assert asyncio.run(vp.ensure_bluetooth_recording_ready()) == "bluez_input.A0:D1:2A:42:12:34"
+    assert "cvsd (⚠️ 8 kHz 窄頻，沒有走 mSBC)" in capsys.readouterr().out
+
+
+def test_describe_bt_codec():
+    assert vp.describe_bt_codec("msbc") == "msbc (16 kHz 寬頻)"
+    assert vp.describe_bt_codec("CVSD").startswith("cvsd (⚠️")
+    assert vp.describe_bt_codec("lc3") == "lc3"
+    assert vp.describe_bt_codec("") == "未知"
+
+
 GS3_MIC = _node(82, "PipeWire:Interface:Node", **{"media.class": "Audio/Source", "device.api": "alsa", "device.bus": "usb",
                                                    "node.name": "alsa_input.usb-GS3_GS3_20180508-00.analog-stereo",
                                                    "node.description": "GS3 Analog Stereo"})

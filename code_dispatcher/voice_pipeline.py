@@ -783,6 +783,17 @@ def list_microphones(nodes: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     return mics
 
 
+def describe_bt_codec(codec: str) -> str:
+    """錄音用的藍牙 codec 寫進日誌時的說明。11-16 使用者決定藍牙一律走 mSBC (16 kHz 寬頻)；
+    落到 CVSD 代表耳麥或設定沒有協商出 mSBC，收音只剩 8 kHz 窄頻，要讓人從日誌一眼看出來。"""
+    name = (codec or "").strip()
+    if name.lower() == "msbc":
+        return "msbc (16 kHz 寬頻)"
+    if name.lower() == "cvsd":
+        return "cvsd (⚠️ 8 kHz 窄頻，沒有走 mSBC)"
+    return name or "未知"
+
+
 async def ensure_bluetooth_recording_ready() -> str:
     """
     Ensure PipeWire/WirePlumber and Bluetooth process affinities are isolated to CPU 0,1.
@@ -877,7 +888,7 @@ async def ensure_bluetooth_recording_ready() -> str:
             if "bluez_input_internal" in node_name:
                 bt_source_node = node_name
                 bt_source_id = n.get("id")
-                print(f"[VoicePipeline] 🎯 鎖定原生藍牙麥克風節點: {node_name} (ID: {bt_source_id}, Codec: {codec})")
+                print(f"[VoicePipeline] 🎯 鎖定原生藍牙麥克風節點: {node_name} (ID: {bt_source_id}, Codec: {describe_bt_codec(codec)})")
                 break
 
         # 第二優先：若無 internal 節點，則尋找一般藍牙 Source
@@ -889,7 +900,8 @@ async def ensure_bluetooth_recording_ready() -> str:
                 if "Audio/Source" in media_class and "bluez" in node_name:
                     bt_source_node = node_name
                     bt_source_id = n.get("id")
-                    print(f"[VoicePipeline] 🎯 鎖定藍牙 Source 節點: {node_name} (ID: {bt_source_id})")
+                    codec = props.get("api.bluez5.codec", "")
+                    print(f"[VoicePipeline] 🎯 鎖定藍牙 Source 節點: {node_name} (ID: {bt_source_id}, Codec: {describe_bt_codec(codec)})")
                     break
 
         if bt_source_node and bt_source_id:

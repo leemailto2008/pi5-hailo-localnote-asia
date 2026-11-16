@@ -424,6 +424,26 @@ def test_cluster_with_a_single_unit_is_not_a_speaker(monkeypatch):
     assert len({s.speaker for s in sents}) == 3
 
 
+def test_cluster_with_little_total_speech_is_not_a_speaker(monkeypatch):
+    _fake_sherpa(monkeypatch)
+    # 11-16 podcast：兩人對談分出 12 人，多的群都是零星短句。甲、乙各 3.0 s；中間兩段 1.3 s 自成一群（2 個單位、最長 1.3 s，
+    # 過得了單位數與最長單位兩關），總時長 2.6 s < min(CLUSTER_MIN_TOTAL_S, FRAC × 8.6 s) → 不算一個人，借時間上最近的單位
+    # 假嵌入是 [值, 0]：小群用 -1（跟乙的 +1 反向），不然群中心合併 (CENTROID_MERGE_COS) 就先把它併進乙
+    x = _samples([(0.0, 1.5, 0.0), (1.6, 3.1, 0.0), (3.2, 4.5, -1.0), (4.55, 6.05, 1.0), (6.1, 7.4, -1.0), (7.5, 9.0, 1.0)], seconds=10)
+    texts = [(0.0, 1.5, "甲一"), (1.6, 3.1, "甲二"), (3.2, 4.5, "對對對"), (4.55, 6.05, "乙一"), (6.1, 7.4, "有可能"), (7.5, 9.0, "乙二")]
+    monkeypatch.setattr(rt, "CLUSTER_MIN_TOTAL_S", 15.0)
+    monkeypatch.setattr(rt, "CLUSTER_MIN_TOTAL_FRAC", 0.32)            # 8.6 s × 0.32 = 2.75 s：小群 2.6 s 不到，甲、乙 3.0 s 過
+    sents = [Sentence(a, b, t) for a, b, t in texts]
+    assert rt.diarize_sentences(x, sents) is True
+    spk = [s.speaker for s in sents]
+    assert len(set(spk)) == 2 and spk[0] == spk[1] and spk[3] == spk[5] and spk[0] != spk[3]
+    assert spk[2] in (spk[0], spk[3]) and spk[4] in (spk[0], spk[3])
+    monkeypatch.setattr(rt, "CLUSTER_MIN_TOTAL_S", 0.0)                # 關掉：小群自成第 3 人
+    sents = [Sentence(a, b, t) for a, b, t in texts]
+    assert rt.diarize_sentences(x, sents) is True
+    assert len({s.speaker for s in sents}) == 3
+
+
 def test_token_span_pads_and_stays_inside_slice():
     import pytest
     assert rt.token_span([4.5, 5.0, 5.2], 4.0, 9.5) == pytest.approx((4.4, 5.6))
