@@ -561,6 +561,10 @@
    16:58 GS3 30 分回歸（v30_215b.log）開跑。
    GS3 30 分（215bc24，acoustic_gs3/20261116_165825_30min）suite PASS：cer_num 0.0175、fact 0.9598、summary 1.0（逐字稿內 1.0）、topic 1.0、
    紀要 58.2 s、RAM 峰值 3,687 MB、swap +0、65.5 °C；高精度稿 81.6 s、4 人 → 測資沒有退步。
+   17:36 藍牙 30 分（215bc24，bt_ab/20261116_1736_30min_215b，GS3 喇叭 → RichChipAN，pw-dump codec = msbc）：arrival 100.0、dropout 0.0、
+   補靜音 0.39 s、cer_num 0.0251、facts 0.9645、recap 1.0、紀要 63.7 s、錄音 CPU 6.0%；高精度稿 122.9 s、4 人。
+   cer_num 比早上 0.0199 高，但在 11-13～15 六場 0.0205–0.0347 範圍內；即時稿不受今天的修改影響（都是錄音後的步驟）→ 視為辨識起伏。
+   測試工具用 /dev/shm/ln_force_source 指定藍牙節點，ensure_bluetooth_recording_ready 提早回傳 → describe_bt_codec 的日誌只有真人錄音才會出現。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
