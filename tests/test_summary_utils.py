@@ -1257,3 +1257,9 @@ def test_strip_unspoken_example_labels():
     assert summary_utils.strip_unspoken_example_labels(en, "we hired two people", labels) == \
         "- new hires\n- 300 units\n- We reviewed the budget: fine"
     assert summary_utils.strip_unspoken_example_labels("", "x", labels) == ""
+
+
+def test_compact_notes_drops_label_only_notes():
+    # 11-16 podcast 最後一段：「- 新興技術應用：-」這種只有標籤的重點不收（內容空白、-、無）
+    raw = "- 新興技術應用：-\n- 中小企業AI轉型：\n- 醫學診斷記錄：無\n- 中小企業轉型困難：缺乏資源與人力\n- Budget: None"
+    assert summary_utils.compact_notes(raw) == "- 中小企業轉型困難：缺乏資源與人力"

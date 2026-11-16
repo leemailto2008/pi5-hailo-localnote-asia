@@ -975,6 +975,11 @@ _META_RE = re.compile(r"^(?:會議)?(?:日期|時間|地點|出席|與會|主持
 _CUT_AT = "，。；、,;）)"
 
 
+# 只有標籤、內容空白的重點（「- 新興技術應用：-」「- 中小企業AI轉型：」）：11-16 podcast 最後一段 4 條全是這樣
+# （提示詞要「事項與負責人」，模型寫成「事項：負責人」，沒有負責人就寫 -），又因為最後一段優先，擠掉前面各段的重點。
+_EMPTY_NOTE_RE = re.compile(r"[：:]\s*(?:-|—|無|N/?A|None)?\s*$", re.IGNORECASE)
+
+
 def compact_notes(text: str, max_lines: int = 4, max_len: int = 40) -> str:
     """map 階段輸出的確定性收斂：小模型常不守行數/字數規則，且 num_predict 用盡時會留下半句。
     保留前 max_lines 條、每條 <= max_len 字 (盡量切在標點)，去掉亂碼殘句與重複，統一為「- 」條列。
@@ -982,7 +987,7 @@ def compact_notes(text: str, max_lines: int = 4, max_len: int = 40) -> str:
     out, seen = [], set()
     for line in (text or "").splitlines():
         t = _BULLET_RE.sub("", line).strip().replace("\ufffd", "")
-        if t.startswith("#") or t.startswith("|") or len(t) < 6 or _META_RE.match(t):
+        if t.startswith("#") or t.startswith("|") or len(t) < 6 or _META_RE.match(t) or _EMPTY_NOTE_RE.search(t):
             continue
         if len(t) > max_len:
             cut = max((t.rfind(c, 0, max_len) for c in _CUT_AT), default=-1)

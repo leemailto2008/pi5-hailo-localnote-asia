@@ -152,3 +152,14 @@ def test_english_meeting_uses_hailo_only(monkeypatch):
     monkeypatch.setattr(mm, "detect_language", lambda text: "en")
     job, calls, _ = _setup(monkeypatch)
     assert calls["cpu"] == [] and len(calls["hailo"]) == job.status.metrics["summary_chunks"]
+
+
+def test_last_part_prompt_only_for_recap_chunk():
+    # 11-16 podcast：沒有總結的最後一段照「事項與負責人」寫成「- 新興技術應用：-」→ 只有真的是結尾總結才用總結提示
+    plain = mm.map_user_prompt("當我從例行工作釋放出時間，可以做更有價值的事。", 10, 10)
+    assert "會議最後一段" not in plain and plain.endswith("請條列本段重點：")
+    recap = mm.map_user_prompt("最後總結一下。訓練方面，決議是九月二日開課。", 7, 7)
+    assert "會議最後一段" in recap and "事項與負責人" in recap
+    en = mm.map_user_prompt("So that is it, thanks everyone.", 5, 5, lang="en")
+    assert "the last part" not in en
+    assert "the last part" in mm.map_user_prompt("To wrap up, John will send the report by Friday.", 5, 5, lang="en")

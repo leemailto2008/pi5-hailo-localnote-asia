@@ -216,15 +216,18 @@ def _safe_post(fn, md: str, *args, **kwargs) -> str:
 
 
 def map_user_prompt(piece: str, idx: int, total: int, lang: str = "zh") -> str:
-    """最後一段明確告知是會議結尾：會議常以總結收尾，總結裡的決議/待辦/負責人是紀要最重要的內容。"""
+    """最後一段是結尾總結 (is_recap_chunk) 時明確告知：總結裡的決議/待辦/負責人是紀要最重要的內容。
+    不是總結的最後一段用一般提示：11-16 podcast (沒有總結) 最後一段照「事項與負責人」寫成「- 新興技術應用：-」4 條。
+    (有總結的會議，總結段 ≤ SUMMARY_RECAP_VERBATIM_MAX 字時直接用原句、不送 LLM)"""
+    is_last_recap = idx == total and total > 1 and is_recap_chunk(piece)
     if lang == "en":
-        if idx == total and total > 1:
+        if is_last_recap:
             return (f"Meeting transcript (part {idx}/{total}, the last part):\n{piece}\n\n"
                     "If it ends with a recap, list the actions and owners from the recap first; otherwise list this part's key points:")
         if total <= 0:
             return f"Meeting transcript (part {idx}):\n{piece}\n\nList this part's key points:"
         return f"Meeting transcript (part {idx}/{total}):\n{piece}\n\nList this part's key points:"
-    if idx == total and total > 1:
+    if is_last_recap:
         return (f"會議逐字稿（第 {idx}/{total} 段，會議最後一段）：\n{piece}\n\n"
                 "如果最後有總結，請優先條列總結提到的事項與負責人；沒有總結就條列本段重點：")
     if total <= 0:   # 錄音中預先整理：總段數還不知道
@@ -1646,9 +1649,13 @@ class MeetingJobManager:
         # 長會議沒有單次的 LLM 原文；存逐段重點（compact_notes 之後、組紀要之前）給 e2e／實錄存檔追查
         # (11-16 podcast 紀要出現「- AI記錄：蔣」這種條目，事後查不到是模型寫的還是後處理切的)
         self.status.summary_raw = "\n\n".join(notes)
+        # 照抄提示詞範例的標籤在組紀要前就拿掉：assemble_long_minutes 以標籤分議題挑條目，
+        # 一堆「教育訓練：」會被當成同一個議題 (11-16 podcast 第三次，10 段 36 條重點有 22 條是範例標籤)
+        notes = [strip_unspoken_example_labels(n, transcript, MAP_EXAMPLE_LABELS) for n in notes]
 
         self.status.metrics["summary_map_s"] = round(time.time() - t_map, 1)
-        full_text = assemble_long_minutes(notes, body_todos=body_todos, **limits)
+        # 最後一段優先 (tail_lines) 是為了結尾總結；沒有總結的會議 (podcast) 各段平均挑，不讓最後幾分鐘佔掉一半摘要
+        full_text = assemble_long_minutes(notes, body_todos=body_todos, tail_lines=4 if has_recap else 0, **limits)
         self.status.summary_stream = localize_minutes(full_text, lang)
         print(f"[MeetingMinutes] 長會議紀要完成：{total} 段，{time.time() - t_map:.1f}s")
         return full_text
