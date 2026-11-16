@@ -1263,3 +1263,13 @@ def test_compact_notes_drops_label_only_notes():
     # 11-16 podcast 最後一段：「- 新興技術應用：-」這種只有標籤的重點不收（內容空白、-、無）
     raw = "- 新興技術應用：-\n- 中小企業AI轉型：\n- 醫學診斷記錄：無\n- 中小企業轉型困難：缺乏資源與人力\n- Budget: None"
     assert summary_utils.compact_notes(raw) == "- 中小企業轉型困難：缺乏資源與人力"
+
+
+def test_assemble_spreads_summary_over_the_whole_meeting():
+    # 11-16 podcast：10 段只能挑 8 條時依序挑永遠漏掉最後兩段；名額不夠時要平均分布到整場
+    assert summary_utils._spread_order(10)[:4] == [0, 9, 5, 2]
+    assert sorted(summary_utils._spread_order(7)) == list(range(7)) and summary_utils._spread_order(1) == [0]
+    chunks = [f"- 第{i}段議題{i}：內容{i}號重點" for i in range(10)]
+    md = assemble_long_minutes(chunks, max_summary=4, tail_lines=0)
+    summ = [l for l in md.split("## 待辦")[0].splitlines()[1:] if l]
+    assert summ == ["- 第0段議題0：內容0號重點", "- 第2段議題2：內容2號重點", "- 第5段議題5：內容5號重點", "- 第9段議題9：內容9號重點"]

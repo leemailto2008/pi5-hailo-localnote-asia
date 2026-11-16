@@ -1486,6 +1486,24 @@ def _long_todo_rows(per_all: List[List[str]], body_todos: List[str], max_todos: 
     return body + notes + chosen
 
 
+def _spread_order(n: int) -> List[int]:
+    """0..n-1 的走訪順序：先頭尾、再中間、再四分點…。名額不夠每段一條時，挑到的段平均分布在整場會議。
+    11-16 podcast（10 段、摘要 8 條、沒有總結）：依序挑永遠是第 1–8 段，最後 6 分鐘沒進摘要；改後涵蓋到第 10 段。
+    GS3 30 分（7 段、有總結）挑到的段不變；GS3 240 分 50 段由前 37 段散到前 46 段；4 份測資 recap／topic／重複行一字不差。"""
+    order, seen, step = [], set(), n
+    for i in (0, n - 1):
+        if 0 <= i < n and i not in seen:
+            order.append(i)
+            seen.add(i)
+    while len(order) < n and step > 1:
+        step = max(1, step // 2)
+        for i in range(0, n, step):
+            if i not in seen:
+                order.append(i)
+                seen.add(i)
+    return order + [i for i in range(n) if i not in seen]
+
+
 def assemble_long_minutes(chunk_notes: List[str], max_summary: int = 8, max_decisions: int = 3, tail_lines: int = 4,
                           max_todos: int = 6, body_todos: Optional[List[str]] = None) -> str:
     """chunk_notes：每段的 compact_notes() 輸出 (依時間順序)。
@@ -1524,7 +1542,8 @@ def assemble_long_minutes(chunk_notes: List[str], max_summary: int = 8, max_deci
     for diverse in (True, False):
         rank = 0
         while len(picked) < max_summary and any(len(p) > rank for p in body):
-            for seg, lines in enumerate(body):
+            for seg in _spread_order(len(body)):
+                lines = body[seg]
                 if len(lines) > rank and len(picked) < max_summary:
                     item = (seg, rank, lines[rank])
                     if item in picked or (diverse and _topic_key(lines[rank]) in used):
