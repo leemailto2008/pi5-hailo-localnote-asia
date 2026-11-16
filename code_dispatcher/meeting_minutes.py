@@ -80,7 +80,8 @@ SUMMARY_MAP_KEEP_ALIVE_MAX = 1800
 # 2026-11-01 228 實測代價：同一段 10 分鐘喇叭→藍牙錄音中固定時間打 4 次 LLM 請求 (stage/llm_bursts.py)，
 # LLM 在跑的 47 s 時窗內藍牙 mSBC 壞幀 4.2 次/s、超過 20 ms 的封包間隔 0.41 次/s；時窗外 1.7 次/s、0.03 次/s。
 # 4 個時窗全部偏高 (不是 RF 起伏)。換來的是 30 分鐘會議紀要 242 s → 82–123 s。CPU 沒有變忙，推測是 NPU 滿載時的干擾。
-# (11-01 那時藍牙還是 mSBC、即時稿是 Hailo Whisper；10-22 起 HFP 固定 CVSD、11-13 起即時稿是 CPU SenseVoice。)
+# (11-01 那時即時稿是 Hailo Whisper，11-13 起是 CPU SenseVoice。deploy/wireplumber.conf.d/51-bluez-cvsd.conf 強制 CVSD，
+#  但 11-16 查 .228／.229 都沒裝，藍牙仍走 mSBC (.228 的到達率照 mSBC 標稱速率回報 100%)。)
 # 2026-11-16 08:42 使用者決定：預設開。PI5_SUMMARY_PREMAP=0 關閉。錄音中只用 Hailo (hailo_only=True)，不會退回 CPU。
 SUMMARY_PREMAP = os.environ.get("PI5_SUMMARY_PREMAP", "1") == "1"
 SUMMARY_PREMAP_LAG = int(os.environ.get("PI5_SUMMARY_PREMAP_LAG", "1000"))     # 尾端保留不預先整理的字數
