@@ -146,7 +146,7 @@
 - **已排除（全部實測）:** CPU 爭搶、Wi-Fi 共存（含完全關閉）、PipeWire/bluez/核心版本、Hailo HAT（拆除仍壞）、PCIe Gen1/ASPM、sniff 模式、SCO 雙向保活、AFH 頻道圖、耳麥本身（iPhone 錄音乾淨）。
 - **硬證據:** btmon 顯示 SCO 封包 1333/10s **一個不少**地到達主機；但開啟 Erroneous Data Reporting (`hcitool cmd 0x03 0x005B 01`) 後控制器標記 **65% 封包 pkt_status=1（資料損壞）**；payload 的 mSBC H2 標頭有 1–3 bit 隨機錯誤、SBC CRC 失敗。即此 CYW43455 ↔ 耳麥鏈路的 **EDR π/4-DQPSK (2-EV3)** 封包位元錯誤率過高，mSBC 只能走 2-EV3，解碼失敗即補零。
 - **解法:** `deploy/wireplumber.conf.d/51-bluez-cvsd.conf` → `bluez5.enable-msbc = false`，HFP 固定 **CVSD（基本速率 GFSK EV3，8kHz）**。profile 名稱仍為 `headset-head-unit`，`voice_pipeline.ensure_bluetooth_recording_ready()` 不需修改。實測零值降至 2–20%，逐字稿恢復可讀。
-- **2026-11-16 使用者決定（取代上一條解法）：不用 CVSD，直接用 mSBC 做到最佳。** `51-bluez-cvsd.conf` 不安裝（.228／.229 本來就都沒裝，藍牙一直走 mSBC；.228 BT30 實測到達 100%、掉包 0%）。之後藍牙收音的改善一律在 mSBC 上做。
+- **2026-11-16 使用者決定（取代上一條解法）：不用 CVSD，直接用 mSBC 做到最佳。** `51-bluez-cvsd.conf` 不安裝（.228／.229 本來就都沒裝，藍牙一直走 mSBC，11-16 錄音中 `pw-dump` 確認 `api.bluez5.codec = "msbc"`；.228 BT30 實測到達 100%、掉包 0%）。之後藍牙收音的改善一律在 mSBC 上做。
 - **注意:** `hcitool rssi` 對 BR/EDR 回傳的是相對黃金接收範圍的差值，不是 dBm；此板子回報值不隨距離變化，不可作為訊號強度依據。
 - **殘餘限制:** CVSD 下仍有 10–20% 封包 `pkt_status=2`（無資料）→ 零值空洞最長可達 1s。這是該射頻鏈路的物理上限；要再改善只能換射頻路徑（USB 藍牙 dongle）或換耳麥。
 - **除錯工具:** `tools/pi_scostat` 系列腳本（btsnoop 解析 H2 標頭/CRC/旗標）、`/tmp/analyze.py`（零值統計）。

@@ -493,6 +493,18 @@
    （兩台 /etc/wireplumber/wireplumber.conf.d/ 本來就空的，一直是 mSBC；bt_link_stats 只在 mSBC 標稱 133.3 pkt/s 下回報 arrival_pct，
    BT30 回報 100.0 → 推定 mSBC，未抓封包直接確認）。CLAUDE.md 重點八加註；meeting_minutes.py 錯誤的「10-22 起 HFP 固定 CVSD」註解改正。
    GS3 30 分：09:1x 起 premap 正常出現（第 1 段 999 → 159 字 38.1 s、第 2 段 994 → 149 字 36.9 s）。
+   GS3 30 分回歸（821a88a，20261116_090447_30min）suite PASS：錄音中預先整理 4 段（3,965 字）、錄音後只剩 2,089 字 → 長會議紀要 7 段 57.6 s
+   （suite summary_latency 59.1 s）；cer_num 0.018、fact 0.9645、recap 1.0、topic 1.0、stt_tail 0.8 s、錄音 CPU 6.1%、65.5 °C、
+   RAM 峰值 4,123 MB（門檻 4,800）、swap +26 MB；高精度稿 78.8 s 完成（沿用 259 片、4 人）。
+   09:37 藍牙 30 分回歸（bt_ab/20261116_0937_30min_821a，GS3 喇叭 → RichChipAN，auto_connect 已開）：前 60 秒即時稿正常（議題一～四內容）。
+   09:41 pw-dump 直接確認藍牙節點 api.bluez5.codec = "msbc"、profile headset-head-unit（不再只是推定）。
+   藍牙 30 分結果（premap 開）：arrival 100.0、dropout 0.0、PipeWire 補靜音 0.35 s、cer_num 0.0199、facts 0.9764、recap 1.0、
+   紀要 81.0 s（7 段，預先整理 4 段 3,952 字）、錄音 CPU 6.1%；高精度稿 119.1 s（沿用 250 片、4 人）。
+   對照 11-13～11-15 六場藍牙 30 分（premap 關；bt30_307f／6926／ce62／ee80、run30_bf59、run30）：補靜音 0.26–0.64 s、
+   cer_num 0.0205–0.0347、facts 0.9598–0.9669、紀要 153.5–260.6 s
+   → premap 開後藍牙收音沒有變差（補靜音在原範圍內，cer_num／facts 是 7 場最好），紀要快約 2–3 倍（那六場兩路同時設定不一，紀要時間不是純 premap 的差）。11-01 量到的「LLM 時窗內壞幀變多」
+   這次沒有反映在補靜音或辨識上（那時即時稿是 Hailo Whisper，NPU 負載不同）。✅ premap 藍牙回歸通過。
+   10:12 podcast 真人對談 30 分開跑（real/tpod30.log，GS3 喇叭→麥克風）。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
