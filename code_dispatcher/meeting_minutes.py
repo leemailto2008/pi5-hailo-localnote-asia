@@ -1021,7 +1021,7 @@ class MeetingJobManager:
                         return
                     if self._cancellation_token.is_set():
                         return
-                    text = compact_notes(text or "") or compact_notes("- " + piece[:120], max_lines=1, max_len=60)
+                    text = compact_notes(text or "") or compact_notes("- " + piece[:120], max_lines=1, max_len=60, keep_transcript=True)
                     self._premap_notes.append(text)
                     glossed_prefix += seg
                     self._premap_prefix = glossed_prefix
@@ -1574,7 +1574,7 @@ class MeetingJobManager:
             piece = chunks[slot - base]
             text = compact_notes(text or "", max_len=lim["note_len"])
             if not text:   # LLM 失敗：保留原文開頭，避免這段在紀要中消失
-                text = compact_notes("- " + piece[:lim["note_len"] * 3], max_lines=1, max_len=lim["note_len"] + 20)
+                text = compact_notes("- " + piece[:lim["note_len"] * 3], max_lines=1, max_len=lim["note_len"] + 20, keep_transcript=True)
             slots[slot] = text
             done = sum(1 for s in slots if s is not None)
             print(f"[MeetingMinutes] 段 {slot + 1}/{total}: {len(piece)} → {len(text)} 字 ({secs:.1f}s, {label})")

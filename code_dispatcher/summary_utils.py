@@ -977,10 +977,16 @@ _CUT_AT = "，。；、,;）)"
 
 # 只有標籤、內容空白的重點（「- 新興技術應用：-」「- 中小企業AI轉型：」）：11-16 podcast 最後一段 4 條全是這樣
 # （提示詞要「事項與負責人」，模型寫成「事項：負責人」，沒有負責人就寫 -），又因為最後一段優先，擠掉前面各段的重點。
-_EMPTY_NOTE_RE = re.compile(r"[：:]\s*(?:-|—|無|N/?A|None)?\s*$", re.IGNORECASE)
+# 11-17 podcast 第五、七次 CPU 那段還有「- 預算：未提及具体预算」「- 客戶訂單：無相關議題。」：內容只是「沒有」的也算空白。
+# 「無」「不明」只在單獨出現時算（「- 決議：無異議通過」「- 預算：無人機採購」是內容）。
+_EMPTY_NOTE_RE = re.compile(r"[：:]\s*(?:-|—|N/?A|None|(?:無相關|沒有相關|未提及|無提及)[^，,。；;]{0,6}[。.]?|(?:無|不明)[。.]?)?\s*$",
+                            re.IGNORECASE)
+# 照抄逐字稿的口語殘句（「- 教育訓練：溫度啊、關管啊啊這些部分。」11-17 podcast 第七次 CPU 那段，被挑進摘要）：模型寫的重點不會有兩個以上語助詞。
+# 11-16～17 的 9 份逐段重點（測資 4＋podcast 5，共 468 條）只有這 1 條有 ≥ 2 個。LLM 失敗時的原文備援 (keep_transcript=True) 不檢查。
+_FILLER_RE = re.compile(r"[啊呃嗯哎欸喔哦]")
 
 
-def compact_notes(text: str, max_lines: int = 4, max_len: int = 40) -> str:
+def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcript: bool = False) -> str:
     """map 階段輸出的確定性收斂：小模型常不守行數/字數規則，且 num_predict 用盡時會留下半句。
     保留前 max_lines 條、每條 <= max_len 字 (盡量切在標點)，去掉亂碼殘句與重複，統一為「- 」條列。
     這讓 reduce 的輸入與 (照抄時的) 輸出長度都有上限，紀要不會在待辦表中途被截斷。"""
@@ -988,6 +994,8 @@ def compact_notes(text: str, max_lines: int = 4, max_len: int = 40) -> str:
     for line in (text or "").splitlines():
         t = _BULLET_RE.sub("", line).strip().replace("\ufffd", "")
         if t.startswith("#") or t.startswith("|") or len(t) < 6 or _META_RE.match(t) or _EMPTY_NOTE_RE.search(t):
+            continue
+        if not keep_transcript and len(_FILLER_RE.findall(t)) >= 2:
             continue
         if len(t) > max_len:
             cut = max((t.rfind(c, 0, max_len) for c in _CUT_AT), default=-1)

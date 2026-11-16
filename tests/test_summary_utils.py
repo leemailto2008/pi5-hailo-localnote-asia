@@ -1273,3 +1273,12 @@ def test_assemble_spreads_summary_over_the_whole_meeting():
     md = assemble_long_minutes(chunks, max_summary=4, tail_lines=0)
     summ = [l for l in md.split("## 待辦")[0].splitlines()[1:] if l]
     assert summ == ["- 第0段議題0：內容0號重點", "- 第2段議題2：內容2號重點", "- 第5段議題5：內容5號重點", "- 第9段議題9：內容9號重點"]
+
+
+def test_compact_notes_drops_placeholder_and_transcript_copies():
+    # 11-17 podcast：CPU 那段「無相關議題。」「未提及具体预算」、照抄逐字稿的「溫度啊、關管啊啊這些部分。」都不是重點
+    raw = ("- 客戶訂單：無相關議題。\n- 預算：未提及具体预算\n- 教育訓練：溫度啊、關管啊啊這些部分。\n- 人力：不明\n"
+           "- 預算：無人機採購80萬\n- 決議：無異議通過")
+    assert summary_utils.compact_notes(raw) == "- 預算：無人機採購80萬\n- 決議：無異議通過"
+    # LLM 失敗時的原文備援照收（不然這段會從紀要消失）
+    assert summary_utils.compact_notes("- 比如說醫生啊，嗯以前醫生就是怎樣", keep_transcript=True) == "- 比如說醫生啊，嗯以前醫生就是怎樣"
