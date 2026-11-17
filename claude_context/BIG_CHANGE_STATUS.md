@@ -2,6 +2,10 @@
 互動 session 進行中，至 2026-11-18 09:00（台北；11-17 09:45 使用者改用 Claude CLI 在本機工作，交接文件 to_claude_cli.md；CLI 工作時每輪續期這行；過期代表沒人在做，每小時排程接手）
 
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
+- 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
+  真正修得到的根因是「輸出含假名／諺文就一律改用中文重解」把真正的日／韓文變成亂碼中文（常夾英文翻譯）→ 731876e 改成只有這場會議主要是中文時才重解：
+  日文正確 6 → 49／52 片、韓文 0 → 92／104 片，中／英／粵／台語輸出一字不差；已部署 .228，GS3 喇叭外語實測與 GS3 30 分（SenseVoice PASS；Whisper 只差 swap 一項，舊碼同樣 FAIL）確認。
+  印尼／韓／德偶爾整片寫成英文是 Whisper-Small 模型本身（指定正確語言也一樣），HailoRT 沒有可調參數，沒修。
 - .228 目前 9c5b338（11-17 04:51 部署）；.229 還是 11-16 09:10 的 821a88a（交給別人用，沒動）。GitHub／GitLab 都推到最新（9c5b338 之後只有文件）。
 - 使用者決定照做：紀要兩路同時＋錄音中預先整理預設開、RAM 門檻 4,800；藍牙不用 CVSD、直接 mSBC（pw-dump 確認 codec = msbc）。
 - 修好的問題（每項都先離線重放比對、測資不變才部署，再實錄驗證）：
@@ -684,6 +688,49 @@
    同一份 9c5b338 離線重跑（python3 -m refine_transcript）：原始 TTS 檔 data/meeting_en_short.wav → 3 人、各自對應正確；
    這次 GS3 實錄 /dev/shm/audio_cache/m_1794885929.ogg → 2 人、A＋C 合併 → 是經過喇叭／麥克風收音後兩個聲音變近，不是程式退化。
    和 #47 藍牙相近女聲同一類（群中心合併門檻 0.8），沒有單一門檻兩邊都對 → 不改，列入已知限制。11-14 以前的 en_short 跑次沒存 refine.json，無法比人數歷史。
+49. 11-17 14:10 使用者交辦：「用 Whisper 做 ASR 時，講的明顯不是英語，輸出卻突然變成英文」——用 YouTube／podcast 真實外語自測改到最佳。
+   測資（.cc_scratch/foreign_audio/sources.md）：日、韓、粵、台語、越、泰、印尼、西、法、德各 2 支＋中英夾雜真人 podcast 2 支（股癌、矽谷夫妻）＋外國口音中文 2 支，
+   每支 3 分（長片多取中段 3 分）；對照組：meeting_5min（中文 TTS）、en_short／en_long、GS3 30 分實錄、真人 podcast、藍牙 30 分。
+   量測工具 tools/whisper_lang_survey.py（70cbe6e）：照即時稿 4–9.5 s 停頓切片，逐片記錄 Hailo Whisper 每次 generate_all_text 的語言參數與原始輸出。
+   - 基準（9c5b338，res_base9c5b.jsonl＋res_base2_9c5b.jsonl，共 2,200 片）——「非英語卻輸出英文」：印尼 33.0%、外國口音中文 30.0%、台語 10.9%、德 6.8%、韓 6.8%、越 6.2%、日 5.9%；
+     西／法／泰／粵／中文 0%；中英夾雜真人 podcast 107 片 0 片；英文 196 片全部仍是英文。另外**日文 52／52 片、韓文 95／104 片被 needs_zh_retry 改用 zh 重解**。
+   - 根因（都有輸出證據；HailoRT Speech2Text 不回傳偵測語言、沒有機率、沒有 prompt／溫度可調）：
+     (1) needs_zh_retry：自動偵測輸出含假名／諺文就一律改用 zh 重解 → 真正的日／韓文變成亂碼中文，常夾英文翻譯
+         （ja「…上流で雨が降り続いていると…」→「至於上流, 雨 will continue to increase the risk of the rebellion.」；ko「호주로 대행사를…」→「從 Australia, 用 the Australian travel agency…」）。
+         中文 7 份共 854 片，自動偵測判成日／韓文 0 片（這條規則在中文從沒觸發過）。
+     (2) 印尼／韓／德的英文：指定正確語言重解（res_fnative.jsonl）與自動偵測**一字不差**（印尼 95／101、德 103／103；韓那 3 片英文指定 ko 仍是同一句英文）
+         → 自動偵測其實判對了，是 Whisper-Small（Hailo HEF）在正確語言 token 下自己寫成英文。換 repetition_penalty 1.0／1.3 只救回 6／5 片、切兩半 8／48 片（drift.jsonl）→ 沒有可靠修法。
+         德文那支（DLF Nova）指定 de 仍輸出英文，推測音檔本身有英文對話。外國口音中文的英文 SenseVoice 判為英文語音 29／30 片 → 是真的英文。
+     (3) 台語的英文是偵測錯（指定 zh 重解 4／4 變中文），但「英文輸出 → 用主要語言 zh 重解」會傷真英文：外國口音中文裡 12 片真英文被改成中文翻譯／亂碼
+         （「Excuse me, do you guys speak English?」→「对不起请问问…」）；英文語音指定 zh 有 48／196 片變中文、en_short 一片變「2020 人」 → **不做**。
+   - 731876e fix(whisper)：記住這場會議主要語言（hailo_whisper/engine.py text_language()＋LanguageMemory：最近 8 片自動偵測輸出，六成以上且至少 3 片；5 分鐘沒新片就忘記），
+     輸出日／韓文時只有主要語言是中文（或還看不出來）才改用 zh 重解。英文輸出一律不重解（照舊）。
+     離線新舊碼實跑 A/B（res_new.jsonl，同一份音檔）：日文 52 片 zh 重解 52 → 3、輸出是日文 6 → 49；韓文 104 片重解 95 → 2、輸出是韓文 0 → 92、英文 7 → 4；
+     中文 171、英文 85、粵語 79、台語 106 片**一字不差**。pytest（Windows）722 passed、3 failed（stt_worker／npu_share 的 Windows socket，改前也失敗）。
+   - 18:23 部署 70cbe6e 到 .228（備份 .deploy_backup/20261117_182256）。
+   - GS3 喇叭外語聲學（即時稿 Whisper，8 分：ja／ko／id／nan／vi／de／yue／ja 各 1 分；foreign/acoustic/）：
+     舊碼（20261117_181309_old9c5b）第 1 段日文 9 片、韓文 5 片全部變亂碼中文（「地，地，地…」「前日日日日…」）；
+     新碼（20261117_182324_new70cb）日文 7／9 片、韓文 4／5 片是原語言；其他段兩版相同類型。
+   - 已知限制（沒改）：
+     - 印尼／韓／德等語言偶爾整片寫成英文：Whisper-Small 模型本身（正確語言下也一樣），Hailo API 沒有可調的地方。
+     - 日／韓文會議開頭約 3 片（主要語言還看不出來）仍照舊改用 zh；會議中途從中文換成日／韓文約 5–6 片（約 40 s）才跟上。
+     - 中文會議裡只講一兩句的日／韓文仍會被改用中文重解（和 158a729 SenseVoice 同一取捨）。
+     - SenseVoice（預設即時稿與高精度稿）只支援中／英／日／韓／粵；德／西／法／印尼／越／泰語音 SenseVoice 輸出近似英文的亂碼（語言判 en 或 yue）——模型不支援，另外處理。
+   - 測試時我造成的環境問題（已復原、已記教訓）：14:48 服務 NpuShare 群組重置時我在服務外的量測行程正開著 Speech2Text → hailo-ollama
+     「Failed to create LLM … HAILO_SHUTDOWN_EVENT_SIGNALED」後一直「LLM not loaded」；19:13 我又在 stt_worker 開著時單獨 restart hailo-ollama → 「Failed to create VDevice」。
+     第 1、2 次 Whisper 30 分（18:32、19:13）因此紀要退到 CPU、errors 13 → 作廢。19:28 依 reset_group 的順序（先停 pi5-dispatcher-api → restart hailo-ollama → 起服務）復原。
+     之後離線 NPU 量測只在服務閒置時跑、量完立即結束；不要單獨手動重啟 hailo-ollama。
+   - GS3 30 分回歸（70cbe6e）：
+     - 即時稿 Whisper（20261117_192905_30min）suite FAIL 1 項 swap_growth 500 MB（≤ 64）；其餘全過：cer_num 0.1366、fact 0.9551、recap 0.6667（漏 T1／T82 負責人）、
+       topic 1.0、紀要 64.3 s、errors 0、RAM 3,557 MB、66.1 °C；逐字稿 0 個假名／諺文（新規則沒有作用到任何一片）。swap 在錄音結束那一刻 392 → 789 MB（RAM 可用仍 4.5 GB），
+       當時高精度稿整段重新辨識 242 片＋紀要兩路同時。
+     - 預設 SenseVoice（20261117_200449_30min）suite PASS：cer_num 0.0183、fact 0.9645、recap 1.0、topic 1.0、紀要 57.6 s、errors 0、RAM 3,594 MB、swap +28、67.2 °C。
+     - swap 那一項的對照：暫時回滾舊碼 9c5b338 跑同一測試（即時稿 Whisper，20261117_203750_30min）**也 FAIL 同一項** swap_growth 97 MB，其餘全過
+       （cer_num 0.135、fact 0.9362、recap 1.0、紀要 57.1 s、errors 0、RAM 3,726 MB）；部署回 70cbe6e 再跑一次（20261117_211244_30min）swap_growth 174 MB、其餘全過
+       （cer_num 0.1437、fact 0.9409、recap 1.0、紀要 59.8 s、errors 0、RAM 3,692 MB）。三場 swap 都是錄音結束那一刻增加（RAM 可用仍 4.5–5.2 GB）、增量 97／174／500 MB 波動大
+       → 是「即時稿選 Whisper」本來就有的（高精度稿沒有即時 SenseVoice 可沿用，要整段重新辨識約 245 片，和紀要兩路同時擠在一起），不是這次修改造成；
+       70cbe6e 在中文會議裡沒有作用到任何一片（三場逐字稿都沒有假名／諺文）。swap 這項沒改，列入待辦（即時稿 Whisper 時可考慮高精度稿等紀要做完再跑）。
+   - 21:47 .228 停在 70cbe6e、即時稿設定已切回 sensevoice。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
