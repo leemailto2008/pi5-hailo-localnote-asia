@@ -668,3 +668,72 @@ def test_recap_decision_is_garbles():
     # 總結之前、「決議事項」不動
     assert f("品質方面，決意施行新流程") == "品質方面，決意施行新流程"
     assert "決議事項" in f("最後總結，會議方面，決議事項如下")
+
+
+@pytest.mark.parametrize("text,lang", [
+    ("我們下週 review PR，QA 的 regression test 還沒 pass", "zh"),
+    ("日本人である私にとって日本の製品やサービスが高く評価されることは", "ja"),
+    ("中文句子裡夾了一個キ字", "zh"),
+    ("앞서 주말 SNS에서도 비슷한 내용으로", "ko"),
+    ("I will make each of you take the action", "other"),
+    ("Nhưng trong thế phải tì mang gỡ", "other"),
+    ("Okay.", None),
+    ("", None),
+])
+def test_text_language(text, lang):
+    assert eng.text_language(text) == lang
+
+
+def test_language_memory_dominant_and_forget():
+    now = [0.0]
+    m = eng.LanguageMemory(size=8, forget_sec=300, clock=lambda: now[0])
+    for lg in ("ja", "other", "ja"):
+        m.add(lg)
+    assert m.dominant() is None                 # 只有 2 片 ja
+    m.add("ja")
+    assert m.dominant() == "ja"                 # 3／4
+    m.add(None)                                 # 看不出語言的片不算
+    assert m.dominant() == "ja"
+    now[0] = 400.0                              # 隔 5 分鐘以上 → 下一場會議
+    assert m.dominant() is None
+
+
+def _memory_engine(fake_engine, history, replies):
+    e = fake_engine(replies)
+    e._lang_memory = eng.LanguageMemory()
+    for lg in history:
+        e._lang_memory.add(lg)
+    return e
+
+
+def test_japanese_meeting_keeps_japanese(fake_engine):
+    e = _memory_engine(fake_engine, ["ja"] * 4, ["日本人である私にとって日本の製品やサービスが"])
+    r = e.transcribe(_speech(), language="auto")
+    assert len(e._s2t.calls) == 1 and "製品" in r["text"] and r["language"] == "auto"
+
+
+def test_korean_meeting_keeps_korean(fake_engine):
+    e = _memory_engine(fake_engine, ["ko"] * 3 + ["other"], ["앞서 주말 SNS에서도 비슷한 내용으로"])
+    e.transcribe(_speech(), language="auto")
+    assert len(e._s2t.calls) == 1
+
+
+def test_single_japanese_slice_in_chinese_meeting_is_retried_with_zh(fake_engine):
+    e = _memory_engine(fake_engine, ["zh"] * 4, ["これはテストです", "這是測試"])
+    r = e.transcribe(_speech(), language="auto")
+    assert [c["language"] for c in e._s2t.calls] == [None, "zh"] and r["text"] == "這是測試"
+
+
+def test_english_output_is_never_retried(fake_engine):
+    e = _memory_engine(fake_engine, ["zh"] * 4, ["Excuse me, do you guys speak English?"])
+    e.transcribe(_speech(), language="auto")
+    assert len(e._s2t.calls) == 1
+
+
+def test_memory_follows_the_auto_output(fake_engine):
+    e = fake_engine(["日本の製品やサービスが", "中文重解"] * 3 + ["日本の製品やサービスです"])
+    for _ in range(3):                          # 一開始還看不出主要語言：照舊改用 zh 重解
+        e.transcribe(_speech(), language="auto")
+    assert [c["language"] for c in e._s2t.calls] == [None, "zh"] * 3
+    e.transcribe(_speech(), language="auto")    # 三片都是日文 → 這場是日文會議，不再重解
+    assert e._s2t.calls[-1]["language"] is None and len(e._s2t.calls) == 7

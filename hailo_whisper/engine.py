@@ -30,7 +30,7 @@ WHISPER_REPETITION_PENALTY = float(os.environ.get("PI5_WHISPER_REPETITION_PENALT
 #   - 228 真人藍牙錄音 (10-29)：說話段 RMS 約 -36～-34 dBFS；錄音尾端無人說話段 -75～-60 dBFS，
 #     auto 會在其中幻覺出「I'm going to get this.」「yes The the the」。-55 dBFS 與說話段仍有約 20 dB 餘裕。
 SILENCE_RMS = 10 ** (-55 / 20)
-# 自動偵測偶爾把中文誤判成日／韓文；輸出含假名或諺文就改用 zh 重跑一次
+# 自動偵測偶爾把中文誤判成日／韓文；輸出含假名或諺文、且這場會議主要是中文 (或還看不出來) 時改用 zh 重跑一次 (_recheck_auto_language)
 _UNEXPECTED_SCRIPT_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uac00-\ud7af\u1100-\u11ff]")
 
 
@@ -40,6 +40,51 @@ def is_near_silent(audio: "np.ndarray") -> bool:
 
 def needs_zh_retry(text: str) -> bool:
     return bool(text) and _UNEXPECTED_SCRIPT_RE.search(text) is not None
+
+
+# 由輸出文字判斷語言 (Speech2Text 不回傳偵測到的語言，也沒有機率)，給下面的「這場會議主要語言」用。
+_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af\u1100-\u11ff]")
+_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+_WORD_RE = re.compile(r"[^\W\d_]{2,}")
+
+
+def text_language(text: str) -> Optional[str]:
+    """輸出文字的語言："zh"／"ja"／"ko"／"other" (其他文字，例如英文、越南文、泰文)；太短看不出來回傳 None。
+    日文混有漢字：假名佔假名＋漢字一成五以上才算日文 (中文句子裡偶爾一個「キ」不算)；中英夾雜算中文。"""
+    t = text or ""
+    kana, hangul, han = len(_KANA_RE.findall(t)), len(_HANGUL_RE.findall(t)), len(_HAN_RE.findall(t))
+    if hangul >= 3 and hangul >= 0.3 * (hangul + han + kana):
+        return "ko"
+    if kana >= 3 and kana >= 0.15 * (kana + han):
+        return "ja"
+    if han >= 2:
+        return "zh"
+    return "other" if len(_WORD_RE.findall(t)) >= 3 else None
+
+
+class LanguageMemory:
+    """這場會議主要講什麼語言：記最近幾片「自動偵測」輸出的語言 (text_language)，隔太久沒有新片就清掉 (下一場會議)。"""
+
+    def __init__(self, size: int = 8, forget_sec: float = 300.0, clock=time.monotonic):
+        self.size, self.forget_sec, self.clock = size, forget_sec, clock
+        self._items: List[tuple] = []
+
+    def add(self, lang: Optional[str]) -> None:
+        now = self.clock()
+        self._items = [(t, lg) for t, lg in self._items if now - t <= self.forget_sec]
+        if lang:
+            self._items = (self._items + [(now, lang)])[-self.size:]
+
+    def dominant(self) -> Optional[str]:
+        """最近 size 片裡佔六成以上、至少 3 片的語言；沒有就 None。"""
+        now = self.clock()
+        langs = [lg for t, lg in self._items if now - t <= self.forget_sec]
+        if not langs:
+            return None
+        best = max(set(langs), key=langs.count)
+        n = langs.count(best)
+        return best if n >= 3 and n >= 0.6 * len(langs) else None
 
 
 # 語音偵測 (VAD)：用 faster-whisper 內建的 Silero VAD (CPU 備援路徑本來就以 vad_filter 使用)，找不到語音的切片不送 NPU。
@@ -810,6 +855,20 @@ class HailoWhisperEngine(WhisperEngineInterface):
     def is_hardware_accelerated(self) -> bool:
         return self._initialized and self._s2t is not None
 
+    def _recheck_auto_language(self, raw_text: str, gen_kwargs: Dict[str, Any]):
+        """自動偵測輸出日／韓文時，只有這場會議主要是中文 (或還看不出來) 才改用 zh 重解，回傳 (文字, 語言碼或 None)。
+        2026-11-17 外語實測 (BIG_CHANGE_STATUS #49)：舊規則一律重解，真正的日文 52／52 片、韓文 95／104 片被改成亂碼中文
+        (常夾英文翻譯：「至於上流, 雨 will continue to increase the risk…」)；中文 7 份共 854 片自動偵測判成日／韓文 0 片。"""
+        memory = getattr(self, "_lang_memory", None)
+        if memory is None:
+            memory = self._lang_memory = LanguageMemory()
+        detected, main = text_language(raw_text), memory.dominant()
+        memory.add(detected)
+        if not (needs_zh_retry(raw_text) and main in ("zh", None)):
+            return raw_text, None
+        logger.info(f"[HailoWhisper] auto language produced kana/hangul in a {main or 'new'} meeting, retry with zh: {raw_text!r}")
+        return self._s2t.generate_all_text(**dict(gen_kwargs, language="zh")) or "", "zh"
+
     def _load_audio_to_pcm_float(self, audio_source: Any) -> Optional[np.ndarray]:
         """Convert audio file or memory buffer to 16kHz float32 [-1.0, 1.0) mono numpy array."""
         import numpy as np
@@ -918,10 +977,8 @@ class HailoWhisperEngine(WhisperEngineInterface):
             if rp != 1.0:   # HailoRT < 5.2.0 沒有這個參數；1.0 時不傳以維持相容
                 gen_kwargs["repetition_penalty"] = rp
             raw_text = self._s2t.generate_all_text(**gen_kwargs)
-            if lang_code is None and needs_zh_retry(raw_text or ""):
-                logger.info(f"[HailoWhisper] auto language produced kana/hangul, retry with zh: {raw_text!r}")
-                gen_kwargs["language"] = lang_code = "zh"
-                raw_text = self._s2t.generate_all_text(**gen_kwargs)
+            if lang_code is None:
+                raw_text, lang_code = self._recheck_auto_language(raw_text or "", gen_kwargs)
 
             final_text = (raw_text or "").strip()
             # Filter prompt bleeding if present
