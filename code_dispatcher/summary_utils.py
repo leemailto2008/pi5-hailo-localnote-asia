@@ -1366,17 +1366,20 @@ def _strip_time(text: str, when: str) -> str:
     return re.sub(re.escape(when) + r"\s*(?:之前|以前|前)?", "", text, count=1)
 
 
-def extract_todos(lines: List[str], max_rows: int = 6) -> List[str]:
-    """同時出現負責人與期限的重點 → 待辦表格列「| 事項 | 負責人 | 時間 |」。"""
+def extract_todos(lines: List[str], max_rows: int = 6, by_owner: bool = False) -> List[str]:
+    """同時出現負責人與期限的重點 → 待辦表格列「| 事項 | 負責人 | 時間 |」。
+    by_owner：同一件事不同人負責算兩列 (結尾總結用：原句「楊工程師主持面試」「林主任主持面試」是兩件待辦，
+    2026-11-19 GS3 60 分只留下第一列，recap 漏「林主任」)。各段筆記仍只依事項去重 (負責人可能被聽錯，避免同一件事出現兩列)。"""
     rows, seen = [], set()
     for line in lines:
         got = _todo_parts(line)
         if not got:
             continue
         item, owner, when = got
-        if item in seen:
+        key = (item, owner) if by_owner else item
+        if key in seen:
             continue
-        seen.add(item)
+        seen.add(key)
         rows.append(f"| {item} | {owner} | {when.replace(' ', '') if _CJK_RE.search(when) else when} |")   # 英文日期保留空白
         if len(rows) >= max_rows:
             break
@@ -1486,7 +1489,7 @@ def _long_todo_rows(per_all: List[List[str]], body_todos: List[str], max_todos: 
     名額不夠時正文交辦平均取自整場會議 (不只取前面)；顯示順序：正文交辦、筆記、結尾總結。"""
     cells = lambda l: [x.strip() for x in l.strip().strip("|").split("|")]
     tail = per_all[-1] if len(per_all) > 1 else []
-    tail_rows = extract_todos(tail, max_rows=max_todos) if tail else []
+    tail_rows = extract_todos(tail, max_rows=max_todos, by_owner=True) if tail else []
     note_rows = extract_todos([l for p in (per_all[:-1] if tail else per_all) for l in p], max_rows=max_todos * 2)
     chosen = list(tail_rows[:max_todos])
     body = []

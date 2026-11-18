@@ -417,6 +417,19 @@ def test_recap_notes_keep_owners_and_dates_verbatim():
     assert "吳副理週四前交文宣出稿" in glued and "今天就到" not in glued and "謝謝" not in glued   # 只去客套話，不丟待辦
 
 
+def test_recap_same_task_two_owners_keeps_both_todo_rows():
+    """2026-11-19 GS3 60 分：結尾總結「楊工程師主持面試」「林主任主持面試」兩件待辦，待辦表只留第一列 (事項相同被去重)。"""
+    tail = ["- 公安方面，決議是7月4日前完成全員複訓，待辦事項是蔡組長負責公安複訓",
+            "- 招募方面，決議是5月26日前完成報到，待辦事項是楊工程師主持面試",
+            "- 招募方面，決議是3月19日前完成報到，待辦事項是林主任主持面試"]
+    rows = extract_todos(tail, max_rows=7, by_owner=True)
+    assert any("林主任" in r for r in rows) and any("楊工程師" in r for r in rows) and len(rows) == 3
+    assert len(extract_todos(tail, max_rows=7)) == 2              # 各段筆記照舊只依事項去重
+    notes = ["- 教育訓練：9月2日簡報技巧課程，報名22人", "- 庫存：電源供應器800臺，可撐3週", "\n".join(tail)]
+    md = assemble_long_minutes(notes, max_todos=6, tail_lines=4, body_todos=["| 交名單 | 吳副理 | 週四前 |"])   # 正式流程帶正文交辦 (transcript_todo_rows)
+    assert "林主任" in md.split("## 決議")[0].split("## 待辦")[1]   # 長會議待辦表收進兩位負責人
+
+
 def test_is_recap_chunk():
     assert is_recap_chunk("最後總結一下，招募方面…") and is_recap_chunk("  總結一下，預算方面…")
     assert not is_recap_chunk("第一個議題是招募，最後總結一下")
