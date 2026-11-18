@@ -24,20 +24,32 @@ def _transcript():
 
 
 def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None, cpu_template_only=False,
-           transcript=None, premap=None):
-    calls = {"hailo": [], "cpu": []}
+           transcript=None, premap=None, cpu_delay=0.025, hailo_delay=0.01, hailo_empty_for=()):
+    calls = {"hailo": [], "cpu": [], "cpu_stopped": [], "hailo_cancelled": []}
     monkeypatch.setattr(mm, "map_user_prompt", lambda piece, idx, total, lang="zh": f"IDX={idx}")
+    monkeypatch.setattr(mm, "DUAL_MAP_POLL_S", 0.005)
 
     async def fake_hailo(prompt, keep_alive=None, hailo_only=False, lang="zh"):
         idx = int(re.search(r"IDX=(\d+)", prompt).group(1))
         calls["hailo"].append(idx)
-        await asyncio.sleep(0.01)
+        try:
+            await asyncio.sleep(hailo_delay(idx) if callable(hailo_delay) else hailo_delay)
+        except asyncio.CancelledError:
+            calls["hailo_cancelled"].append(idx)
+            raise
+        if idx in hailo_empty_for:
+            return "", _Backend(True)
         return f"- 第{idx}段重點：王專員追蹤交期", _Backend(True)
 
     async def fake_cpu(prompt, lang="zh", should_stop=None):
         idx = int(re.search(r"IDX=(\d+)", prompt).group(1))
         calls["cpu"].append(idx)
-        await asyncio.sleep(0.025)
+        t_end = asyncio.get_running_loop().time() + cpu_delay
+        while asyncio.get_running_loop().time() < t_end:   # 跟真的 stream_map_notes_cpu 一樣輪詢 should_stop
+            await asyncio.sleep(0.005)
+            if should_stop is not None and should_stop():
+                calls["cpu_stopped"].append(idx)
+                return "", None, True
         if cpu_stop_after is not None and len(calls["cpu"]) > cpu_stop_after:
             return "", None, True
         if cpu_template_only:   # 11-16 podcast：CPU 只照抄範例標籤
@@ -67,13 +79,16 @@ def test_dual_map_hailo_front_cpu_back_each_chunk_once(monkeypatch):
     job, calls, out = _setup(monkeypatch)
     total = job.status.metrics["summary_chunks"]
     assert total >= 4
-    done = sorted(calls["hailo"] + calls["cpu"])
-    assert done == list(range(1, total + 1))                     # 每段剛好一次
+    assert sorted(set(calls["hailo"] + calls["cpu"])) == list(range(1, total + 1))   # 每段都做到
+    both = set(calls["hailo"]) & set(calls["cpu"])
+    assert len(both) <= 1                                        # 只有最後碰頭時 CPU 手上那段可能兩路同時做 (hailo_race)
+    assert len(calls["hailo"]) == len(set(calls["hailo"])) and len(calls["cpu"]) == len(set(calls["cpu"]))
     assert calls["hailo"][0] == 1 and calls["cpu"][0] == total   # Hailo 從第一段、CPU 從最後一段
-    assert max(calls["hailo"]) < min(calls["cpu"])               # 碰頭為止，不交錯
-    assert job.status.metrics["summary_cpu_chunks"] == len(calls["cpu"]) >= 1
+    assert max(set(calls["hailo"]) - both) < min(calls["cpu"])   # 碰頭為止，不交錯
+    raced = job.status.metrics["summary_hailo_raced"]
+    assert job.status.metrics["summary_cpu_chunks"] + raced == len(calls["cpu"]) and len(calls["cpu"]) >= 1
     found = [int(n) for n in re.findall(r"第(\d+)段重點", out)]
-    assert found == sorted(found)                                # 紀要裡的順序跟逐字稿一樣
+    assert found == sorted(found) and len(found) == len(set(found))   # 紀要裡順序跟逐字稿一樣、同一段不重複
 
 
 def test_dual_map_cpu_stops_when_recording_starts_and_hailo_takes_the_chunk(monkeypatch):
@@ -92,6 +107,40 @@ def test_cpu_notes_with_only_template_labels_go_back_to_hailo(monkeypatch):
     assert sorted(calls["hailo"]) == list(range(1, total + 1))      # 那段由 Hailo 重做
     assert job.status.metrics["summary_cpu_chunks"] == 0
     assert f"第{total}段重點" in out and "教育訓練" not in out
+
+
+def _two_chunks():
+    """錄音後只剩 2 段 (錄音中預先整理過前段) 的常見情況：Hailo 拿第 1 段、CPU 拿第 2 段。"""
+    return "".join(f"第{i}個議題是採購進度。" + f"供應商第{i}批零件預計下週到貨，請王專員追蹤交期並回報主管，" * 28 for i in (1, 2))
+
+
+def test_hailo_races_slow_cpu_chunk_and_wins(monkeypatch):
+    # podcast 11-18 20:46：CPU 做最後一段 55 s 沒寫出重點才交回 Hailo；Hailo 閒著時應同時做那段，先寫完就用它的
+    job, calls, out = _setup(monkeypatch, transcript=_two_chunks(), cpu_delay=1.0)
+    total = job.status.metrics["summary_chunks"]
+    assert total == 2
+    assert calls["cpu"] == [2] and calls["cpu_stopped"] == [2]   # CPU 那一份被收掉
+    assert calls["hailo"] == [1, 2]
+    assert job.status.metrics["summary_hailo_raced"] == 1 and job.status.metrics["summary_cpu_chunks"] == 0
+    assert "第1段重點" in out and "第2段重點" in out
+
+
+def test_cpu_finishing_first_cancels_hailo_race(monkeypatch):
+    job, calls, out = _setup(monkeypatch, transcript=_two_chunks(), cpu_delay=0.05,
+                             hailo_delay=lambda idx: 0.01 if idx == 1 else 1.0)
+    assert calls["hailo"] == [1, 2] and calls["hailo_cancelled"] == [2]   # Hailo 那一份被取消
+    assert job.status.metrics["summary_cpu_chunks"] == 1 and job.status.metrics["summary_hailo_raced"] == 0
+    assert out.count("第2段重點") == 1
+
+
+def test_race_where_neither_writes_notes_still_keeps_the_chunk(monkeypatch):
+    # CPU 只照抄範例標籤、Hailo 同時做也沒寫出重點：那段交回待辦，Hailo 一般流程再做一次 (失敗就保留原文開頭)
+    job, calls, out = _setup(monkeypatch, transcript=_two_chunks(), cpu_delay=0.2, cpu_template_only=True,
+                             hailo_empty_for=(2,))
+    assert calls["cpu"] == [2]
+    assert calls["hailo"].count(2) == 2          # 同時做一次＋交回後再一次
+    assert "教育訓練" not in out and "第1段重點" in out
+    assert "供應商第2批" in out                  # 第 2 段沒有在紀要中消失 (保留原文開頭)
 
 
 def test_dual_map_off_or_recording_uses_hailo_only(monkeypatch):

@@ -1585,6 +1585,11 @@ class MeetingJobManager:
             print(f"[MeetingMinutes] 段 {total}/{total}: 結尾總結 {len(chunks[-1])} 字，直接採用原句")
         lock = asyncio.Lock()
         cpu_done: List[int] = []
+        cpu_inflight: List[int] = []    # CPU 那一路正在做的段
+        racing: set = set()             # Hailo 也在做的 CPU 段 (hailo_race)
+        raced_once: set = set()         # Hailo 同時做過的段
+        finished: set = set()           # 已經 finish 的段 (同一段兩路都在做時只收先寫完的)
+        hailo_raced: List[int] = []     # Hailo 搶先寫完的 CPU 段
         durations: Dict[str, List[float]] = {"hailo": [], "cpu": []}
         hailo_started: List[Optional[float]] = [None]   # Hailo 手上這段的開始時間；None = 閒著
 
@@ -1621,10 +1626,75 @@ class MeetingJobManager:
             if job_id:
                 await ws_manager.broadcast("summary_stream", {"job_id": job_id, "token": "", "accumulated": partial})
 
+        async def claim(slot: int) -> bool:
+            """同一段兩路都在做時，先寫出重點的那一路才 finish (另一路的結果丟掉)。"""
+            async with lock:
+                if slot in finished:
+                    return False
+                finished.add(slot)
+                return True
+
+        async def hailo_race(slot: int) -> None:
+            """Hailo 沒有新段可拿、CPU 還在做某一段時，Hailo 也做同一段，誰先寫出重點用誰的 (2026-11-18)。
+            .228 journal 11-16～18 的 36 場兩路同時整理：錄音後通常只剩 2 段，CPU 拿最後一段要 45–116 s (中位 59 s)，
+            Hailo 一段 10–53 s；用各場預先整理的 Hailo 每段秒數推估，15 場若最後一段也給 Hailo 會更早做完 (podcast 20:46 那場 CPU 55 s 沒寫出重點才交回 Hailo，紀要 72.6 s)。
+            Hailo 這時本來就閒著、CPU 不多用；CPU 先做完就取消 Hailo 串流 (模型仍常駐時由 finally 的 _release_hailo 釋放)。"""
+            racing.add(slot)
+            raced_once.add(slot)
+            try:
+                await _hailo_race_body(slot)
+            finally:
+                async with lock:
+                    racing.discard(slot)
+                    # 兩路都沒寫出重點：CPU 已經放手 (不在 cpu_inflight) 時交回待辦，Hailo 用一般流程重做 (失敗時保留原文開頭)
+                    if slot not in finished and slot not in cpu_inflight and slot not in todo:
+                        todo.append(slot)
+
+        async def _hailo_race_body(slot: int) -> None:
+            self.status.msg = f"📝 長會議分段整理：第 {slot + 1}/{total} 段 (Hailo 與 CPU 同時)..."
+            self.notify_status_update()
+            t_req = time.time()
+            self._hailo_pinned = True
+            task = asyncio.ensure_future(stream_map_notes(map_user_prompt(chunks[slot - base], slot + 1, total, lang),
+                                                          keep_alive=plan[slot], lang=lang))
+            while not task.done():
+                await asyncio.wait({task}, timeout=DUAL_MAP_POLL_S)
+                if not task.done() and (slot in finished or cancelled()):
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    why = "CPU 先寫完" if slot in finished else "紀要取消"
+                    print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段{why}，取消 Hailo 那一份 ({time.time() - t_req:.1f}s)")
+                    return
+            try:
+                text, backend = task.result()
+            except LLMError as e:
+                print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 Hailo 同時整理失敗，等 CPU: {e}")
+                return
+            label = "-"
+            if backend is not None:
+                self.status.metrics["llm_backend"] = label = backend.label
+                if plan[slot] is None and backend.is_hailo:
+                    self._hailo_pinned = False
+            if not compact_notes(text or "", max_len=lim["note_len"]):
+                print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 Hailo 同時整理沒有寫出重點，等 CPU")
+                return
+            if await claim(slot):
+                durations["hailo"].append(time.time() - t_req)
+                hailo_raced.append(slot)
+                await finish(slot, text, label, time.time() - t_req)
+
         async def hailo_worker() -> None:
             while not cancelled():
                 slot = await take(False)
                 if slot is None:
+                    async with lock:   # 每段最多同時做一次 (Hailo 也沒寫出重點就等 CPU，不重複送)
+                        busy = [s for s in cpu_inflight if s not in finished and s not in raced_once]
+                    if busy:
+                        await hailo_race(busy[0])
+                        continue
                     return
                 self.status.msg = f"📝 長會議分段整理：第 {slot + 1}/{total} 段..."
                 self.notify_status_update()
@@ -1642,7 +1712,8 @@ class MeetingJobManager:
                     print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段整理失敗: {e}")
                 durations["hailo"].append(time.time() - t_req)
                 hailo_started[0] = None
-                await finish(slot, text, label, time.time() - t_req)
+                if await claim(slot):
+                    await finish(slot, text, label, time.time() - t_req)
                 if ka is None and todo:
                     await asyncio.sleep(3.0)   # 視窗切換：等 hailo-ollama 卸載完成再送下一段 (避免撞上卸載)
 
@@ -1652,15 +1723,23 @@ class MeetingJobManager:
                 if slot is None:
                     return
                 t_req = time.time()
+                cpu_inflight.append(slot)
                 try:
                     text, backend, stopped = await stream_map_notes_cpu(
-                        map_user_prompt(chunks[slot - base], slot + 1, total, lang), lang=lang, should_stop=_recording_active)
+                        map_user_prompt(chunks[slot - base], slot + 1, total, lang), lang=lang,
+                        should_stop=lambda: _recording_active() or slot in finished)
                 except LLMError as e:
                     text, backend, stopped = "", None, True
                     print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 CPU 整理失敗，交回 Hailo: {e}")
+                finally:
+                    cpu_inflight.remove(slot)
+                if slot in finished:   # Hailo 同時做同一段、先寫完了 (hailo_race)：CPU 那一路收工
+                    print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 Hailo 先寫完，CPU 那一路收工 ({time.time() - t_req:.1f}s)")
+                    return
                 if stopped:   # 開始錄音 (或 CPU 失敗)：這段交回 Hailo，CPU 那一路不再接新段
                     async with lock:
-                        todo.append(slot)
+                        if slot not in racing:   # Hailo 正在做同一段就不必交回
+                            todo.append(slot)
                     print(f"[MeetingMinutes] CPU 整理那一路停止，第 {slot + 1}/{total} 段交回 Hailo")
                     return
                 if not compact_notes(text or "", max_len=lim["note_len"]):
@@ -1668,12 +1747,14 @@ class MeetingJobManager:
                     # 「- 教育訓練：-／- 客戶訂單：-／- 預算：」(11-16，exp_last_chunk.py)，compact_notes 全部不收 → 原本退回逐字稿原句。
                     # 交回 Hailo 重做（同一段 Hailo 寫得出重點）；CPU 那一路收工，不然從後面拿會又拿到同一段。
                     async with lock:
-                        todo.append(slot)
+                        if slot not in racing:   # Hailo 正在做同一段就不必交回
+                            todo.append(slot)
                     print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段 CPU 沒有寫出重點，交回 Hailo")
                     return
-                cpu_done.append(slot)
-                durations["cpu"].append(time.time() - t_req)
-                await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)
+                if await claim(slot):
+                    cpu_done.append(slot)
+                    durations["cpu"].append(time.time() - t_req)
+                    await finish(slot, text, getattr(backend, "label", "-"), time.time() - t_req)
 
         workers = [hailo_worker()]
         # 只用在中文：英文長會議 CPU qwen2.5:3b 的重點會寫成「- Budget:」再接幾行子項目，compact_notes 拆成好幾條沒頭沒尾的重點
@@ -1687,6 +1768,7 @@ class MeetingJobManager:
         if cancelled():
             return ""
         self.status.metrics["summary_cpu_chunks"] = len(cpu_done)
+        self.status.metrics["summary_hailo_raced"] = len(hailo_raced)
         notes = [s for s in slots if s is not None]
         # 長會議沒有單次的 LLM 原文；存逐段重點（compact_notes 之後、組紀要之前）給 e2e／實錄存檔追查
         # (11-16 podcast 紀要出現「- AI記錄：蔣」這種條目，事後查不到是模型寫的還是後處理切的)
