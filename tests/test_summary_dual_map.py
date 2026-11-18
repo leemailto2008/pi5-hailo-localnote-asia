@@ -23,7 +23,8 @@ def _transcript():
     return "".join(topics)
 
 
-def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None, cpu_template_only=False):
+def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None, cpu_template_only=False,
+           transcript=None, premap=None):
     calls = {"hailo": [], "cpu": []}
     monkeypatch.setattr(mm, "map_user_prompt", lambda piece, idx, total, lang="zh": f"IDX={idx}")
 
@@ -56,9 +57,9 @@ def _setup(monkeypatch, dual=True, recording=lambda: False, cpu_stop_after=None,
     job.status = mm.JobStatus()
     job._cancellation_token = None
     job._hailo_pinned = False
-    job._premap_notes, job._premap_prefix = [], ""
+    job._premap_notes, job._premap_prefix, job._premap_lang = premap or ([], "", "")
     job.notify_status_update = lambda: None
-    out = asyncio.run(job._hierarchical_summary_body(_transcript(), None))
+    out = asyncio.run(job._hierarchical_summary_body(transcript or _transcript(), None))
     return job, calls, out
 
 
@@ -174,3 +175,14 @@ def test_last_part_prompt_only_for_recap_chunk():
     en = mm.map_user_prompt("So that is it, thanks everyone.", 5, 5, lang="en")
     assert "the last part" not in en
     assert "the last part" in mm.map_user_prompt("To wrap up, John will send the report by Friday.", 5, 5, lang="en")
+
+
+def test_premap_notes_reused_only_when_language_matches(monkeypatch):
+    """錄音中預先整理的提示詞語言跟錄音後整份逐字稿不同就不沿用 (2026-11-18：德文會議前段重點被寫成中文)。"""
+    zh = _transcript()
+    prefix = zh[:1000]
+    job, calls, out = _setup(monkeypatch, dual=False, transcript=zh, premap=(["- 預先整理的重點：王專員"], prefix, "zh"))
+    assert job.status.metrics["summary_premap_used"] == 1 and 1 not in calls["hailo"] and "預先整理的重點" in out
+    en = ("We reviewed the supplier schedule and the parts will arrive next week, so Wang will track the delivery dates. " * 60)
+    job, calls, out = _setup(monkeypatch, dual=False, transcript=en, premap=(["- 中文重點：不該沿用"], en[:1000], "zh"))
+    assert job.status.metrics["summary_premap_used"] == 0 and calls["hailo"][0] == 1 and "不該沿用" not in out

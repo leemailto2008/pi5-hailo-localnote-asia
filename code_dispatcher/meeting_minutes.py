@@ -243,7 +243,9 @@ MINUTES_SYSTEM_MSG = (
     "不要開場白，不要解釋，不要重複規則，三段寫完就結束。"
 )
 # 逐段整理提示詞裡的範例標籤（中、英）。逐字稿沒講過卻出現在紀要條目開頭的，由 strip_unspoken_example_labels 拿掉（11-16 podcast）。
-MAP_EXAMPLE_LABELS = ("教育訓練", "客戶訂單", "預算", "Training", "Customer order", "Budget")
+# 「Topic name」是英文提示詞裡的佔位字（「each starting with "- Topic name:"」）：外語 6 分 e2e（2026-11-18，德／西／印尼）
+# 英文提示詞那段的逐段重點 16 條有 12 條寫成「- Topic name: Social Policy」，照範例標籤同樣處理（逐字稿沒講過才拿掉）。
+MAP_EXAMPLE_LABELS = ("教育訓練", "客戶訂單", "預算", "Training", "Customer order", "Budget", "Topic name")
 MAP_SYSTEM_MSG = (
     "你是會議記錄員，只用台灣繁體中文條列會議重點。規則：每個議題一行，最多 4 行，每行 35 字以內，"
     "每行以「- 議題名稱：」開頭（例如「- 教育訓練：」「- 客戶訂單：」「- 預算：」），"
@@ -521,6 +523,7 @@ class MeetingJobManager:
         self._peaks_task: Optional[asyncio.Task] = None   # 錄音後背景算波形峰值 (留參考，避免被回收)
         self._premap_prefix: str = ""          # 錄音中已預先整理的逐字稿前段 (tidy_live_transcript 後)
         self._premap_notes: List[str] = []     # 對應的各段重點 (compact_notes 後)
+        self._premap_lang: str = ""            # 預先整理用的提示詞語言 (detect_language)；跟錄音後整份逐字稿的語言不同就不沿用
         self._hailo_pinned: bool = False   # map 階段讓 hailo-ollama 模型常駐 NPU 中
         # 一場會議整理完成 (state=done) 後呼叫 on_meeting_done(job_id)：main.py 用來自動跑高精度逐字稿
         self.on_meeting_done: Optional[Callable[[str], None]] = None
@@ -999,7 +1002,7 @@ class MeetingJobManager:
             chunk_worker_task = asyncio.create_task(_chunk_stt_worker())
             self._chunk_worker_task = chunk_worker_task
 
-            self._premap_prefix, self._premap_notes = "", []
+            self._premap_prefix, self._premap_notes, self._premap_lang = "", [], ""
             premap_stop = asyncio.Event()
 
             async def _premap_loop():
@@ -1012,7 +1015,15 @@ class MeetingJobManager:
                     except asyncio.TimeoutError:
                         pass
                     live = fix_meeting_terms(tidy_live_transcript(curr_preview))
-                    end = take_stable_chunk(live, done_upto, SUMMARY_CHUNK_CHARS, SUMMARY_PREMAP_LAG)
+                    # 提示詞語言跟錄音後整理相同 (2026-11-18)：原本固定用中文提示詞，英文／德文等會議 (detect_language = en) 的前幾段重點
+                    # 寫成中文，錄音後又照樣沿用，紀要中英混雜 (德文 6 分 e2e：「- 認定 Kaffee 有加 Milch 且無 Sugar 的版本」)。
+                    # 語言以第一段為準；之後整份逐字稿的判斷變了就停止預先整理 (錄音後整理時語言不同也不沿用)。
+                    lang_now = detect_language(live)
+                    if self._premap_lang and lang_now != self._premap_lang:
+                        print(f"[MeetingMinutes] 逐字稿語言由 {self._premap_lang} 變成 {lang_now}，停止錄音中預先整理")
+                        return
+                    lim = LANG_LIMITS[lang_now]
+                    end = take_stable_chunk(live, done_upto, lim["chunk"], SUMMARY_PREMAP_LAG)
                     if end is None or premap_stop.is_set() or self._cancellation_token.is_set():
                         continue
                     # 會議詞彙 (與錄音後同一套整理)：只套這一段——整份 60 分鐘逐字稿要 0.3 s (11-13 Pi 實測)，不在錄音中每 10 秒重算；
@@ -1024,13 +1035,15 @@ class MeetingJobManager:
                     try:
                         # 用串流：錄音結束時取消串流，hailo-ollama 會立刻停止生成 (非串流請求取消後伺服器仍會跑完，
                         # 228 實測下一個請求要多等 32 s)，NPU 才能馬上回去處理最後幾段逐字稿
-                        text, _backend = await stream_map_notes(map_user_prompt(piece, idx, 0), hailo_only=True)   # 錄音中不可退回 CPU
+                        text, _backend = await stream_map_notes(map_user_prompt(piece, idx, 0, lang_now), hailo_only=True,
+                                                                lang=lang_now)   # 錄音中不可退回 CPU
                     except LLMError as e:
                         print(f"[MeetingMinutes] 錄音中預先整理第 {idx} 段失敗，停止預先整理: {e}")
                         return
                     if self._cancellation_token.is_set():
                         return
-                    text = compact_notes(text or "") or compact_notes("- " + piece[:120], max_lines=1, max_len=60, keep_transcript=True)
+                    text = compact_notes(text or "", max_len=lim["note_len"]) or                         compact_notes("- " + piece[:120], max_lines=1, max_len=60, keep_transcript=True)
+                    self._premap_lang = lang_now
                     self._premap_notes.append(text)
                     glossed_prefix += seg
                     self._premap_prefix = glossed_prefix
@@ -1534,14 +1547,16 @@ class MeetingJobManager:
         t_map = time.time()
         notes: List[str] = []
         rest = transcript
-        pre, prefix = self._premap_notes, self._premap_prefix
-        self._premap_notes, self._premap_prefix = [], ""     # 只用一次 (重新整理紀要時從頭來)
-        if pre and prefix and transcript.startswith(prefix):
+        pre, prefix, pre_lang = self._premap_notes, self._premap_prefix, self._premap_lang
+        self._premap_notes, self._premap_prefix, self._premap_lang = [], "", ""     # 只用一次 (重新整理紀要時從頭來)
+        lang = detect_language(transcript)
+        if pre and prefix and transcript.startswith(prefix) and pre_lang == lang:
             notes, rest = list(pre), transcript[len(prefix):].strip()
             print(f"[MeetingMinutes] 沿用錄音中預先整理的 {len(pre)} 段 ({len(prefix)} 字)，剩 {len(rest)} 字")
+        elif pre and pre_lang != lang:
+            print(f"[MeetingMinutes] 預先整理用 {pre_lang} 提示詞、逐字稿是 {lang}，不沿用，全部重新整理")
         elif pre:
             print("[MeetingMinutes] 逐字稿前段與預先整理時不同，不沿用，全部重新整理")
-        lang = detect_language(transcript)
         lim = LANG_LIMITS[lang]
         # 正文裡明講的交辦 (請X在…前…)：長會議待辦表優先用它，各段筆記抽出的列常是議題摘要 (見 summary_utils._long_todo_rows)
         try:

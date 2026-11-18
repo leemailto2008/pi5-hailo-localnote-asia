@@ -1297,3 +1297,11 @@ def test_compact_notes_drops_no_specific_content_notes():
     # 11-17 podcast 第九次 CPU 那段
     raw = "- 客戶訂單：沒有具體訂單內容\n- 客戶回饋：沒有具體客戶回饋内容\n- 記載：醫生記錄病人狀況\n- 預算：8萬元"
     assert summary_utils.compact_notes(raw) == "- 記載：醫生記錄病人狀況\n- 預算：8萬元"
+
+
+def test_strip_topic_name_placeholder_from_map_notes():
+    # 11-18 外語 6 分 e2e：英文逐段重點照抄提示詞佔位字「- Topic name:」
+    import meeting_minutes as mm
+    notes = "- Topic name: Social Policy\n- Topic name: Training\n- Price rise: 25% on diesel"
+    out = summary_utils.strip_unspoken_example_labels(notes, "Die Sozialpolitik der EU, 25 Prozent", mm.MAP_EXAMPLE_LABELS)
+    assert out == "- Social Policy\n- Price rise: 25% on diesel"
