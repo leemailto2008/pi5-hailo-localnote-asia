@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """SenseVoice 不支援的語言改用 Hailo Whisper 的文字 (2026-11-18，sv_lang_guard)。例句取自 .cc_scratch/sv_lang 的實測輸出。"""
+import re
 import sys
 import types
 
@@ -127,3 +128,47 @@ def test_speech_to_text_live_keeps_sensevoice_when_npu_unavailable(monkeypatch):
     out = {}
     assert vp.speech_to_text_live(audio, "sensevoice", sv_out=out, lang_guard=g.ForeignLangGuard()) == DE_SV
     assert "wtext" not in out
+
+
+def test_apply_whisper_live_maps_live_slices_onto_redecoded_sensevoice():
+    """即時稿選 Whisper：即時切片（位置跟高精度稿的切片不同）對到同時段的 SenseVoice 輸出再判斷。"""
+    sr = rt.SAMPLE_RATE
+    # 高精度稿切片 0–6、6–12、12–18 s；即時切片 0–4、4–10、10–16、16–18 s
+    toks = re.findall(r"\s*\S+", DE_SV)
+    decoded = [(k * 6 * sr, (k + 1) * 6 * sr, DE_SV, "<|en|>", toks, [0.4 * i for i in range(len(toks))]) for k in range(3)]
+    live = [{"s": 0, "n": 4 * sr, "wtext": DE_WH}, {"s": 4 * sr, "n": 6 * sr, "wtext": DE_WH},
+            {"s": 10 * sr, "n": 6 * sr, "wtext": DE_WH}, {"s": 16 * sr, "n": 2 * sr, "src": "tail"}]
+    out = rt.apply_whisper_live(decoded, live)
+    whisper = [d for d in out if d[3] == rt.WHISPER_LANG_TAG]
+    assert [d[0] for d in whisper] == [0, 4 * sr, 10 * sr] and all(d[2] == DE_WH for d in whisper)
+    assert all("".join(d[4]).strip() == d[2].strip() and len(d[4]) == len(d[5]) for d in out)
+    starts = [d[0] / sr + d[5][0] for d in out if d[5]]
+    assert starts == sorted(starts)
+    # 換掉的範圍內不留 SenseVoice 的字；16 s 之後（tail 沒有 Whisper 文字）照用 SenseVoice
+    for d in out:
+        if d[3] != rt.WHISPER_LANG_TAG:
+            assert all(d[0] / sr + t >= 16.0 for t in d[5])
+    # 支援的語言（Whisper 跟 SenseVoice 寫同一句英文）：原樣回傳
+    en = "We will meet again next Tuesday to review the budget"
+    en_toks = re.findall(r"\s*\S+", en)
+    dec_en = [(i * 6 * sr, (i + 1) * 6 * sr, en, "<|en|>", en_toks, [0.3 * k for k in range(len(en_toks))]) for i in range(3)]
+    live_en = [{"s": i * 6 * sr, "n": 6 * sr, "wtext": en} for i in range(3)]
+    assert rt.apply_whisper_live(dec_en, live_en) is dec_en
+    # 中文（SenseVoice 標 zh）即使 Whisper 寫英文也不比對（即時稿同規則）
+    dec_zh = [(i * 6 * sr, (i + 1) * 6 * sr, "我們下週二再開會", "<|zh|>", list("我們下週二再開會"), [0.2 * k for k in range(8)])
+              for i in range(3)]
+    live_zh = [{"s": i * 6 * sr, "n": 6 * sr, "wtext": "We will meet again next Tuesday"} for i in range(3)]
+    assert rt.apply_whisper_live(dec_zh, live_zh) is dec_zh
+
+
+def test_live_whisper_file_round_trip(tmp_path):
+    sr = rt.SAMPLE_RATE
+    cache = tmp_path / "audio_cache"
+    cache.mkdir()
+    ogg = str(cache / "m_1.ogg")
+    slices = [{"s": 0, "n": 5 * sr, "src": "other", "wtext": "Hallo"}, {"s": 5 * sr, "n": 5 * sr, "src": "other"}]
+    p = rt.save_live_asr(ogg, slices, 10 * sr, rt.LIVE_WHISPER_SUFFIX)
+    assert p.endswith("m_1.live_whisper.json")
+    assert rt.load_live_asr(ogg, 10 * sr) is None                       # 不會被當成 SenseVoice 結果沿用
+    got = rt.load_live_asr(ogg, 10 * sr, rt.LIVE_WHISPER_SUFFIX)
+    assert [s.get("wtext") for s in got] == ["Hallo", None]

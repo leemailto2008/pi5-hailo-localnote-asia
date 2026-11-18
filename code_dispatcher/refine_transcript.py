@@ -130,6 +130,94 @@ def apply_whisper_choices(decoded: List[Tuple[int, int, str, str, List[str], Lis
     return [by_start[k] for k in sorted(by_start)]
 
 
+def apply_whisper_live(decoded: List[Tuple[int, int, str, str, List[str], List[float]]],
+                       whisper_live: Sequence[Dict[str, Any]]) -> List[Tuple[int, int, str, str, List[str], List[float]]]:
+    """即時稿選 Whisper 的場次（2026-11-18）：decoded 是 SenseVoice 從母帶整段重新辨識的結果（切片 pause_slices，跟即時切片位置不同），
+    whisper_live 是即時切片（s、n 樣本，wtext＝那片 Whisper 即時稿文字）。
+    每片即時切片對到同時段的 SenseVoice 輸出（語言標記取重疊最長的片、文字取時間落在範圍內的字），照即時稿 ForeignLangGuard 的
+    比對時機（SenseVoice 標 en／yue，或已判定外語）留下 Whisper 文字，再用 refine_whisper_choices 決定哪些片改用 Whisper；
+    要換的片把時間落在範圍內的 SenseVoice 字換成 Whisper 文字（字的時間平均分在被換掉的字的範圍，沒有就整片）。
+    沒有要換的片時原樣回傳（中文／英文等支援的語言輸出不變）。"""
+    from sv_lang_guard import ForeignLangGuard, pseudo_tokens, refine_whisper_choices
+    now = [0.0]
+    guard = ForeignLangGuard(clock=lambda: now[0])   # 即時稿的 5 分鐘遺忘用錄音時間
+    entries: List[Dict[str, Any]] = []
+    j = 0
+    for w in whisper_live:
+        a, b = int(w["s"]), int(w["s"]) + int(w["n"])
+        now[0] = b / SAMPLE_RATE
+        while j < len(decoded) and decoded[j][1] <= a:
+            j += 1
+        best_lang, best_ov, toks = "", 0, []
+        k = j
+        while k < len(decoded) and decoded[k][0] < b:
+            d = decoded[k]
+            ov = min(b, d[1]) - max(a, d[0])
+            if ov > best_ov:
+                best_lang, best_ov = d[3], ov
+            toks.extend(tok for tok, t in zip(d[4], d[5]) if a <= d[0] + t * SAMPLE_RATE < b)
+            k += 1
+        sv_text = "".join(toks).strip()
+        rec: Dict[str, Any] = {}
+        wtext = (w.get("wtext") or "").strip()
+        if wtext and guard.should_probe(best_lang):
+            rec = {"sv_lang": best_lang, "sv_text": sv_text, "wtext": wtext}
+            guard.decide(best_lang, sv_text, wtext)
+        entries.append(rec)
+    choices = refine_whisper_choices(entries)
+    if not choices:
+        return decoded
+    ranges = [(int(whisper_live[n]["s"]), int(whisper_live[n]["s"]) + int(whisper_live[n]["n"]),
+               (whisper_live[n].get("wtext") or "").strip()) for n in choices]
+
+    def chosen(pos: float) -> Optional[int]:
+        for r, (a, b, _t) in enumerate(ranges):
+            if a <= pos < b:
+                return r
+        return None
+
+    removed: Dict[int, List[float]] = {}
+    removed_text: Dict[int, List[str]] = {}
+    out: List[Tuple[int, int, str, str, List[str], List[float]]] = []
+    for d in decoded:
+        i0, i1, text, lang, tokens, times = d
+        if len(tokens) != len(times):
+            out.append(d)
+            continue
+        runs: List[Tuple[List[str], List[float]]] = []
+        cur: Optional[Tuple[List[str], List[float]]] = None
+        for tok, t in zip(tokens, times):
+            r = chosen(i0 + t * SAMPLE_RATE)
+            if r is None:
+                if cur is None:
+                    cur = ([], [])
+                    runs.append(cur)
+                cur[0].append(tok)
+                cur[1].append(t)
+            else:
+                removed.setdefault(r, []).append(i0 / SAMPLE_RATE + t)
+                removed_text.setdefault(r, []).append(tok)
+                cur = None
+        if len(runs) == 1 and len(runs[0][0]) == len(tokens):
+            out.append(d)
+            continue
+        for toks, tms in runs:   # 被換掉的字前後各一段，時間仍相對 i0
+            out.append((i0, i1, "".join(toks), lang, toks, tms))
+    for r, (a, b, text) in enumerate(ranges):
+        if not text:
+            continue
+        rem = removed.get(r)
+        start, end = (min(rem), min(b / SAMPLE_RATE, max(rem) + MISSED_TAIL_S)) if rem else (a / SAMPLE_RATE, b / SAMPLE_RATE)
+        tokens, times = pseudo_tokens(text, start - a / SAMPLE_RATE, max(end, start) - a / SAMPLE_RATE)
+        logger.info("[refine] %.1f-%.1fs SenseVoice unsupported language (live Whisper), using Whisper: %r -> %r",
+                    a / SAMPLE_RATE, b / SAMPLE_RATE, "".join(removed_text.get(r, [])), text)
+        out.append((a, b, text, WHISPER_LANG_TAG, tokens, times))
+
+    def first_time(d) -> float:
+        return d[0] / SAMPLE_RATE + (d[5][0] if d[5] else 0.0)
+    return sorted(out, key=first_time)
+
+
 # 沿用即時逐字稿的 SenseVoice 結果 (2026-11-15)：即時稿 11-13 起也是 SenseVoice（同模型、同語言設定、同 ITN），
 # 切片也是停頓處切 4–9.5 秒，錄音後再整段重新辨識是重做一次（30 分 154 s、4 小時 1,242 s，見 BIG_CHANGE_STATUS #37）。
 # 錄音時每個切片的起點（樣本）、長度、tokens／timestamps 存成 <錄音>.live_asr.json；切片跟母帶 OGG 吃的是同一串 PCM
@@ -142,20 +230,27 @@ LIVE_ASR_KEEP = 3          # localnote_state 裡只留最近幾場的 .live_asr.
 LIVE_ASR_SUFFIX = ".live_asr.json"
 
 
-def live_asr_path(audio_path: str) -> str:
-    """<錄音快取>/m_x.ogg → <錄音快取的上一層>/localnote_state/m_x.live_asr.json
-    (不放錄音快取資料夾：那裡的檔案數算進錄音環形緩衝的保留筆數)。PI5_REFINE_LIVE_ASR_FILE 可指定 (離線實驗用)。"""
-    override = os.environ.get("PI5_REFINE_LIVE_ASR_FILE")
+# 即時稿選 Whisper 的場次 (2026-11-18)：沒有 SenseVoice 結果可沿用（高精度稿照舊整段重新辨識），
+# 改存每片的位置與 Whisper 文字（wtext），給 apply_whisper_live 判斷 SenseVoice 不支援的語言。
+LIVE_WHISPER_SUFFIX = ".live_whisper.json"
+_LIVE_FILE_ENV = {LIVE_ASR_SUFFIX: "PI5_REFINE_LIVE_ASR_FILE", LIVE_WHISPER_SUFFIX: "PI5_REFINE_LIVE_WHISPER_FILE"}
+
+
+def live_asr_path(audio_path: str, suffix: str = LIVE_ASR_SUFFIX) -> str:
+    """<錄音快取>/m_x.ogg → <錄音快取的上一層>/localnote_state/m_x.live_asr.json（suffix＝LIVE_WHISPER_SUFFIX 時 .live_whisper.json）
+    (不放錄音快取資料夾：那裡的檔案數算進錄音環形緩衝的保留筆數)。PI5_REFINE_LIVE_ASR_FILE／PI5_REFINE_LIVE_WHISPER_FILE 可指定 (離線實驗用)。"""
+    override = os.environ.get(_LIVE_FILE_ENV.get(suffix, ""))
     if override:
         return override
     cache_dir = os.path.dirname(os.path.abspath(audio_path))
     stem = os.path.splitext(os.path.basename(audio_path))[0]
-    return os.path.join(os.path.dirname(cache_dir), "localnote_state", stem + LIVE_ASR_SUFFIX)
+    return os.path.join(os.path.dirname(cache_dir), "localnote_state", stem + suffix)
 
 
-def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_samples: int) -> Optional[str]:
+def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_samples: int,
+                  suffix: str = LIVE_ASR_SUFFIX) -> Optional[str]:
     """錄音結束時存即時切片的辨識結果；同資料夾舊的只留最近 LIVE_ASR_KEEP 場。存不了回 None（高精度稿就整段重新辨識）。"""
-    path = live_asr_path(audio_path)
+    path = live_asr_path(audio_path, suffix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".part", "w", encoding="utf-8") as f:
@@ -163,7 +258,7 @@ def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_sampl
                        "slices": list(slices)}, f, ensure_ascii=False)
         os.replace(path + ".part", path)
         old = sorted((p for p in (os.path.join(os.path.dirname(path), n) for n in os.listdir(os.path.dirname(path)))
-                      if p.endswith(LIVE_ASR_SUFFIX)), key=os.path.getmtime)
+                      if p.endswith(suffix)), key=os.path.getmtime)
         for p in old[:-LIVE_ASR_KEEP]:
             os.remove(p)
     except OSError as e:
@@ -181,10 +276,10 @@ def progress_weights(audio_path: str) -> Dict[str, Tuple[float, float]]:
     return {"asr": (0.0, 0.71), "diarize": (0.71, 0.20), "fix": (0.91, 0.09)}
 
 
-def load_live_asr(audio_path: str, n_samples: int) -> Optional[List[Dict[str, Any]]]:
+def load_live_asr(audio_path: str, n_samples: int, suffix: str = LIVE_ASR_SUFFIX) -> Optional[List[Dict[str, Any]]]:
     """讀回即時切片；切片不連續、或樣本總數跟母帶差超過 LIVE_ASR_MAX_DRIFT_S 就回 None。
     最後一片若比母帶短，補一片「從母帶辨識」蓋到結尾。"""
-    path = live_asr_path(audio_path)
+    path = live_asr_path(audio_path, suffix)
     if not os.path.isfile(path):
         return None
     try:
@@ -499,10 +594,13 @@ def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
 
 def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None,
                live_slices: Optional[Sequence[Dict[str, Any]]] = None,
-               stats: Optional[Dict[str, Any]] = None) -> Optional[List[Sentence]]:
+               stats: Optional[Dict[str, Any]] = None,
+               whisper_live: Optional[Sequence[Dict[str, Any]]] = None) -> Optional[List[Sentence]]:
     """VAD 切句後逐句辨識，再依靈敏 VAD 的短停頓把句子切成小段（見 FINE_VAD_MIN_SILENCE_S；
     後段的 cont=True）。被 should_stop 中止時回傳 None。
     live_slices（load_live_asr）：pause 模式改用錄音時的切片，SenseVoice 已辨識過的片直接沿用（見 LIVE_ASR_REUSE）；
+    whisper_live（即時稿選 Whisper 的場次，load_live_asr(..., LIVE_WHISPER_SUFFIX)）：沒有 live_slices 時，
+    SenseVoice 不支援的語言改用 Whisper 即時稿的文字（apply_whisper_live）。
     stats 填入 reused_slices／decoded_slices。"""
     import sherpa_onnx
 
@@ -677,6 +775,8 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                 del fixed
         if live_slices:
             decoded = apply_whisper_choices(decoded, slices, live_slices)
+        elif whisper_live:
+            decoded = apply_whisper_live(decoded, whisper_live)
         for i0, i1, text, _lang, tokens, timestamps in decoded:
             if len(tokens) == len(timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in timestamps]
@@ -1042,8 +1142,11 @@ def refine(path: str, should_stop: StopFn = None,
 
     t0 = time.time()
     live = load_live_asr(path, len(samples)) if LIVE_ASR_REUSE and ASR_SEGMENTATION == "pause" else None
+    whisper_live = (load_live_asr(path, len(samples), LIVE_WHISPER_SUFFIX)
+                    if live is None and ASR_SEGMENTATION == "pause" else None)
     asr_stats: Dict[str, Any] = {}
-    sentences = transcribe(samples, should_stop, lambda f: report("asr", f), live_slices=live, stats=asr_stats)
+    sentences = transcribe(samples, should_stop, lambda f: report("asr", f), live_slices=live, stats=asr_stats,
+                           whisper_live=whisper_live)
     out["asr_s"] = round(time.time() - t0, 1)
     out["asr_reused_slices"] = asr_stats.get("reused_slices", 0)
     out["asr_decoded_slices"] = asr_stats.get("decoded_slices")

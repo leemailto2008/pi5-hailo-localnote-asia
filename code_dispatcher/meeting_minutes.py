@@ -936,6 +936,9 @@ class MeetingJobManager:
                                                     ts=sv_res.get("timestamps") or [])
                                     if sv_res.get("wtext") is not None:   # 有用 Whisper 比對過（高精度稿用整場的判斷再決定一次）
                                         live_rec["wtext"] = sv_res["wtext"]
+                                elif live_engine == "whisper" and seg_text:
+                                    # 即時稿選 Whisper：記下 Whisper 文字，高精度稿（SenseVoice）遇到不支援的語言時改用 (refine_transcript.apply_whisper_live)
+                                    live_rec["wtext"] = seg_text
                                 stt_combo.add(stt_info)
                                 self.status.metrics.update(stt_combo.describe())
                                 last_done_enq_t = enq_t
@@ -1168,6 +1171,14 @@ class MeetingJobManager:
                 if saved:
                     n_sv = sum(1 for s in live_asr_slices if s.get("src") == "sv")
                     print(f"[MeetingMinutes] 即時 SenseVoice 結果已存 ({n_sv}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
+            elif chunk_worker_done.is_set() and live_engine == "whisper" and any(s.get("wtext") for s in live_asr_slices):
+                # 即時稿選 Whisper：存每片位置與 Whisper 文字 (高精度稿照舊整段 SenseVoice 重新辨識，只用來換掉 SenseVoice 不支援的語言)
+                import refine_transcript
+                saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos,
+                                                refine_transcript.LIVE_WHISPER_SUFFIX)
+                if saved:
+                    n_w = sum(1 for s in live_asr_slices if s.get("wtext"))
+                    print(f"[MeetingMinutes] 即時 Whisper 文字已存 ({n_w}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
 
             # Broadcast reset frame upon recording completion
             try:
