@@ -412,7 +412,13 @@ def strip_unspoken_example_labels(md: str, transcript: str, labels: Sequence[str
     # 「- 教育訓練：教育訓練的重要性」「- 客戶訂單：客戶訂單的價值」「- 預算：預算分配的必要性」，第一條被挑進摘要）：整條拿掉。
     # 今天 6 份 podcast＋4 份測資的逐段重點只有這 3 條被拿掉；測資紀要一字不變。
     echo = re.compile("|".join(re.escape(x) for x in unspoken), re.IGNORECASE)
-    return "\n".join(l for l in md.split("\n") if not (re.match(r"\s*[-*]\s", l) and echo.search(l)))
+    # 拿掉標籤後只剩提示詞裡的關鍵字「decided／agreed」（英文提示詞要模型保留 "decided"／"agreed"；
+    # 11-18 外語 e2e「- Topic name: Decided」→「- Decided」，被放進決議段）：沒有內容，整條拿掉。
+    return "\n".join(l for l in md.split("\n")
+                     if not (re.match(r"\s*[-*]\s", l) and (echo.search(l) or _BARE_KEYWORD_RE.match(l))))
+
+
+_BARE_KEYWORD_RE = re.compile(r"^\s*[-*]\s*(?:decided|agreed)\s*[.:：]?\s*$", re.IGNORECASE)
 
 
 _EN_BY_NAME_RE = re.compile(r"\bby\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b")
