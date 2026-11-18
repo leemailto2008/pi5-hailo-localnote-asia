@@ -96,6 +96,40 @@ def isolated_lang_flips(langs: Sequence[str]) -> Tuple[str, List[int]]:
     return major, flips
 
 
+# SenseVoice 不支援的語言（德／西／法／印尼／越／泰…，2026-11-18）：即時稿用 Hailo Whisper 比對過的片帶著 Whisper 文字（wtext），
+# 用整場（前後各幾片）的判斷決定哪些片改用 Whisper 的文字；規則與量測見 sv_lang_guard。
+WHISPER_LANG_TAG = "<|whisper|>"
+
+
+def apply_whisper_choices(decoded: List[Tuple[int, int, str, str, List[str], List[float]]],
+                          slices: Sequence[Tuple[int, int]],
+                          live_slices: Sequence[Dict[str, Any]]) -> List[Tuple[int, int, str, str, List[str], List[float]]]:
+    """decoded：(i0, i1, text, lang, tokens, timestamps)，timestamps 相對切片開頭；slices 與 live_slices 一一對應。
+    要改用 Whisper 的片換成 Whisper 文字（底噪過濾掉的片也補回），字的時間平均分在 SenseVoice 字的範圍（沒有就整片）。"""
+    from sv_lang_guard import pseudo_tokens, refine_whisper_choices
+    choices = refine_whisper_choices([
+        {"sv_lang": s.get("lang", ""), "sv_text": s.get("text", ""), "wtext": s.get("wtext")} if s.get("src") == "sv" else {}
+        for s in live_slices])
+    if not choices:
+        return decoded
+    by_start = {d[0]: d for d in decoded}
+    for n in choices:
+        i0, i1 = slices[n]
+        live = live_slices[n]
+        text = (live.get("wtext") or "").strip()
+        if not text:
+            continue
+        dur = (i1 - i0) / SAMPLE_RATE
+        ts = live.get("ts") or []
+        start, end = (ts[0], min(dur, ts[-1] + MISSED_TAIL_S)) if ts else (0.0, dur)
+        tokens, times = pseudo_tokens(text, start, max(end, start))
+        old = by_start.get(i0)
+        logger.info("[refine] %.1f-%.1fs SenseVoice unsupported language, using Whisper: %r -> %r",
+                    i0 / SAMPLE_RATE, i1 / SAMPLE_RATE, old[2] if old else "", text)
+        by_start[i0] = (i0, i1, text, WHISPER_LANG_TAG, tokens, times)
+    return [by_start[k] for k in sorted(by_start)]
+
+
 # 沿用即時逐字稿的 SenseVoice 結果 (2026-11-15)：即時稿 11-13 起也是 SenseVoice（同模型、同語言設定、同 ITN），
 # 切片也是停頓處切 4–9.5 秒，錄音後再整段重新辨識是重做一次（30 分 154 s、4 小時 1,242 s，見 BIG_CHANGE_STATUS #37）。
 # 錄音時每個切片的起點（樣本）、長度、tokens／timestamps 存成 <錄音>.live_asr.json；切片跟母帶 OGG 吃的是同一串 PCM
@@ -641,6 +675,8 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
                                 i0 / SAMPLE_RATE, i1 / SAMPLE_RATE, old_lang, major, old_text, res.text)
                     decoded[k] = (i0, i1, res.text, major, list(res.tokens), list(res.timestamps))
                 del fixed
+        if live_slices:
+            decoded = apply_whisper_choices(decoded, slices, live_slices)
         for i0, i1, text, _lang, tokens, timestamps in decoded:
             if len(tokens) == len(timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in timestamps]

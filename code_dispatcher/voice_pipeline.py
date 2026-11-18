@@ -732,12 +732,29 @@ def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT, sv_a
 from refine_transcript import SV_NOISE_MAX_CHARS, sv_is_noise  # noqa: E402,F401
 
 
+def whisper_probe_npu(audio_np: np.ndarray) -> Optional[Dict[str, Any]]:
+    """SenseVoice 不支援的語言比對用 (sv_lang_guard)：只走 Hailo Whisper (NPU，stt_worker，自動偵測語言)。
+    NPU 不能用時回 None，不退到 CPU faster-whisper (錄音中不跑 CPU 推論，CLAUDE.md 重點一)。"""
+    from stt_worker import stt_worker
+    try:
+        res = stt_worker.transcribe(audio_np, language=None)
+    except RuntimeError as e:
+        print(f"[VoicePipeline] 外語比對：Hailo Whisper 不能用，這片照用 SenseVoice：{e}")
+        return None
+    if not isinstance(res, dict) or "text" not in res:
+        return None
+    return {**res, "text": clean_stt_segment(res.get("text") or "")}
+
+
 def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: Optional[Any] = None,
                         info_out: Optional[Dict[str, str]] = None,
-                        sv_out: Optional[Dict[str, Any]] = None) -> Optional[str]:
+                        sv_out: Optional[Dict[str, Any]] = None,
+                        lang_guard: Optional[Any] = None) -> Optional[str]:
     """錄音中的即時切片。engine = whisper → speech_to_text (Hailo Whisper，失敗退 CPU)；
     sensevoice → sv_worker，這段失敗就改走 speech_to_text (逐字稿區的 ASR 會列出兩種引擎各幾段)。
-    sv_out：SenseVoice 這段成功時填入 sv_worker 的原始結果 (tokens／timestamps／lang／emotion，底噪也照填)，給高精度逐字稿沿用。"""
+    sv_out：SenseVoice 這段成功時填入 sv_worker 的原始結果 (tokens／timestamps／lang／emotion，底噪也照填)，給高精度逐字稿沿用；
+    有用 Whisper 比對時另填 wtext (Whisper 文字)，改用 Whisper 時 use = "whisper"。
+    lang_guard (sv_lang_guard.ForeignLangGuard，每場一個)：SenseVoice 不支援的語言改用 Hailo Whisper 的文字。"""
     if engine == "sensevoice":
         from sv_worker import LIVE_POST_LABEL, live_label, sv_worker
         try:
@@ -747,6 +764,20 @@ def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: O
         else:
             if sv_out is not None:
                 sv_out.update(res)
+            if lang_guard is not None and lang_guard.should_probe(res.get("lang", "")):
+                probe = whisper_probe_npu(audio_np)
+                if probe is not None:
+                    wtext = probe["text"]
+                    if sv_out is not None:
+                        sv_out["wtext"] = wtext
+                    if lang_guard.decide(res.get("lang", ""), res.get("raw_text", ""), wtext) == "whisper":
+                        if sv_out is not None:
+                            sv_out["use"] = "whisper"
+                        if info_out is not None:
+                            info_out.update(engine=f"Hailo-10H {probe.get('model') or 'Whisper'}（NPU；SenseVoice 不支援的語言）",
+                                            vad=probe.get("vad") or "", post=HAILO_POST_LABEL)
+                        print(f"[VoicePipeline] SenseVoice 不支援的語言，改用 Whisper：'{res.get('text', '')}' → '{wtext}'")
+                        return wtext
             if info_out is not None:
                 info_out.update(engine=live_label(), vad="", post=LIVE_POST_LABEL)
             text = res.get("text", "")

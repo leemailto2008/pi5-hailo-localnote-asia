@@ -858,6 +858,9 @@ class MeetingJobManager:
             # 每個切片在母帶裡的位置與 SenseVoice 原始結果：錄音後的高精度逐字稿沿用 (refine_transcript.save_live_asr)
             live_asr_slices: List[Dict[str, Any]] = []
             live_asr_pos = 0
+            # SenseVoice 不支援的語言（德／西／法／印尼／越／泰…）改用 Hailo Whisper 的文字 (2026-11-18，sv_lang_guard)：每場會議一個
+            from sv_lang_guard import ForeignLangGuard
+            lang_guard = ForeignLangGuard()
 
             # 即時逐字稿引擎 (2026-11-13)：預設／網頁選 SenseVoice 時用 SenseVoice (sv_worker，CPU 2、3)，網頁選 Whisper 或這台不能用時 Hailo Whisper。
             # 錄音開始、知道收音來源 (rec_stats["source"]) 後決定一次，整場不變；用 SenseVoice 時先載入模型。
@@ -924,12 +927,15 @@ class MeetingJobManager:
                                     decide_live_engine(),
                                     self._thread_cancellation_token,
                                     info_out=stt_info,
-                                    sv_out=sv_res
+                                    sv_out=sv_res,
+                                    lang_guard=lang_guard
                                 )
                                 if sv_res.get("tokens") is not None:
                                     live_rec.update(src="sv", text=sv_res.get("raw_text", ""), lang=sv_res.get("lang", ""),
                                                     emotion=sv_res.get("emotion", ""), tokens=sv_res["tokens"],
                                                     ts=sv_res.get("timestamps") or [])
+                                    if sv_res.get("wtext") is not None:   # 有用 Whisper 比對過（高精度稿用整場的判斷再決定一次）
+                                        live_rec["wtext"] = sv_res["wtext"]
                                 stt_combo.add(stt_info)
                                 self.status.metrics.update(stt_combo.describe())
                                 last_done_enq_t = enq_t
