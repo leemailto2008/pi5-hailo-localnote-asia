@@ -1005,7 +1005,7 @@ def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcr
     out, seen = [], set()
     for line in (text or "").splitlines():
         t = _BULLET_RE.sub("", line).strip().replace("\ufffd", "")
-        if t.startswith("#") or t.startswith("|") or len(t) < 6 or _META_RE.match(t) or _EMPTY_NOTE_RE.search(t):
+        if t.startswith("#") or t.startswith("|") or len(t) < 6 or _META_RE.match(t) or _EN_META_RE.match(t) or _EMPTY_NOTE_RE.search(t):
             continue
         if not keep_transcript and len(_FILLER_RE.findall(t)) >= 2:
             continue
@@ -1885,6 +1885,28 @@ def drop_duplicate_bullets(md: str) -> str:
     return out_md
 
 _PLACEHOLDER_ITEM_RE = re.compile(r"^(?:[-*•]\s*)*\**\s*(?:無|none|n/?a|nothing|（無）|\(none\))\s*[.。]?\s*\**$", re.I)
+
+
+# 英文紀要／逐段重點裡的會議資訊行（提示詞明講不要寫會議日期、出席者）：外語會議（越南語 6 分 e2e 2 次、離線 2 次，11-18）
+# 英文提示詞看不懂逐字稿時整份照範本編，「- Meeting held on 2023-05-15」「- Attendees: A, B, C」「- Duration: 30 minutes」
+# 「- Key Participants: Dr. Nguyen…」全是逐字稿沒有的。.228 存檔 640 份中文／英文紀要沒有一行符合（中文的 _META_RE 另外處理）。
+_EN_META_RE = re.compile(r"^(?:\*\*)?(?:meeting\s+(?:held|date|time)\b|(?:meeting\s+)?(?:date|time|attendees?|participants?|key\s+participants"
+                         r"|duration|location|venue)\s*(?:\*\*)?\s*[:：])", re.IGNORECASE)
+
+
+def drop_meeting_meta_bullets(md: str) -> str:
+    """摘要／決議段拿掉英文的會議資訊行 (_EN_META_RE)；整段只剩這種行時不動 (避免整段空白)。"""
+    for sec in ("摘要", "決議"):
+        m = _minutes_section(md or "", sec)
+        if not m:
+            continue
+        lines = m.group(2).split("\n")
+        items = [l for l in lines if l.strip().startswith("- ")]
+        meta = [l for l in items if _EN_META_RE.match(l.strip()[2:].strip())]
+        if not meta or len(meta) == len(items):
+            continue
+        md = md[:m.start(2)] + "\n".join(l for l in lines if l not in meta) + md[m.end(2):]
+    return md
 
 
 def drop_placeholder_items(md: str) -> str:

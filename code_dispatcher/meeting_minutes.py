@@ -51,7 +51,7 @@ except Exception as _fix_err:   # 開發環境找不到時，只是少了跨切�
     def fix_meeting_terms(text: str) -> str:
         return text
 from summary_utils import (assemble_long_minutes, clean_summary_markdown, compact_notes, ensure_sections, fill_decisions_from_transcript,
-                           cut_glued_topic_numbers, detect_language, drop_listed_todos_from_summary, drop_placeholder_items, drop_recap_echo_bullets,
+                           cut_glued_topic_numbers, detect_language, drop_listed_todos_from_summary, drop_meeting_meta_bullets, drop_placeholder_items, drop_recap_echo_bullets,
                            drop_duplicate_bullets,
                            drop_unspoken_years, fill_missing_topics, strip_unspoken_example_labels,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
@@ -1394,6 +1394,7 @@ class MeetingJobManager:
             raw_markdown = _safe_post(drop_listed_todos_from_summary, raw_markdown)   # 摘要裡已列在待辦表的「待辦事項是…」半句拿掉
             raw_markdown = _safe_post(cut_glued_topic_numbers, raw_markdown)   # 條目尾巴黏著的「第N個議題」
             raw_markdown = _safe_post(drop_placeholder_items, raw_markdown)   # 已有條目的段落裡殘留的「- None」
+            raw_markdown = _safe_post(drop_meeting_meta_bullets, raw_markdown)   # 英文的「- Meeting held on…」「- Attendees:」
             raw_markdown = _safe_post(drop_recap_echo_bullets, raw_markdown)   # 摘要裡重述決議／待辦的「總結：…」
             raw_markdown = _safe_post(drop_duplicate_bullets, raw_markdown)   # 摘要與決議寫了同一條
             minutes_lang = detect_language(transcript)
@@ -1485,6 +1486,7 @@ class MeetingJobManager:
                 raw_markdown = _safe_post(drop_listed_todos_from_summary, raw_markdown)
                 raw_markdown = _safe_post(cut_glued_topic_numbers, raw_markdown)
                 raw_markdown = _safe_post(drop_placeholder_items, raw_markdown)
+                raw_markdown = _safe_post(drop_meeting_meta_bullets, raw_markdown)
                 raw_markdown = _safe_post(drop_recap_echo_bullets, raw_markdown)
                 raw_markdown = _safe_post(drop_duplicate_bullets, raw_markdown)
                 minutes_lang = detect_language(transcript)

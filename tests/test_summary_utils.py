@@ -1308,3 +1308,18 @@ def test_strip_topic_name_placeholder_from_map_notes():
     # 只剩「Decided」才拿掉；有內容的決議留著
     assert summary_utils.strip_unspoken_example_labels("- Decided\n- We decided to buy 3 servers", "we decided to buy 3 servers",
                                                        mm.MAP_EXAMPLE_LABELS) == "- We decided to buy 3 servers"
+
+
+def test_drop_meeting_meta_bullets_removes_invented_meeting_info():
+    # 11-18 越南語 e2e：英文提示詞看不懂逐字稿，照範本編會議資訊
+    md = ("## 摘要\n- Meeting held on 2023-05-15\n- Key Participants: Dr. Nguyen, Mr. Tran\n- Duration: 30 minutes\n"
+          "- Academic transition and student experience\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 無 | - | - |\n\n## 決議\n- 無")
+    out = summary_utils.drop_meeting_meta_bullets(md)
+    assert "Meeting held" not in out and "Participants" not in out and "Duration" not in out
+    assert "- Academic transition and student experience" in out and out.endswith("## 決議\n- 無")
+    # 一般英文條目不動（Timeline／Date 開頭但不是會議資訊）；整段只剩會議資訊行時不動
+    keep = "## 摘要\n- Timeline: launch moved to March 3\n- Dates for training are fixed\n\n## 決議\n- 無"
+    assert summary_utils.drop_meeting_meta_bullets(keep) == keep
+    only = "## 摘要\n- Attendees: A, B\n\n## 決議\n- 無"
+    assert summary_utils.drop_meeting_meta_bullets(only) == only
+    assert summary_utils.compact_notes("- Attendees: A, B, C\n- Meeting date: 5/15\n- Budget cut to 3 servers") == "- Budget cut to 3 servers"
