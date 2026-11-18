@@ -78,6 +78,10 @@ class ForeignLangGuard:
     def __init__(self, clock=None) -> None:
         self._memory = LanguageMemory(clock=clock) if clock is not None else LanguageMemory()
         self._skipped = 0
+        # 錄音已結束、只剩尾端切片 (meeting_minutes 收尾時設)：還不是外語會議就不再比對。
+        # 2026-11-18 21:56 podcast：最後一片底噪「.」標 <|en|> → 送比對，stt_worker 這時才載入 Whisper (5.2 s)，
+        # 尾端等待 6.4 s (同一份 podcast 前 12 場 0.9–1.6 s)。最後一兩片少一票不影響即時稿；高精度稿用前後各 4 片判斷。
+        self.tail_only = False
 
     def foreign_mode(self) -> bool:
         return self._memory.dominant() == "foreign"
@@ -87,6 +91,8 @@ class ForeignLangGuard:
             return False
         if self.foreign_mode():
             return True
+        if self.tail_only:
+            return False
         if sv_lang not in PROBE_LANGS:
             return False
         if self._memory.dominant() == "ok" and self._memory_full_ok():

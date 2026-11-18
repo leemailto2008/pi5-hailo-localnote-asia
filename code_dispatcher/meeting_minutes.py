@@ -1117,6 +1117,7 @@ class MeetingJobManager:
                 self.notify_status_update()
                 return
             rec_finish_time = time.time()
+            lang_guard.tail_only = True   # 尾端切片：還不是外語會議就不再載入 Whisper 比對 (見 sv_lang_guard.ForeignLangGuard)
             actual_record_sec = max(1.0, round(rec_finish_time - t0, 1))
             duration_sec = int(round(actual_record_sec))
             self.status.total = float(duration_sec)

@@ -52,6 +52,18 @@ def test_guard_single_odd_slice_does_not_switch():
     assert guard.decide("<|yue|>", TH_SV, TH_WH) is None
 
 
+def test_guard_tail_slices_skip_probe_unless_meeting_is_foreign():
+    """錄音結束後的尾端切片：中文會議最後一片底噪「.」標 <|en|> 不再載入 Whisper (11-18 podcast 尾端等待 6.4 s)；外語會議照比對。"""
+    guard = g.ForeignLangGuard(clock=lambda: 0.0)
+    guard.tail_only = True
+    assert not guard.should_probe("<|en|>") and not guard.should_probe("<|yue|>")
+    foreign = g.ForeignLangGuard(clock=lambda: 0.0)
+    for _ in range(3):
+        foreign.decide("<|en|>", DE_SV, DE_WH)
+    foreign.tail_only = True
+    assert foreign.foreign_mode() and foreign.should_probe("<|en|>") and foreign.should_probe("<|zh|>")
+
+
 def test_guard_probes_less_once_meeting_is_clearly_supported():
     guard = g.ForeignLangGuard(clock=lambda: 0.0)
     for _ in range(8):
