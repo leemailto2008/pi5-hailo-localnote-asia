@@ -20,6 +20,8 @@
   備份 .deploy_backup/20261118_140323；/health 正常，degraded 只是 redis 沒連上，部署前就這樣；.229 即時稿設定原本就是 whisper，沒改）。.229 之後仍不碰。
 - 11-18 晚上（#53）：即時稿 Whisper 模式 GS3 30 分 swap 超標，在 864f8e9 上重測 2 場（含服務重啟後立刻跑）都 PASS（swap +0／+10 MB），重現不了 → 不改；
   11-17 超標的場次都緊接在 hailo-ollama 壞掉或重新載入之後，記為觀察（swap 是 zram，不寫 SD）。
+- 11-18 夜（#54）：紀要兩路同時改成「Hailo 閒著時也做 CPU 手上那段，先寫完的用」（1c0ac78）；錄音結束後的尾端切片不再為外語比對載入 Whisper（aae60ea）。
+  podcast 紀要 74.1 → 46.6 s、藍牙 30 分 80.2 → 50.4 s（各 1 場）；GS3 30 分、藍牙 30 分 suite 都 PASS 20/20。
 
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
 - 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
@@ -862,6 +864,24 @@
    結論：864f8e9 上 2 場（含「重啟後立刻跑」）都沒重現，不改程式、不改 swappiness（沒有可驗證的好處）。11-17 超標的 4 場（65／500／97／174）當時都有異常操作：
    65 那場 Hailo LLM 壞掉、紀要全走 CPU；500 那場緊接在手動停 api → restart hailo-ollama → 起 api 之後；97 那場緊接在回滾 9c5b338 之後（20:37 回滾、20:38 開跑），174 那場依 agent 對歷史場次的整理也在服務重啟後 10 分內開跑（與 r2 同樣是重啟後立刻跑卻沒重現 → 差別推測是 hailo-ollama 也重新載入，未驗證）。
    → 記為觀察：「hailo-ollama／服務剛重新載入後馬上開會，即時稿 Whisper 時可能多吃 zram swap（數十～數百 MB，zram 不傷 SD）」。工具在 .cc_scratch/wh_swap/（memrec.py、an3.py、loadtest.sh）。
+54. 11-18 晚上（loop，使用者去運動）：864f8e9 回歸補跑＋兩個修改。
+   864f8e9 回歸：藍牙 30 分（bt_ab/20261118_1938_30min_864f）suite FAIL 1/20 swap_growth 79（開跑時 swap 只有 10 MB，前 4 場 285–321 MB 開跑、增量 0–26；
+   推測是傍晚 loadtest 清空 zram 後冷頁重新換出，未驗證），其餘 arrival 100、dropout 0、cer_num 0.0326、facts 0.9598、recap 1.0、紀要 80.2 s、5 人
+   （9c5b 3 人＝兩人合成一大群；864f 5 人＝那兩人分開＋52 s 小群；分說話人程式沒改 → 同 #47 已知限制）。
+   podcast 30 分（real/20261118_2016_tpod30）2 人、RAM 4,058、swap +0，stt_tail 1.4 s，但紀要 74.1 s（前 10 場 46.7–64.2 s）。en_short（ens_864f）PASS：cer 0.0332、紀要 48.6 s。
+   (1) 紀要慢的原因（journal）：錄音後剩 2 段，Hailo 段 9 18.7 s，CPU 拿段 10 做 55 s 沒寫出重點 → 交回 Hailo 再 18 s。
+       journal 11-16～18 的 36 場兩路整理：CPU 一段 45–116 s（中位 59）、Hailo 10–53 s（中位 35）；只給 Hailo 的推估 21 場較慢、15 場較快 → 不能直接不給 CPU。
+       → 1c0ac78：Hailo 沒有新段可拿、CPU 還在做某段時，Hailo 也做同一段（每段最多一次），先寫出重點的用、另一路取消；兩路都沒寫出就交回待辦。
+   (2) 下面 1c0ac78 那場 podcast stt_tail 6.4 s（前 12 場 0.9–1.6 s）的原因（journal 21:56:27–34）：最後一片底噪「.」標 <|en|> → sv_lang_guard 送 Whisper 比對 → stt_worker 這時才載入 Whisper 5.2 s。
+       11-18 外語資料（sv_all 2,202 片）底噪片有 36 片（只有標點）Whisper 判外語 → 不能一律跳過底噪片。
+       → aae60ea：錄音結束後的尾端切片、這場還不是外語會議時不比對（外語會議照舊；高精度稿用前後各 4 片）。
+   pytest（Windows）740 passed（3 個既有 Windows socket 失敗）。驗證：
+   - podcast 30 分（1c0ac78，real/20261118_2126_tpod30）：段 10 Hailo 21.9 s 先寫完、CPU 收工 → 整理 40.2 s、紀要 46.6 s、RAM 3,981、swap max 37、2 人
+     這場 stt_tail 6.4 s → 見 (2)，aae60ea 之後的尾端看下面藍牙那場。
+   - GS3 30 分（1c0ac78，acoustic_gs3/20261118_221539_30min）suite PASS 20/20：cer_num 0.0164、fact 0.9669、recap 1.0、topic 1.0、紀要 68.0 s（歷次 59–79）、
+     stt_tail 0.7、RAM 3,999、swap +0；這場 CPU 65.9 s 先寫完、Hailo 那份 25.9 s 時取消（跟原本一樣）。
+   - 藍牙 30 分（aae60ea，bt_ab/20261118_2256_30min_aae6）suite PASS 20/20：arrival 100、dropout 0、cer_num 0.0276、facts 0.9645、recap 1.0、
+     紀要 50.4 s（段 6 Hailo 25.5 s 先寫完、CPU 收工；864f 那場 80.2 s）、stt_tail 1.2、RAM 4,059、swap 34→+0、65.5 °C、4 人。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
