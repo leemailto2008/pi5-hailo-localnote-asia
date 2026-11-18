@@ -18,6 +18,8 @@
   GS3 30 分與英文 en_long 回歸都 PASS。.228 部署 864f8e9、即時稿 sensevoice。
 - 11-18 14:03 使用者要求更新 .229 給別人測：主 session 把 b2994ba（含 9edff6c、c4bddc3、731876e）部署到 .229（raspi543，沒用 LN_DEPLOY_FORCE，部署前 state=idle；
   備份 .deploy_backup/20261118_140323；/health 正常，degraded 只是 redis 沒連上，部署前就這樣；.229 即時稿設定原本就是 whisper，沒改）。.229 之後仍不碰。
+- 11-18 晚上（#53）：即時稿 Whisper 模式 GS3 30 分 swap 超標，在 864f8e9 上重測 2 場（含服務重啟後立刻跑）都 PASS（swap +0／+10 MB），重現不了 → 不改；
+  11-17 超標的場次都緊接在 hailo-ollama 壞掉或重新載入之後，記為觀察（swap 是 zram，不寫 SD）。
 
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
 - 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
@@ -848,6 +850,18 @@
      外語 e2e（864f8e9，foreign/minutes/20261118_173939_new864f，mins_864f/）：vi 紀要不再有編的日期／出席者／時長（數字不在逐字稿 7 → 0 行；剩「Topic: Personal Reflection and Academic Journey」
      與逐字稿主題相符、待辦負責人「A」仍是編的）；de 決議不再有「- Decided」（剩 3 條議題名稱）；id 摘要 3 條出自逐字稿（Forensik test、Jokowi）。
    - 18:03 .228 停在 864f8e9、即時稿設定 sensevoice、state done。
+53. 11-18 傍晚～晚上（使用者去運動、明早回來；不要問、自測改到 DONE）：即時稿 Whisper 模式 GS3 30 分 swap_growth 超標（#49、#51 新舊碼都出現）。
+   背景 agent 查了 4 輪都被執行環境強制交回（它會自己恢復，18:47 還自行重啟 api 開 r2）→ 18:50 停掉 agent，改由主 session 直接做。
+   已確認：suite 的 swap_growth = 整場 mon 取樣 swap 用量最大值減第一筆（tools/e2e/e2e.py:105，SwapTotal−SwapFree）；.228 的 swap 是 zram（/dev/zram0 2 GB、zstd），不寫 SD；
+   swappiness 60、MGLRU 開、核心沒有 PSI。CPU Ollama 0.40.4 載入不用 mmap（journal「disabling mmap … reason=cpu」、CPU_REPACK 1,834 MiB）→ 每次紀要 CPU 那一路（keep_alive 0）複製約 1.9 GB 匿名記憶體。
+   864f8e9 重測（被動記錄 memrec，每 2 s 讀 /proc）：
+   - r1（acoustic_gs3/20261118_181039_30min，api 重啟後 77 分開跑）suite PASS 20/20：swap_growth 0、cer_num 0.1398、fact 0.9291、recap 0.8333、紀要 73.5 s；載入約 20 s、pgscan_anon 0、pswpout 0。
+   - r2（20261118_184817_30min，18:47 重啟 api 後立刻開跑）suite PASS 20/20：swap_growth 10（zram 實存 3 MB）、cer_num 0.1348、fact 0.9362、recap 0.6667（≥ 門檻）、紀要 60.6 s、RAM 峰值 4,042 MB、67.8 °C；
+     錄音結束 t≈1799–1811 s 匿名 +1.75 GB、只有 t=1811 一筆 pswpout 604 頁。
+   - 離線 loadtest（閒置、swappiness 60、清空 swap、模型檔先進 page cache）：載入 7.4 s、swap 0→0 →「載入太快來不及回收」單獨不會造成換出，原假設不成立。
+   結論：864f8e9 上 2 場（含「重啟後立刻跑」）都沒重現，不改程式、不改 swappiness（沒有可驗證的好處）。11-17 超標的 4 場（65／500／97／174）當時都有異常操作：
+   65 那場 Hailo LLM 壞掉、紀要全走 CPU；500 那場緊接在手動停 api → restart hailo-ollama → 起 api 之後；97 那場緊接在回滾 9c5b338 之後（20:37 回滾、20:38 開跑），174 那場依 agent 對歷史場次的整理也在服務重啟後 10 分內開跑（與 r2 同樣是重啟後立刻跑卻沒重現 → 差別推測是 hailo-ollama 也重新載入，未驗證）。
+   → 記為觀察：「hailo-ollama／服務剛重新載入後馬上開會，即時稿 Whisper 時可能多吃 zram swap（數十～數百 MB，zram 不傷 SD）」。工具在 .cc_scratch/wh_swap/（memrec.py、an3.py、loadtest.sh）。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
