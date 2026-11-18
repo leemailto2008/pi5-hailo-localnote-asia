@@ -1,6 +1,15 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
 互動 session 進行中，至 2026-11-19 09:00（台北；11-18 09:05 CLI 續期；11-17 09:45 使用者改用 Claude CLI 在本機工作，交接文件 to_claude_cli.md；CLI 工作時每輪續期這行；過期代表沒人在做，每小時排程接手）
 
+## 11-18 摘要（給使用者看；細節在 #50）
+- SenseVoice（預設即時稿與高精度稿）遇到德／西／法／印尼／越／泰語會輸出近似英文的亂碼（例：法「à la forme négative」→「Allaform negative Lu」）。
+  模型只支援中／英／粵／日／韓，語言標記本身分不出來 → c4bddc3：SenseVoice 標英文／粵語的片另外用 Hailo Whisper（NPU）比對，
+  這場最近 8 片多數是外語時改用 Whisper 的文字；高精度稿用整場前後片判斷。
+- 結果：GS3 喇叭外語實測，即時稿改成原語言 舊 0 → 新 48／53 片（德 11／13、西 8／8、法 8／8、泰 7／7、越 7／8、印尼 7／9）；
+  中文、英文、粵語、日、韓、台語、中英夾雜在 2,202 片離線模擬與重放中 0 片被換、高精度稿一字不差。GS3 30 分（SenseVoice）與英文 en_long 回歸 PASS。
+- 限制：每場第一次比對要載入 Whisper，首片會晚約 8 s；印尼語 Whisper 有時直接寫成英文翻譯；網頁選 Whisper 即時稿時高精度稿外語仍是亂碼。
+- .228 部署 c4bddc3（11-18 09:56）。
+
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
 - 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
   真正修得到的根因是「輸出含假名／諺文就一律改用中文重解」把真正的日／韓文變成亂碼中文（常夾英文翻譯）→ 731876e 改成只有這場會議主要是中文時才重解：
@@ -731,6 +740,43 @@
        → 是「即時稿選 Whisper」本來就有的（高精度稿沒有即時 SenseVoice 可沿用，要整段重新辨識約 245 片，和紀要兩路同時擠在一起），不是這次修改造成；
        70cbe6e 在中文會議裡沒有作用到任何一片（三場逐字稿都沒有假名／諺文）。swap 這項沒改，列入待辦（即時稿 Whisper 時可考慮高精度稿等紀要做完再跑）。
    - 21:47 .228 停在 70cbe6e、即時稿設定已切回 sensevoice。
+50. 11-18 交辦：預設即時稿／高精度稿 SenseVoice 遇到不支援的語言（德／西／法／印尼／越／泰）輸出近似英文亂碼——用真實外語自測改到最佳。
+   測資同 #49（.cc_scratch/foreign_audio，44 段×3 分）＋對照（meeting_5min、en_short／en_long、英文 YouTube 4 段、真人中英 podcast 4 段、GS3 30 分／podcast／藍牙 30 分 中文 683 片），
+   同一份切片的 SenseVoice（sv_all.jsonl，2,202 片，tools/sv_lang_survey.py）與 #49 的 Hailo Whisper 輸出（res_base9c5b／res_base2／res_new）。
+   - 現況（9c5b338／70cbe6e）：SenseVoice 語言標記 de 102／103、es 93／105、fr 96／102、id 78／101 標 en；th yue 62、en 26、zh 17；vi yue 65、en 12。
+     輸出是近似英文的亂碼（德「Then I' here, Limo on Alice Muley here.」、法「Allaform negative Lu.」）或亂碼粵語字。
+     對照：中文 854 片標 zh（en 2 片）、真人中英 podcast 107 片全 zh、英文 196 片全 en、粵 79 全 yue、日／韓全 ja／ko → **語言標記本身分不出來**；
+     情緒 EMO_UNKNOWN 在真英文也 84／85 → 也不能用。sherpa-onnx 沒有信心分數（refine_transcript 11-14 註記：ys_log_probs 是空的）。
+   - 根因：SenseVoiceSmall 只訓練了中／英／粵／日／韓，其他語言被硬套成最接近的語言 token（模型本身，不是設定）。
+   - 能用的訊號（有數據）：Hailo Whisper 同一片會寫原語言（de／es／fr 拉丁字母 96–105 片、th 泰文 104／107、vi 帶聲調拉丁 74／83）。
+     SenseVoice 標 en 時，Whisper 的英文單字有幾成出現在 SenseVoice 輸出裡：英文 196 片 q10 0.90、中位 1.0；外國口音中文 q10 0.62；德／西／法／印尼 q90 ≤ 0.12（中位 0）。
+     但單片會誤傷：台語 nan 有 5／106 片 Whisper 冒泰文、韓文 3 片拉丁亂碼 → 要會議層級多數決。
+   - c4bddc3 feat(asr)：code_dispatcher/sv_lang_guard.py
+     - 比對時機：SenseVoice 標 en／yue 的片，或這場已判定外語時的每一片；最近 8 片都判「支援」時每 4 片才比對一次。Whisper 只走 NPU（stt_worker），NPU 不能用就照用 SenseVoice，不退 CPU。
+     - 判外語：Whisper 寫泰文；或寫拉丁字母而 SenseVoice 寫中文字；或 SenseVoice 標 en 但 Whisper 單字不到三成出現在 SenseVoice 輸出（五成以上判支援）。
+     - 即時稿：最近 8 片六成以上、至少 3 片判外語（沿用 hailo_whisper.engine.LanguageMemory）時，判外語的片顯示 Whisper 文字；live_asr.json 存 wtext。
+     - 高精度稿（refine_transcript.apply_whisper_choices）：前後各 4 片有判斷的片六成以上、至少 3 片判外語才換；SenseVoice 輸出被當底噪丟掉的片也補回；字的時間平均分在 SenseVoice 字的範圍。
+     - PI5_SV_FOREIGN_GUARD=0 關閉。pytest（Windows）731 passed、3 failed（stt_worker／npu_share Windows socket，改前也失敗）；新增 tests/test_sv_lang_guard.py 9 項。
+   - 離線模擬（tools/sv_lang_survey.py sim，同一份資料）：即時稿改用 Whisper 的片 de 94／103、es 93／105、fr 90／102、id 80／101、th 96／107、vi 70／83；
+     高精度稿 de 102、es 101、fr 98、id 88、th 104、vi 76。對照組 zh 854、zh_en 107、en 85＋英文 YouTube 111、yue 79、ja 52、ko 104、nan 106、外國口音中文 103 **0 片被換**；
+     中文 854 片只需比對 2 片。
+   - .228 高精度稿離線重放（.cc_scratch/sv_lang/replay_refine.py，同一份音檔新舊碼跑 refine_transcript.transcribe）：en_long、meeting_5min、粵、韓、台語、外國口音中文**輸出一字不差**；
+     德／西／法／印尼／泰／越由亂碼變原語言（法「Allaform | negative | Lu.」→「à la forme négative, on utilise ne pas」；印尼「Pugian forensic Pla lakuan…」→「…sehingga tidak perlu pengujian forensik baru…」）。
+   - 09:56 部署 c4bddc3 到 .228（備份 .deploy_backup/20261118_095612）。
+   - GS3 喇叭聲學新舊對比（sv_mix9：de 90 s＋es／fr／th／vi／id／中文 meeting_5min／英文 en_short／粵各 60 s，即時稿 SenseVoice；foreign/acoustic_sv/）：
+     即時稿改用 Whisper 的片 舊（20261118_094451_old70cb）0 → 新（20261118_095636_newc4bd）de 11／13、es 8／8、fr 8／8、th 7／7、vi 7／8、id 7／9；
+     中文 7、英文 8、粵 8 片 0 片被換。高精度稿德文段由「If you have take a up click on some request…」變成「Also, wir wollen eine vernünftige soziale Versorgung…」。
+   - GS3 30 分回歸（預設 SenseVoice，acoustic_gs3/20261118_101259_30min）suite **PASS**（20 項全過）：cer_num 0.0167、fact 0.9622、recap 1.0、topic 1.0、紀要 63.3 s、errors 0、
+     RAM 峰值 3,750 MB、swap +0、65.5 °C、stt_sv_ratio 1.0、首片推論時差 0.4 s；247 片只比對 1 片（標 yue 的中文句，Whisper 寫中文 → 照用 SenseVoice）。
+     對照 70cbe6e（11-17 20:04）0.0183／0.9645／1.0／1.0／57.6 s／3,594 MB／+28。
+   - 英文 en_long 回歸（20261118_104838_en_c4bd）suite PASS：cer 0.0684、fact 1.0、recap 1.0、topic 1.0、紀要 80.3 s、errors 0；45 片比對 17 片、0 片被換（逐字稿就是 SenseVoice 原輸出；
+     9c5b338 那次 cer 0.0616 是聲學錄音的差異）。
+   - 已知限制（沒改）：
+     - 每場第一次比對要在 stt_worker 載入 Whisper：外語聲學那場首片推論時差 0.4 → 8.0 s（之後跟得上，stt_audio_delay 0.6 s）；中文會議很少比對（30 分 1 片）。
+     - 即時稿每場外語開頭約 2 片（多數決還不夠）仍是 SenseVoice 亂碼；高精度稿會補回。
+     - Whisper-Small 本身的品質：印尼語常寫成英文翻譯（聲學那場 id 2／9 片）、泰文錯字多；仍比 SenseVoice 亂碼好。
+     - 網頁選「即時稿 Whisper」時，高精度稿仍整段用 SenseVoice 重新辨識（沒有 SenseVoice 即時結果可比對）→ 外語高精度稿仍是亂碼。
+     - 紀要整理（qwen3:1.7b）對德／西／法等外語逐字稿的品質沒有量測。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
