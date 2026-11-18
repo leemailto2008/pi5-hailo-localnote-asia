@@ -9,6 +9,8 @@
   中文、英文、粵語、日、韓、台語、中英夾雜在 2,202 片離線模擬與重放中 0 片被換、高精度稿一字不差。GS3 30 分（SenseVoice）與英文 en_long 回歸 PASS。
 - 限制：每場第一次比對要載入 Whisper，首片會晚約 8 s；印尼語 Whisper 有時直接寫成英文翻譯；網頁選 Whisper 即時稿時高精度稿外語仍是亂碼。
 - .228 部署 c4bddc3（11-18 09:56）。
+- 11-18 中午（#51）：網頁選 Whisper 即時稿時外語高精度稿仍是亂碼 → 9edff6c：Whisper 即時稿每片的文字存起來，高精度稿照舊整段 SenseVoice，
+  對到時間後同樣規則換成 Whisper 文字。GS3 喇叭實測外語段變原語言；中文／英文／粵／韓／台語離線重放一字不差；GS3 30 分（SenseVoice）PASS。.228 部署 9edff6c。
 
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
 - 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
@@ -777,6 +779,32 @@
      - Whisper-Small 本身的品質：印尼語常寫成英文翻譯（聲學那場 id 2／9 片）、泰文錯字多；仍比 SenseVoice 亂碼好。
      - 網頁選「即時稿 Whisper」時，高精度稿仍整段用 SenseVoice 重新辨識（沒有 SenseVoice 即時結果可比對）→ 外語高精度稿仍是亂碼。
      - 紀要整理（qwen3:1.7b）對德／西／法等外語逐字稿的品質沒有量測。
+51. 11-18 交辦（任務 1）：網頁選「即時稿 Whisper」時，外語（德／西／法／印尼／越／泰）的高精度稿仍是 SenseVoice 亂碼。
+   - 根因（讀碼＋實測）：meeting_minutes 只在有 src=sv 切片時才存 live_asr.json；即時稿 Whisper 的場次沒有 SenseVoice 切片 → 不存 →
+     refine 整段 SenseVoice 重新辨識（live_slices=None）→ apply_whisper_choices 不會執行。
+     舊碼實測（c4bddc3、即時稿 Whisper、GS3 喇叭 sv_mix9，foreign/acoustic_sv/20261118_113952_oldc4bd_wh）：refine 沿用 0／重解 79 片，
+     德／西／法／泰／越／印尼段全是亂碼（「Also. On some made up house under before…」）。
+   - 9edff6c fix(refine)：Whisper 即時稿每片記 wtext，錄音結束存 <stem>.live_whisper.json（位置＋Whisper 文字；PI5_REFINE_LIVE_WHISPER_FILE 可指定）。
+     refine_transcript.apply_whisper_live：高精度稿照舊用 pause_slices 整段 SenseVoice 辨識（**中文等輸出路徑完全不動**），
+     每片即時切片依時間對到同時段的 SenseVoice 輸出（語言標記取重疊最長的片、文字取時間落在範圍內的字），照即時稿 ForeignLangGuard 的比對時機
+     （標 en／yue 或已判外語；遺忘時間用錄音時間）留下 Whisper 文字，再用 refine_whisper_choices（前後各 4 片、六成以上、至少 3 片）決定換哪些片；
+     要換的片把範圍內的 SenseVoice 字換成 Whisper 文字（字的時間平均分在被換掉的字的範圍）。沒有要換的片原樣回傳。
+     pytest（Windows）733 passed、3 failed（stt_worker／npu_share Windows socket，改前也失敗）；新增 2 項。
+   - 離線模擬（同一份 2,202 片，.cc_scratch/foreign_next/sim_wlive.py）：改用 Whisper de 102／103、es 96／105、fr 95／102、id 81／101、th 103／107、vi 76／83；
+     zh 854、zh_en 107、en 85、yue 79、ja 52、ko 104、nan 106、外國口音中文 103 片 **0 片被換**（SenseVoice 模式 #50 是 de 102、es 101、fr 98、id 88、th 104、vi 76）。
+   - .228 離線重放（replay_wlive.json，同一份音檔 refine_transcript.transcribe，舊＝沒有 Whisper 文字／新 aligned＝即時切點同高精度稿／新 shift＝即時切點後移 1.5 s）：
+     en_long、zh meeting_5min、yue、外國口音中文、台語、韓 6 份**一字不差**（aligned、shift 都是）；德 ×2、西、法、印尼、泰、越由亂碼變原語言
+     （法「Allaform | negative | Lu」→「…à la forme…」；越「冇合講咧嗯…」→「Đừng bỏ học con á…」）。
+   - 12:08 部署 9edff6c 到 .228（備份 .deploy_backup/20261118_120802）。
+     新碼實測（即時稿 Whisper、GS3 sv_mix9，acoustic_sv/20261118_120831_new9edf_wh）：存 live_whisper.json 79／80 片；高精度稿德／西／法／泰／越／印尼段是原語言
+     （德「Must rechnen, sie kriegen mich bald Neuwahlen…」、西「…en lo que se hace en España…」）。同一份錄音離線重放有／沒有 Whisper 文字：
+     中文／英文／粵語段（393 s 起）53 句一字不差，外語段 67 → 105 句。
+   - GS3 30 分回歸（預設 SenseVoice，acoustic_gs3/20261118_123214_30min）suite **PASS 20／20**：cer_num 0.0176、fact 0.9645、recap 1.0、topic 1.0、紀要 65.8 s、
+     errors 0、RAM 峰值 3,612 MB、swap +7、63.9 °C、stt_sv 253／253、高精度稿沿用 253 片、4 人（c4bddc3：0.0167／0.9622／1.0／1.0／63.3 s／3,750 MB／+0）。
+   - #49 的 swap 待辦查證：Whisper 30 分（20261117_192905）swap 392 → 789 MB 發生在 1797–1803 s（錄音結束、紀要剛開始），高精度稿 1855.7 s 才開始
+     （紀要 1855.3 s 做完之後；紀要兩路同時會用 CPU 時本來就等紀要做完）→「等紀要做完再跑高精度稿」已經是現況，swap 不是高精度稿造成，這條建議不適用。
+     成因推測是紀要開始時 CPU Ollama 那一路載入模型（未驗證），沒改。
+   - 限制：Whisper 即時稿被 -55 dBFS／Silero 擋掉的片沒有 Whisper 文字，照用 SenseVoice；外語段說話人數偏多（sv_mix9 19 人，混合測資本來就不準）。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
