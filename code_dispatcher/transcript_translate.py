@@ -52,6 +52,11 @@ def in_target_language(text: str, target: str) -> bool:
     return cjk > 0 and cjk * 2 >= latin
 
 
+def untranslated_left(translation: str, target: str) -> bool:
+    """翻成英文的結果還夾著中文字 (模型把職稱、人名留成中文)。"""
+    return target == "en" and bool(_CJK_RE.search(translation))
+
+
 def _split_long(sentence: str, limit: int) -> List[str]:
     out = []
     while len(sentence) > limit:
@@ -217,17 +222,20 @@ async def translate_transcript(text: str, target: str,
             return False
         got = parse_output(out, len(chunk))
         for n, (idx, src) in enumerate(chunk, 1):
-            if n in got:
+            if n in got and not untranslated_left(got[n], target):
                 done[idx] = got[n]
                 continue
-            # 對不上的單位單獨重翻一次 (模型偶爾合併或跳過一行)；還是不行就保留原文
+            # 對不上的單位、或翻英文還夾著中文字 (11-19 GS3 30 分實測 246 行有 2 行留下「组长」) 單獨重翻一次；
+            # 重翻還是沒有就用多行請求的結果，再沒有才保留原文
             one = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
                 return False
             single = parse_output(one, 1).get(1)
-            if single:
+            if single and not untranslated_left(single, target):
                 done[idx] = single
+            elif got.get(n) or single:
+                done[idx] = got.get(n) or single
             else:
                 stats["fallback_units"] += 1
         return True
