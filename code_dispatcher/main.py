@@ -1980,14 +1980,19 @@ async def post_translate_transcript(req: TranscriptTranslateRequest) -> Dict[str
     units = [(i, u) for i, u in enumerate(u for _s, us in parse_lines(req.text) for u in us)
              if not in_target_language(u, target)]
 
+    # 高精度逐字稿正在跑 (CPU SenseVoice＋CAM++，4 執行緒) 時只用 Hailo：翻譯的 CPU 那一路 Ollama 也吃滿 4 核 (11-19 實測約 360%)，
+    # 兩個一起跑兩邊都變慢。紀要生成中不能開始翻譯 (上面 409)，高精度稿在紀要之後才開跑，所以開始時看一次就夠。
+    use_cpu = not _refine_job.running
+
     async def runner(job: SingleJob) -> Dict[str, Any]:
         return await translate_transcript(
             req.text, target,
             on_progress=lambda done, total, partial: job.update(done=done, total=total, partial=partial),
             should_stop=is_any_recording_active,
+            use_cpu=use_cpu,
         )
 
-    return _translate_job.start(runner, to=target, done=0, total=len(group_chunks(units)), partial="")
+    return _translate_job.start(runner, to=target, done=0, total=len(group_chunks(units)), partial="", use_cpu=use_cpu)
 
 
 @app.get("/api/translate_transcript", tags=["Demo UI"])
