@@ -43,6 +43,7 @@ _FOREIGN_FUNCTION_WORDS = frozenset(
     "der das und ist nicht mit ein eine ich wir sie auf zu den dem von auch "  # 德
     "yang dan di ini itu dengan untuk tidak ada kami kita akan dari ke juga".split())   # 印尼
 _NUM_LINE_RE = re.compile(r"^\s*(\d+)\s*[|｜.、:：)）]\s*(.*)$")
+_LITERAL_N_RE = re.compile(r"^\s*N\s*[|｜]\s*(.*)$")
 
 SYSTEM = {
     "en": ("You are a professional interpreter. Translate each numbered line of a meeting transcript into natural English. "
@@ -286,6 +287,12 @@ def parse_output(out: str, n: int) -> Dict[int, str]:
         k, t = int(m.group(1)), m.group(2).strip()
         if 1 <= k <= n and t and k not in got:
             got[k] = t
+    if not got:
+        # 模型把格式裡的「N」照抄 (11-19 exp_first2：Hailo 第一段 19 行都寫成「N| …」，整段改成逐句重翻，多花約 4 分鐘)：
+        # 行數剛好等於輸入行數時依序對應
+        lit = [m.group(1).strip() for m in map(_LITERAL_N_RE.match, (out or "").splitlines()) if m]
+        if len(lit) == n and all(lit):
+            got = {k: t for k, t in enumerate(lit, 1)}
     return got
 
 

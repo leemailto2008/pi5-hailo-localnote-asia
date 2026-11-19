@@ -258,3 +258,9 @@ def test_cpu_lane_retries_with_hailo(monkeypatch):
     text = "\n".join("說話人1：" + "第三個議題是預算，" * 30 + "。" for _ in range(4))
     res = asyncio.run(tt.translate_transcript(text, "en", use_cpu=True))
     assert True in calls and not re.search(r"[一-鿿]", res["text"].replace("說話人", ""))
+
+
+def test_parse_output_literal_n_lines():
+    assert tt.parse_output("N| Good, let's begin.\nN| How many topics?", 2) == {1: "Good, let's begin.", 2: "How many topics?"}
+    assert tt.parse_output("N| only one line", 2) == {}
+    assert tt.parse_output("1| a\nN| b", 2) == {1: "a"}
