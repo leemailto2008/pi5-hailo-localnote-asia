@@ -265,11 +265,17 @@ MINUTES_SYSTEM_MSG_EN = (
     "if there are none, write \"- None\". If the meeting ends with a recap, follow the recap. No preamble, no explanations, "
     "do not repeat these rules, and stop after the three sections."
 )
+# 2026-11-19 改寫兩句 (.cc_scratch/foreign_next/exp_mapen.py，.228 Hailo 同一份逐字稿新舊各 2 次)：
+# 原本「each starting with "- Topic name:" (for example "- Training:"…)」qwen3:1.7b 常照填「- Topic name: Social Policy」就停
+# (只剩議題名稱的條目 de 16／16、es 8／16、id 12／16、vi 7／7)；換成「- <topic>: <…>」角括號寫法後會照抄「<topic>」「<Name>」
+# (124 條有 32 條)，所以兩句都不用角括號。結果：照抄佔位字 59→0 條；只剩議題名稱 de 1.00→0、es 0.50→0、fr 0.38→0、
+# id 0.75→0.25、vi 1.00→0.50、en_long 0.17→0.25；逐段重點的事實召回 en_long 0.70／0.60→0.70／0.63、en_short 0.79／0.79→0.84／0.84；
+# 帶數字的 54 條有 2 條多寫年份 (drop_unspoken_years 會拿掉)。代價：外語每段多 4–20 s；泰文 (Whisper 泰文本身是亂碼) 兩版都寫不對。
 MAP_SYSTEM_MSG_EN = (
     "You are a meeting secretary. List the key points of this part of the meeting in English only. Rules: one line per topic, "
-    "at most 4 lines, each under 20 words, each starting with \"- Topic name:\" (for example \"- Training:\", \"- Customer order:\", "
-    "\"- Budget:\"). Always keep the key numbers, dates, amounts, people and company names. Write an action as "
-    "\"<Name> will <action> by <deadline>\", and when the speakers decide or agree on something keep the word "
+    "at most 4 lines, each under 20 words, each line giving the topic name, a colon, then what was said about it. "
+    "Always keep the key numbers, dates, amounts, people and company names. Write an action with the person's real name, "
+    "what they will do and the deadline, and when the speakers decide or agree on something keep the word "
     "\"decided\" or \"agreed\". Leave out the meeting date, attendees and anything unrelated to a topic. If this part is the "
     "closing recap, list only what the recap mentions. No preamble, no explanations, do not repeat these rules, output only the list."
 )
