@@ -185,3 +185,10 @@ def test_chinese_numerals_in_translation_are_normalized_when_numbers_mismatch():
     assert tt.fix_numerals("22 people", "二十二人，一起", "zh") == "22人，一起"
     assert tt.fix_numerals("no numbers here", "沒有數字，一起", "zh") == "沒有數字，一起"          # 本來就對得上不動
     assert tt.prepare_source("11 billion profit, 200 million target, $800,000", "zh") == "110億 profit, 2億 target, $800,000"
+
+
+def test_english_number_words_in_translation_count():
+    # 11-19 完整逐字稿自測：中翻英「至少要做1輪迴歸測試」→「at least one round…」被當成數字遺漏、整句保留中文
+    assert tt.numbers_ok("至少要做1輪迴歸測試", "at least one round of regression tests")
+    assert tt.numbers_ok("3位工程師", "three engineers") and not tt.numbers_ok("3位工程師", "two engineers")
+    assert tt.numbers_ok("one of the issues", "其中一個問題")      # 原文的英文數字詞不要求譯文出現

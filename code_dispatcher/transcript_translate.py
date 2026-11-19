@@ -101,20 +101,29 @@ def _scaled(num: str, unit: Optional[str]) -> float:
     return round(v, 6)
 
 
-def number_values(text: str) -> List[float]:
-    """文字裡的數值 (換算萬／億／million…，去掉千分位)；「9月」的月份不算 (翻成英文會變成 September)。"""
+_EN_NUM_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                            "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_EN_NUM_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90})
+
+
+def number_values(text: str, words: bool = False) -> List[float]:
+    """文字裡的數值 (換算萬／億／million…，去掉千分位)；「9月」的月份不算 (翻成英文會變成 September)。
+    words=True 另外收英文數字詞 (one…twenty、thirty…ninety)：只用在譯文那邊 (11-19 中翻英「1輪」→「one round」被當成數字遺漏)；
+    原文那邊不收，「one of the」「no one」不該要求譯文出現 1。"""
     text = text or ""
     out = []
     for m in _NUM_RE.finditer(text):
         if not m.group(2) and text[m.end():m.end() + 1] == "月":
             continue
         out.append(_scaled(m.group(1), m.group(2)))
+    if words:
+        out += [float(_EN_NUM_WORDS[w]) for w in re.findall(r"[a-z]+", text.lower()) if w in _EN_NUM_WORDS]
     return out
 
 
 def numbers_ok(src: str, translation: str) -> bool:
     """原文的每個數值在譯文裡都出現 (次數也夠)。"""
-    have = number_values(translation)
+    have = number_values(translation, words=True)
     for v in number_values(src):
         if v in have:
             have.remove(v)
