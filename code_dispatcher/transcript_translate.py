@@ -397,11 +397,12 @@ async def _translate_flat(flat: Sequence[str], target: str,
                 done[idx] = single
                 continue
             other = None
-            if use_cpu and not cpu_first and not should_stop():
-                # Hailo 兩次都沒翻好 (11-19 v4：「Complete全员 training」兩次都夾中文)：換 CPU 的另一個模型 (qwen2.5:3b) 再試一次；
-                # 只在可以用 CPU 時 (沒在錄音、高精度逐字稿沒在跑)
+            if (cpu_first or use_cpu) and not should_stop():
+                # 同一個模型兩次都沒翻好：換另一個模型再試一次。Hailo 那路 (11-19 v4：「Complete全员 training」兩次都夾中文)
+                # 換 CPU qwen2.5:3b，只在可以用 CPU 時 (沒在錄音、高精度逐字稿沒在跑)；CPU 那路換 Hailo qwen3:1.7b
+                # (11-19 exp_first：CPU 那路把整段中文改寫成簡體中文、「第三個議題是…」單獨重翻仍回中文，GS3 1200 字 6 句沒翻)
                 alt = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
-                                      hailo_only=False, cpu_first=True, should_stop=should_stop)
+                                      hailo_only=cpu_first, cpu_first=not cpu_first, should_stop=should_stop)
                 if alt is None:
                     return False
                 other = fix_numerals(src, parse_output(alt, 1).get(1), target)

@@ -241,3 +241,20 @@ def test_mostly_translated_rejects_chinese_rewrite():
     assert tt.mostly_translated("Complete全员 training before August 15", "en")
     assert not tt.mostly_translated("已经安装了8个警示灯，并在8月15日之前完成全员复训。", "en")
     assert tt.mostly_translated("anything", "zh")
+
+
+def test_cpu_lane_retries_with_hailo(monkeypatch):
+    # 11-19 exp_first：CPU 那路把中文改寫成簡體中文、單獨重翻仍是中文；第三次要換 Hailo 的模型
+    calls = []
+
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        calls.append(cpu_first)
+        rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
+        if cpu_first:
+            return "\n".join(f"{k}| 第三个议题是预算" for k, _t in rows)
+        await asyncio.sleep(0.05)                      # Hailo 較慢，讓 CPU 那路分到段落
+        return "\n".join(f"{k}| The third topic is the budget" for k, _t in rows)
+    monkeypatch.setattr(tt, "_complete", complete)
+    text = "\n".join("說話人1：" + "第三個議題是預算，" * 30 + "。" for _ in range(4))
+    res = asyncio.run(tt.translate_transcript(text, "en", use_cpu=True))
+    assert True in calls and not re.search(r"[一-鿿]", res["text"].replace("說話人", ""))
