@@ -248,6 +248,12 @@ def test_compact_notes_drops_meta_lines_and_todo_time_formats():
     assert extract_todos(["工安：加裝8支警示燈，負責人是許經理，8-15日前完成"]) == ["| 工安：加裝8支警示燈 | 許經理 | 8-15日 |"]
 
 
+def test_compact_notes_drops_topic_echoed_as_content():
+    # 2026-11-19 德文 6 分 e2e：「- Kaffee-tee: Kaffee-tee.」內容跟議題一樣 → 只留一份；有內容的照舊
+    notes = "- Kaffee-tee: Kaffee-tee.\n- Training: 30 seats on Sept 2\n- 預算：預算。\n- 工安：加裝8支警示燈"
+    assert compact_notes(notes, max_len=120) == "- Kaffee-tee\n- Training: 30 seats on Sept 2\n- 預算\n- 工安：加裝8支警示燈"
+
+
 def test_assemble_prefers_topic_diversity():
     chunks = ["- 教育訓練：報名22人\n- 預算：80萬", "- 教育訓練：報名28人\n- 客戶訂單：200台", "- 總結：工安加裝警示燈"]
     md = assemble_long_minutes(chunks, max_summary=4, tail_lines=1)

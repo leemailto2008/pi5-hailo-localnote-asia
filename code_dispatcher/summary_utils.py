@@ -998,6 +998,21 @@ _EMPTY_NOTE_RE = re.compile(r"[：:]\s*(?:-|—|N/?A|None|(?:無相關|沒有相
 _FILLER_RE = re.compile(r"[啊呃嗯哎欸喔哦]")
 
 
+_ECHO_SPLIT_RE = re.compile(r"\s*[:：]\s*")
+
+
+def _drop_echoed_topic(t: str) -> str:
+    """「議題：內容」的內容跟議題一字不差 (不計大小寫、空白、標點) 時只留一份。
+    2026-11-19 外語 6 分 e2e (德文，英文逐段提示詞改成「topic name, a colon, then what was said」)：
+    SenseVoice 亂碼那幾片寫成「- Kaffee-tee: Kaffee-tee.」「- Limo and tudo: Limo and tudo.」。"""
+    parts = _ECHO_SPLIT_RE.split(t, maxsplit=1)
+    if len(parts) == 2:
+        key = lambda x: re.sub(r"[\W_]+", "", x).lower()
+        if key(parts[0]) and key(parts[0]) == key(parts[1]):
+            return parts[0].strip()
+    return t
+
+
 def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcript: bool = False) -> str:
     """map 階段輸出的確定性收斂：小模型常不守行數/字數規則，且 num_predict 用盡時會留下半句。
     保留前 max_lines 條、每條 <= max_len 字 (盡量切在標點)，去掉亂碼殘句與重複，統一為「- 」條列。
@@ -1009,6 +1024,7 @@ def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcr
             continue
         if not keep_transcript and len(_FILLER_RE.findall(t)) >= 2:
             continue
+        t = _drop_echoed_topic(t)
         if len(t) > max_len:
             cut = max((t.rfind(c, 0, max_len) for c in _CUT_AT), default=-1)
             t = t[:cut] if cut >= max_len // 2 else t[:max_len]
