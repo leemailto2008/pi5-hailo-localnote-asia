@@ -40,6 +40,7 @@ AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 
 # LLM backend selection (Hailo-10H qwen3:1.7b preferred, CPU Ollama fallback) lives in llm_backend.py
 from llm_backend import aiter_chat_stream, LLMError
+from transcript_translate import english_minutes_lines
 from meeting_glossary import apply_to_text as apply_meeting_glossary
 try:
     # 部署後 hailo_whisper 在 code_dispatcher 底下。NPU 每個切片 (約 6 秒) 已各自修過一次術語，
@@ -1419,6 +1420,7 @@ class MeetingJobManager:
             raw_markdown = _safe_post(drop_recap_echo_bullets, raw_markdown)   # 摘要裡重述決議／待辦的「總結：…」
             raw_markdown = _safe_post(drop_duplicate_bullets, raw_markdown)   # 摘要與決議寫了同一條
             minutes_lang = detect_language(transcript)
+            raw_markdown = await self._translate_foreign_minutes_lines(raw_markdown, minutes_lang)
             self.status.summary_stream = localize_minutes(raw_markdown, minutes_lang)
 
             llm_dur = round(time.time() - llm_start, 2)
@@ -1511,6 +1513,7 @@ class MeetingJobManager:
                 raw_markdown = _safe_post(drop_recap_echo_bullets, raw_markdown)
                 raw_markdown = _safe_post(drop_duplicate_bullets, raw_markdown)
                 minutes_lang = detect_language(transcript)
+                raw_markdown = await self._translate_foreign_minutes_lines(raw_markdown, minutes_lang)
                 self.status.summary_stream = localize_minutes(raw_markdown, minutes_lang)
                 parsed = localize_parsed(parse_markdown_minutes(raw_markdown), minutes_lang)
 
@@ -1902,6 +1905,21 @@ class MeetingJobManager:
             return merge_recap_into_minutes(ensure_sections(clean_summary_markdown(to_internal_sections("".join(accumulated)))),
                                             clean_transcript)
         return "## 摘要\n- 會議內容已完整保留於逐字稿\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 確認逐字稿細節 | 全體 | 待定 |\n\n## 決議\n- 錄音與逐字稿存檔完成"
+
+    async def _translate_foreign_minutes_lines(self, raw_markdown: str, minutes_lang: str) -> str:
+        """英文紀要裡夾著的外語條目 (法文會議常見) 翻成英文 (transcript_translate.english_minutes_lines，只用 Hailo)；
+        沒有這種條目時不叫模型；翻譯失敗保留原紀要。"""
+        if minutes_lang != "en":
+            return raw_markdown
+        try:
+            fixed, n = await english_minutes_lines(raw_markdown, should_stop=self._cancellation_token.is_set, use_cpu=False)
+        except LLMError as e:
+            print(f"[MeetingMinutes] 紀要外語條目翻英失敗，保留原文：{e}")
+            return raw_markdown
+        if n:
+            print(f"[MeetingMinutes] 英文紀要裡 {n} 條外語條目翻成英文")
+            self.status.metrics["minutes_foreign_lines"] = n
+        return fixed
 
     async def transcribe_region(self, job_id: Optional[str], start_sec: float, end_sec: float) -> Dict[str, Any]:
         """

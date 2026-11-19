@@ -264,3 +264,21 @@ def test_parse_output_literal_n_lines():
     assert tt.parse_output("N| Good, let's begin.\nN| How many topics?", 2) == {1: "Good, let's begin.", 2: "How many topics?"}
     assert tt.parse_output("N| only one line", 2) == {}
     assert tt.parse_output("1| a\nN| b", 2) == {1: "a"}
+
+
+def test_english_minutes_lines_translates_only_foreign_bullets(monkeypatch):
+    seen = []
+
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
+        seen.extend(t for _n, t in rows)
+        return "\n".join(f"{n}| Oil prices are falling" for n, _t in rows)
+    monkeypatch.setattr(tt, "_complete", complete)
+    md = ("## 摘要\n- Transition to renewable energy is urgent\n- 7 people\n"
+          "- **Pétrole et prix du pétrole** : le prix du pétrole est en baisse\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 無 | | |")
+    out, n = asyncio.run(tt.english_minutes_lines(md))
+    assert n == 1 and seen == ["**Pétrole et prix du pétrole** : le prix du pétrole est en baisse"]
+    assert "- Oil prices are falling" in out and "- 7 people" in out and "| 事項 | 負責人 | 時間 |" in out
+    seen.clear()
+    assert asyncio.run(tt.english_minutes_lines("## 摘要\n- Budget is 800,000\n- 7 people")) == ("## 摘要\n- Budget is 800,000\n- 7 people", 0)
+    assert seen == []

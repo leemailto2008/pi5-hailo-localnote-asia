@@ -525,3 +525,37 @@ async def translate_minutes(text: str, target: str, should_stop: Callable[[], bo
     for i, bullet, k in slots:
         out_lines[i] = bullet + done.get(k, units[k])
     return {"text": _localize("\n".join(out_lines), target).strip(), **res}
+
+
+_MD_BULLET_RE = re.compile(r"^(\s*[-*]\s+)(.+)$")
+
+
+def foreign_minutes_line(body: str) -> bool:
+    """英文紀要的條目明顯是別的拉丁字母語言 (法／西／德／越…)：有英文沒有的帶符號字母，或西／法／德／印尼文功能詞 2 個以上。
+    比 in_target_language 嚴：精簡的英文條目 (「7 people」) 不算，紀要後處理不為它多叫模型。"""
+    if _CJK_RE.search(body) or in_target_language(body, "en"):
+        return False
+    words = re.findall(r"[A-Za-z]+", body.lower())
+    return bool(_NON_EN_LATIN_RE.search(body)) or sum(w in _FOREIGN_FUNCTION_WORDS for w in words) >= 2
+
+
+async def english_minutes_lines(md: str, should_stop: Callable[[], bool] = lambda: False,
+                                use_cpu: bool = True) -> Tuple[str, int]:
+    """英文紀要 (內部 Markdown) 裡夾著的外語條目翻成英文 (11-19 法文 6 分 e2e：英文紀要裡有
+    「Pétrole et prix du pétrole : Prix du pétrole à 20…」等法文條目)。回傳 (新紀要, 翻了幾條)；沒有這種條目時不叫模型。"""
+    lines = (md or "").splitlines()
+    slots = []
+    for i, line in enumerate(lines):
+        m = _MD_BULLET_RE.match(line)
+        if m and foreign_minutes_line(m.group(2)):
+            slots.append((i, m.group(1), m.group(2).strip()))
+    if not slots:
+        return md, 0
+    res = await _translate_flat([b for _i, _p, b in slots], "en", None, should_stop, use_cpu)
+    done = res["done"]
+    n = 0
+    for k, (i, prefix, body) in enumerate(slots):
+        if k in done and done[k] != body:
+            lines[i] = prefix + done[k]
+            n += 1
+    return "\n".join(lines), n
