@@ -176,3 +176,12 @@ def test_chinese_target_output_still_english_is_retranslated(monkeypatch):
     res = asyncio.run(tt.translate_minutes("【摘要】\n• Training presentation scheduled for September 2\n• Budget review", "zh"))
     assert res["text"].splitlines()[1] == "• 9月2日舉辦簡報訓練"
     assert tt.untranslated_left("Budget review", "zh") and not tt.untranslated_left("AfD", "zh")
+
+
+def test_chinese_numerals_in_translation_are_normalized_when_numbers_mismatch():
+    # 11-19 自測：模型寫「九月二日」「十輪」，數值比對失敗、整行保留英文
+    assert tt.cn_numerals_to_digits("預定於九月二日舉行，十輪測試，二十二人，一千五百台，一起去") == "預定於9月2日舉行，10輪測試，22人，1500台，一起去"
+    assert tt.fix_numerals("release on March 15 after 10 rounds", "於三月十五日發布，經過十輪", "zh") == "於3月15日發布，經過10輪"
+    assert tt.fix_numerals("22 people", "二十二人，一起", "zh") == "22人，一起"
+    assert tt.fix_numerals("no numbers here", "沒有數字，一起", "zh") == "沒有數字，一起"          # 本來就對得上不動
+    assert tt.prepare_source("11 billion profit, 200 million target, $800,000", "zh") == "110億 profit, 2億 target, $800,000"

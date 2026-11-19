@@ -123,15 +123,64 @@ def numbers_ok(src: str, translation: str) -> bool:
     return True
 
 
-def prepare_source(text: str, target: str) -> str:
-    """送模型前的原文：中翻英時「200萬」→「2,000,000」、「1.5億」→「150,000,000」 (模型換算常錯)。"""
-    if target != "en":
-        return text
+_EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
 
-    def repl(m: "re.Match") -> str:
+
+def prepare_source(text: str, target: str) -> str:
+    """送模型前的原文，數字先換成目標語言的寫法 (模型自己換算常錯)：
+    中翻英「200萬」→「2,000,000」、「1.5億」→「150,000,000」；英翻中「11 billion」→「110億」、「200 million」→「2億」、
+    「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
+    if target == "en":
+        def repl(m: "re.Match") -> str:
+            v = _scaled(m.group(1), m.group(2))
+            return f"{int(v):,}" if v == int(v) else f"{v:,}"
+        return _CN_SCALED_RE.sub(repl, text)
+
+    def repl_zh(m: "re.Match") -> str:
         v = _scaled(m.group(1), m.group(2))
-        return f"{int(v):,}" if v == int(v) else f"{v:,}"
-    return _CN_SCALED_RE.sub(repl, text)
+        return f"{v / 10 ** 8:g}億" if v >= 10 ** 8 else f"{v / 10 ** 4:g}萬"
+    return _EN_SCALED_RE.sub(repl_zh, text)
+
+
+_CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_UNIT = {"十": 10, "百": 100, "千": 1000}
+# 國字數字後面接量詞／日期才換 (「九月二日」「十輪」「二十二人」)；「一起」「一下」這種一般用詞不動
+_CN_NUM_RE = re.compile(r"[零〇一二兩两三四五六七八九十百千]+(?=[月日號号輪轮人位名台臺個个天週周年次場场小分秒萬万億亿%％倍款件條条家點点組组項项輛辆張张支])")
+
+
+def _cn_to_int(s: str) -> Optional[int]:
+    total, num = 0, 0
+    if all(c in _CN_DIGIT for c in s):          # 「二〇二六」這種逐字寫法
+        return int("".join(str(_CN_DIGIT[c]) for c in s))
+    for c in s:
+        if c in _CN_DIGIT:
+            num = _CN_DIGIT[c]
+        elif c in _CN_UNIT:
+            total += (num or 1) * _CN_UNIT[c]
+            num = 0
+        else:
+            return None
+    return total + num
+
+
+def cn_numerals_to_digits(text: str) -> str:
+    """「九月二日」→「9月2日」、「十輪」→「10輪」、「二十二人」→「22人」。"""
+    def repl(m: "re.Match") -> str:
+        v = _cn_to_int(m.group(0))
+        return m.group(0) if v is None else str(v)
+    return _CN_NUM_RE.sub(repl, text)
+
+
+def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    """翻成中文的譯文數值對不上時，先把國字數字換成阿拉伯數字再比 (11-19 自測：模型照指示外常寫「九月二日」「十輪」，
+    數值比對失敗、整行被保留成英文)。換了才對得上才用換過的；本來就對得上的不動。"""
+    if not translation or target != "zh":
+        return translation
+    prepared = prepare_source(src, target)
+    if numbers_ok(prepared, translation):
+        return translation
+    fixed = cn_numerals_to_digits(translation)
+    return fixed if numbers_ok(prepared, fixed) else translation
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
@@ -298,6 +347,8 @@ async def _translate_flat(flat: Sequence[str], target: str,
             return False
         got = parse_output(out, len(chunk))
         for n, (idx, src) in enumerate(chunk, 1):
+            if n in got:
+                got[n] = fix_numerals(src, got[n], target)
             if unit_ok(src, got.get(n), target):
                 done[idx] = got[n]
                 continue
@@ -306,7 +357,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
                 return False
-            single = parse_output(one, 1).get(1)
+            single = fix_numerals(src, parse_output(one, 1).get(1), target)
             if unit_ok(src, single, target):
                 done[idx] = single
                 continue
