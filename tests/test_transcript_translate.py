@@ -227,3 +227,10 @@ def test_percent_words_and_dot_thousands():
     assert tt.fix_numerals("asked for a 6% discount", "要求給予百分之六的折扣", "zh") == "要求給予6%的折扣"
     assert tt.numbers_ok("se han construido 400.000 viviendas", "only 400,000 homes were built")
     assert tt.numbers_ok("pi is 3.141", "圓周率是3.141")
+
+
+def test_first_chunk_is_smaller():
+    units = [(i, "字" * 50) for i in range(12)]          # 每單位 50 字
+    chunks = tt.group_chunks(units)
+    assert sum(len(u) for _i, u in chunks[0]) <= tt.FIRST_CHUNK_CHARS < sum(len(u) for _i, u in chunks[1])
+    assert [i for c in chunks for i, _u in c] == list(range(12))

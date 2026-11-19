@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 UNIT_CHARS = 140          # 每個翻譯單位最多幾個字（太長的句子再切）
 CHUNK_CHARS = 360         # 每個請求的原文字數上限：Hailo qwen3:1.7b 約 4.5 tok/s，中翻英一段約 60 s
+FIRST_CHUNK_CHARS = 120   # 第一個請求的原文字數上限 (先讓網頁出現第一段)
 REQUEST_TIMEOUT_SEC = 180.0
 POLL_SEC = 0.5            # 檢查「開始錄音了沒」的間隔
 
@@ -242,13 +243,15 @@ def parse_lines(text: str) -> List[Tuple[str, List[str]]]:
 
 
 def group_chunks(units: Sequence[Tuple[int, str]], limit: Optional[int] = None) -> List[List[Tuple[int, str]]]:
-    """要送模型的 (單位索引, 原文) 依序合成請求，每個請求原文 ≤ limit 字 (預設 CHUNK_CHARS)。"""
+    """要送模型的 (單位索引, 原文) 依序合成請求，每個請求原文 ≤ limit 字 (預設 CHUNK_CHARS)；
+    第一個請求較小 (FIRST_CHUNK_CHARS)，網頁比較快看到第一段譯文 (11-19 實測 GS3 30 分中翻英第一段 80 s 才出現)。"""
     limit = CHUNK_CHARS if limit is None else limit
+    first = min(FIRST_CHUNK_CHARS, limit)
     chunks: List[List[Tuple[int, str]]] = []
     buf: List[Tuple[int, str]] = []
     size = 0
     for idx, u in units:
-        if buf and size + len(u) > limit:
+        if buf and size + len(u) > (first if not chunks else limit):
             chunks.append(buf)
             buf, size = [], 0
         buf.append((idx, u))
