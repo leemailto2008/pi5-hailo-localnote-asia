@@ -1951,6 +1951,52 @@ async def get_demo_polish() -> Dict[str, Any]:
     return {**_polish_job.snapshot(), "fix_engines": _fix_engines()}
 
 
+# 完整逐字稿翻譯（2026-11-19，同事回報網頁「Translate to Mandarin／English」只翻紀要）：背景工作，見 transcript_translate。
+_translate_job = SingleJob("translate")
+
+
+class TranscriptTranslateRequest(BaseModel):
+    text: str = Field(..., max_length=400000, description="完整逐字稿（高精度稿每行「說話人N：…」或即時逐字稿）")
+    to: str = Field(..., description="'zh' 翻成中文 / 'en' 翻成英文")
+
+
+@app.post("/api/translate_transcript", tags=["Demo UI"])
+async def post_translate_transcript(req: TranscriptTranslateRequest) -> Dict[str, Any]:
+    """啟動完整逐字稿翻譯背景工作，立即回傳狀態；進度（done／total 段）與已翻好的前段（partial）用 GET 查詢。
+    錄音中或會議紀要生成中回 409；同時只跑一個；錄音一開始就在段落之間停下（state=stopped，已翻的保留）。"""
+    from voice_streaming import is_any_recording_active
+    from meeting_minutes import minutes_manager
+    from transcript_translate import group_chunks, in_target_language, parse_lines, translate_transcript
+    target = (req.to or "").lower()
+    if target not in ("zh", "en"):
+        raise HTTPException(status_code=400, detail="to 必須是 zh 或 en")
+    busy = meeting_busy_reason(is_any_recording_active(), minutes_manager.status.state)
+    if busy:
+        raise HTTPException(status_code=409, detail=busy)
+    if not (req.text or "").strip():
+        raise HTTPException(status_code=400, detail="沒有可翻譯的逐字稿")
+    if _translate_job.running:
+        raise HTTPException(status_code=409, detail="已有逐字稿翻譯在進行中，請稍候")
+    units = [(i, u) for i, u in enumerate(u for _s, us in parse_lines(req.text) for u in us)
+             if not in_target_language(u, target)]
+
+    async def runner(job: SingleJob) -> Dict[str, Any]:
+        return await translate_transcript(
+            req.text, target,
+            on_progress=lambda done, total, partial: job.update(done=done, total=total, partial=partial),
+            should_stop=is_any_recording_active,
+        )
+
+    return _translate_job.start(runner, to=target, done=0, total=len(group_chunks(units)), partial="")
+
+
+@app.get("/api/translate_transcript", tags=["Demo UI"])
+async def get_translate_transcript() -> Dict[str, Any]:
+    """逐字稿翻譯狀態：state = idle / running / done / stopped / error；running 帶 partial（從頭連續翻好的部分），
+    done 與 stopped 帶 result（text、chunks、translated_chunks、units、kept_units、fallback_units）。"""
+    return _translate_job.snapshot()
+
+
 class RefineRequest(BaseModel):
     job: Optional[str] = Field(default=None, description="會議 job id；省略 = 目前這場會議")
 

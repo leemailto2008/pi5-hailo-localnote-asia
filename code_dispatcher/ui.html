@@ -568,7 +568,11 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
                 <button class="btn" id="ttsBtn" disabled>在耳麥念出來</button>
                 <button class="toggle-btn" id="ttsTargetBtn" title="朗讀的播放位置：藍牙耳麥或這個網頁">🔈 輸出：耳麥</button>
               </div>
+              <label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="trFullChk" checked>
+                連同完整逐字稿一起翻（有高精度逐字稿就用它，保留說話人；長會議要等比較久，翻好的會先顯示）</label>
               <div class="en" id="enBox">—</div>
+              <div id="trFullStatus" style="font-size:13px;color:var(--muted)" hidden></div>
+              <div class="en" id="trFullBox" style="max-height:420px;overflow-y:auto" hidden></div>
             </div>
           </details>
         </div>
@@ -670,7 +674,7 @@ const API = {
   btAuto: '/api/bt/trusted/auto_connect',
   btRemove: '/api/bt/remove',
   record: '/api/record', status: '/api/status',
-  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', polish: '/api/polish', refine: '/api/refine', glossary: '/api/glossary',
+  result: '/api/result', regenerate: '/api/regenerate', translate: '/api/translate', translateTranscript: '/api/translate_transcript', polish: '/api/polish', refine: '/api/refine', glossary: '/api/glossary',
   tts: '/api/tts', netSwitch: '/api/net/switch',
   cancelJob: '/api/record/cancel', transcribeRegion: '/api/transcribe/region',
   finishRecord: '/api/record/finish',
@@ -696,6 +700,7 @@ const el = {
   polishGlossary: $('polishGlossary'),
   refineBox: $('refineBox'), refineBtn: $('refineBtn'), refineStatus: $('refineStatus'), refineText: $('refineText'), refineInfo: $('refineInfo'),
   regenBtn: $('regenBtn'), copyBtn: $('copyBtn'), toEnBtn: $('toEnBtn'), toZhBtn: $('toZhBtn'), ttsBtn: $('ttsBtn'), enBox: $('enBox'),
+  trFullChk: $('trFullChk'), trFullStatus: $('trFullStatus'), trFullBox: $('trFullBox'),
   ssid: $('ssid'), host: $('host'), qr: $('qr'), netSwitch: $('netSwitch'), toast: $('toast'),
   btnOpenBtMgr: $('btnOpenBtMgr'), btnConnectDefault: $('btnConnectDefault'), btnQuickDisconnect: $('btnQuickDisconnect'),
   btnBackToMain: $('btnBackToMain'), btnRefreshBtHub: $('btnRefreshBtHub'),
@@ -1498,6 +1503,8 @@ function clearPreviousOutputs() {
   if (el.toEnBtn) el.toEnBtn.disabled = true;
   if (el.toZhBtn) el.toZhBtn.disabled = true;
   if (el.enBox) el.enBox.hidden = true;
+  if (el.trFullBox) { el.trFullBox.hidden = true; el.trFullBox.textContent = ''; }
+  if (el.trFullStatus) { el.trFullStatus.hidden = true; el.trFullStatus.textContent = ''; }
 
   // 2. 清空並收合逐字稿
   if (el.transcriptBox) {
@@ -2763,6 +2770,7 @@ async function translateMinutesTo(target, btn) {
   if (srcLang === target) {          // 紀要本來就是這個語言：直接顯示
     el.enBox.textContent = text;
     el.ttsBtn.disabled = false;
+    if (el.trFullChk && el.trFullChk.checked) translateTranscriptTo(target, null);   // 逐字稿可能中英夾雜，照樣翻
     return;
   }
   btn.disabled = true;
@@ -2783,6 +2791,53 @@ async function translateMinutesTo(target, btn) {
     clearInterval(timer);
     btn.disabled = false;
   }
+  if (el.trFullChk && el.trFullChk.checked) translateTranscriptTo(target, null);
+}
+
+// 完整逐字稿翻譯 (2026-11-19)：後端背景工作 (POST/GET /api/translate_transcript)，翻好的前段先顯示。
+// 來源：有高精度逐字稿 (每行一位說話人) 就用它，否則用即時逐字稿。target = null：頁面重新整理時接著顯示還在跑的工作。
+let trFullBusy = false;
+async function translateTranscriptTo(target, runningTo) {
+  if (trFullBusy) return;
+  const to = target || runningTo;
+  const fromRefine = !!refinePlainText();
+  const src = fromRefine ? refinePlainText() : transcriptPlainText();
+  if (target && !src) { toast('沒有逐字稿可翻譯'); return; }
+  trFullBusy = true;
+  el.trFullStatus.hidden = false;
+  el.trFullBox.hidden = false;
+  const name = to === 'en' ? 'English' : '中文';
+  try {
+    if (target) {
+      el.trFullBox.textContent = '';
+      el.trFullStatus.textContent = `完整逐字稿翻成${name}（${fromRefine ? '高精度逐字稿' : '即時逐字稿'}）準備中…`;
+      await api(API.translateTranscript, { text: src, to: target });
+    }
+    const job = await pollJob(API.translateTranscript, j => {
+      el.trFullStatus.textContent = `完整逐字稿翻成${name}：已完成 ${j.done}/${j.total} 段（${Math.round(j.elapsed || 0)} 秒）…`;
+      if (j.partial) el.trFullBox.textContent = j.partial;
+    });
+    const res = job.result || {};
+    if (job.state === 'error') {
+      el.trFullStatus.textContent = '完整逐字稿翻譯失敗：' + (job.error || '未知錯誤');
+    } else {
+      el.trFullBox.textContent = res.text || job.partial || '（無翻譯結果）';
+      const notes = [];
+      if (res.kept_units) notes.push(`${res.kept_units} 句原本就是${name}照抄`);
+      if (res.fallback_units) notes.push(`${res.fallback_units} 句翻不出來保留原文`);
+      el.trFullStatus.textContent = (job.state === 'stopped' ? '已停止（開始錄音）：未翻的段落保留原文' : `完整逐字稿翻譯完成：${res.translated_chunks}/${res.chunks} 段`)
+        + `（${Math.round(job.elapsed || 0)} 秒）` + (notes.length ? `；${notes.join('；')}` : '');
+    }
+  } catch (err) {
+    el.trFullStatus.textContent = '完整逐字稿翻譯失敗：' + (err.message || err);
+  } finally {
+    trFullBusy = false;
+  }
+}
+if (!MOCK) {
+  api(API.translateTranscript).then(job => {
+    if (job && job.state === 'running') translateTranscriptTo(null, job.to || 'en');
+  }).catch(err => console.warn('translate status check failed', err));
 }
 
 el.toZhBtn.addEventListener('click', () => translateMinutesTo('zh', el.toZhBtn));
@@ -3062,6 +3117,8 @@ function mock(path, body) {
       diarize: 'CAM++ 逐句分群（門檻 0.55、群中心合併 0.8）＋滑動視窗找句內換人（1.5 s 視窗、0.75 s 步進）', post: 'OpenCC s2twp＋台灣用字修正' } };
   }
   if (path === API.translate) return { text: body.to === 'en' ? '# Client meeting\n\n## Summary\n- Client wants 200 sample units before November\n- Objects to unit price, asks for 8% off\n- Agrees to a 50-unit trial order first' : '（中文翻譯預覽）' };
+  if (path === API.translateTranscript) return { state: 'done', elapsed: 3, result: { chunks: 1, translated_chunks: 1, kept_units: 0, fallback_units: 0,
+    text: body && body.to === 'zh' ? '說話人1：（中文翻譯預覽）' : 'Speaker 1: Okay, let us start today\'s weekly meeting.' } };
   if (path === API.tts) return { ok: true };
   if (path === API.netSwitch) return { ok: true };
   return {};
