@@ -29,7 +29,7 @@ PI5_SV_FOREIGN_GUARD=0 關閉。
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 if _ROOT not in sys.path:   # repo 裡 hailo_whisper 在上一層（Pi 上部署在同一層），同 voice_pipeline 的做法
@@ -111,6 +111,27 @@ class ForeignLangGuard:
         verdict = whisper_verdict(sv_lang, sv_text, whisper_text)
         self._memory.add(verdict)
         return "whisper" if verdict == "foreign" and self.foreign_mode() else None
+
+
+def retro_foreign_segments(guard: Optional["ForeignLangGuard"], segments: List[str], recs: Sequence[Dict[str, Any]],
+                           clean: Callable[[str], str]) -> int:
+    """錄音結束時這場是外語會議 (guard.foreign_mode())：前面比對過 (rec 有 wtext)、判成外語、但當時還不夠多數沒換的段落，
+    就地換成 Whisper 的文字 (clean 是即時稿用的清理)。回傳換了幾段；不是外語會議或沒有這種段落時不動。
+    segments 與 recs 一一對應 (meeting_minutes 的 live_segments／live_seg_recs)。"""
+    if guard is None or not ENABLED or not guard.foreign_mode():
+        return 0
+    n = 0
+    for k, rec in enumerate(recs):
+        w = rec.get("wtext")
+        if k >= len(segments) or not w or rec.get("src") != "sv" or rec.get("use") == "whisper":
+            continue
+        if whisper_verdict(rec.get("lang", ""), rec.get("text", ""), w) != "foreign":
+            continue
+        t = clean(w.strip())
+        if t:
+            segments[k] = t
+            n += 1
+    return n
 
 
 def refine_whisper_choices(slices: Sequence[Dict[str, Any]]) -> List[int]:

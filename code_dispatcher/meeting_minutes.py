@@ -862,13 +862,14 @@ class MeetingJobManager:
             stt_combo = SttCombo(slicing=live_slicing_label(8.0))
             self.status.metrics.update(stt_combo.describe())
             live_segments: List[str] = []
+            live_seg_recs: List[Dict[str, Any]] = []   # 每段即時稿對應的切片紀錄 (外語會議事後補換用，見 retro_foreign_segments)
             curr_preview: str = ""
             chunk_worker_done = asyncio.Event()
             # 每個切片在母帶裡的位置與 SenseVoice 原始結果：錄音後的高精度逐字稿沿用 (refine_transcript.save_live_asr)
             live_asr_slices: List[Dict[str, Any]] = []
             live_asr_pos = 0
             # SenseVoice 不支援的語言（德／西／法／印尼／越／泰…）改用 Hailo Whisper 的文字 (2026-11-18，sv_lang_guard)：每場會議一個
-            from sv_lang_guard import ForeignLangGuard
+            from sv_lang_guard import ForeignLangGuard, retro_foreign_segments
             lang_guard = ForeignLangGuard()
 
             # 即時逐字稿引擎 (2026-11-13)：預設／網頁選 SenseVoice 時用 SenseVoice (sv_worker，CPU 2、3)，網頁選 Whisper 或這台不能用時 Hailo Whisper。
@@ -945,6 +946,8 @@ class MeetingJobManager:
                                                     ts=sv_res.get("timestamps") or [])
                                     if sv_res.get("wtext") is not None:   # 有用 Whisper 比對過（高精度稿用整場的判斷再決定一次）
                                         live_rec["wtext"] = sv_res["wtext"]
+                                        if sv_res.get("use") == "whisper":
+                                            live_rec["use"] = "whisper"
                                 elif live_engine == "whisper" and seg_text:
                                     # 即時稿選 Whisper：記下 Whisper 文字，高精度稿（SenseVoice）遇到不支援的語言時改用 (refine_transcript.apply_whisper_live)
                                     live_rec["wtext"] = seg_text
@@ -973,6 +976,7 @@ class MeetingJobManager:
                                         continue
 
                                     live_segments.append(clean_t)
+                                    live_seg_recs.append(live_rec)
                                     # 智慧雙語拼接 (Bilingual live stream preview)
                                     if len(live_segments) == 1:
                                         curr_preview = clean_t
@@ -1227,6 +1231,16 @@ class MeetingJobManager:
             # --- PHASE 2: Transcribe Finalization ---
             if self._cancellation_token.is_set():
                 return
+
+            # 外語會議事後補換 (2026-11-19)：會議開頭判定成外語之前，比對過、判成外語但還不夠多數沒換的片段 (德文 6 分 e2e 的
+            # 「Kaffee-tee」「Limo and tudo」)，錄音結束時這場確定是外語會議就換成 Whisper 的文字再出紀要。
+            # 11-18 外語資料模擬 (.cc_scratch/trtest/sim_retro.py)：de／es／fr／id／th／vi 每份約換 2 片；zh／en／ja／ko／yue／台語 0 片。
+            n_retro = retro_foreign_segments(lang_guard, live_segments, live_seg_recs, clean_live_segment)
+            if n_retro:
+                curr_preview = live_segments[0] if live_segments else ""
+                for k in range(1, len(live_segments)):
+                    curr_preview += live_join_sep(live_segments[k - 1], live_segments[k]) + live_segments[k]
+                print(f"[MeetingMinutes] 外語會議：開頭 {n_retro} 段改用 Whisper 的文字")
 
             # ⚡ [0秒尾端極速結算] 錄音期間已並行由 Hailo-10H 完成各切片解算，直接取用已組裝逐字稿
             final_preview = curr_preview or (self.status.transcript or "")

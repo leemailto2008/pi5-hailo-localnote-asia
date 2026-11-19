@@ -184,3 +184,24 @@ def test_live_whisper_file_round_trip(tmp_path):
     assert rt.load_live_asr(ogg, 10 * sr) is None                       # 不會被當成 SenseVoice 結果沿用
     got = rt.load_live_asr(ogg, 10 * sr, rt.LIVE_WHISPER_SUFFIX)
     assert [s.get("wtext") for s in got] == ["Hallo", None]
+
+
+def test_retro_foreign_segments_replaces_opening_slices_only_in_foreign_meetings():
+    """11-19 德文 6 分 e2e：開頭判定成外語之前的 SenseVoice 亂碼（「Kaffee-tee」）進了紀要；錄音結束時是外語會議就換成 Whisper 文字。"""
+    guard = g.ForeignLangGuard(clock=lambda: 0.0)
+    recs = [{"src": "sv", "lang": "<|en|>", "text": DE_SV, "wtext": DE_WH} for _ in range(2)]   # 前 2 片還不夠多數，沒換
+    segs = [DE_SV, DE_SV]
+    for _ in range(2):
+        guard.decide("<|en|>", DE_SV, DE_WH)
+    for _ in range(3):                                       # 之後夠多數、改用 Whisper
+        guard.decide("<|en|>", DE_SV, DE_WH)
+        recs.append({"src": "sv", "lang": "<|en|>", "text": DE_SV, "wtext": DE_WH, "use": "whisper"})
+        segs.append(DE_WH)
+    recs.append({"src": "sv", "lang": "<|en|>", "text": EN, "wtext": EN})   # 真的英文：verdict ok，不換
+    segs.append(EN)
+    assert guard.foreign_mode()
+    assert g.retro_foreign_segments(guard, segs, recs, str.strip) == 2
+    assert segs[:2] == [DE_WH, DE_WH] and segs[-1] == EN
+    zh_guard = g.ForeignLangGuard(clock=lambda: 0.0)          # 不是外語會議：一段都不動
+    segs2 = [DE_SV]
+    assert g.retro_foreign_segments(zh_guard, segs2, recs[:1], str.strip) == 0 and segs2 == [DE_SV]
