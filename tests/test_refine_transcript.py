@@ -885,3 +885,11 @@ def test_needs_join_space_between_english_slices():
     assert not needs_join_space("。", "好")
     assert not needs_join_space("議題", "There")
     assert not needs_join_space("", "There")
+
+
+def test_token_pieces_keeps_punct_with_previous_piece():
+    from refine_transcript import split_at_pauses
+    toks = [" the", " battery", ".", " The", " next", " topic", " is", " budget"]
+    times = [0.0, 0.4, 1.9, 2.0, 2.3, 2.6, 2.9, 3.2]
+    out = split_at_pauses(0.0, 4.0, toks, times, [1.9])
+    assert [t for _a, _b, t in out] == ["the battery.", "The next topic is budget"]

@@ -511,6 +511,11 @@ def token_pieces(start: float, end: float, tokens: Sequence[str], times: Sequenc
         k = min(range(1, len(times)), key=lambda i: abs(times[i] - c))
         if abs(times[k] - c) > SPLIT_MAX_TOKEN_DIST_S or k <= idx_bounds[-1]:
             continue
+        # 切點落在標點前：標點跟著前一段 (11-19 en_long 高精度稿「說話人2：. The next topic…」2 行)
+        while k < len(tokens) and _is_punct_token(tokens[k]):
+            k += 1
+        if k >= len(tokens):
+            continue
         b = (times[k - 1] + times[k]) / 2
         if t_bounds[-1] + SPLIT_EDGE_S < b < end - SPLIT_EDGE_S:
             idx_bounds.append(k)
