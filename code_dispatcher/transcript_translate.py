@@ -128,10 +128,15 @@ def number_values(text: str, words: bool = False) -> List[float]:
     return out
 
 
+_DOT_THOUSANDS_RE = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{3})+(?![\d.])")
+
+
 def numbers_ok(src: str, translation: str) -> bool:
-    """原文出現過的每個數值，譯文裡至少出現一次 (重複次數不比：西文「un 74%…un 74%」譯文只寫一次也是對的)。"""
+    """原文出現過的每個數值，譯文裡至少出現一次 (重複次數不比：西文「un 74%…un 74%」譯文只寫一次也是對的)。
+    句點後剛好 3 位數的「400.000」兩種讀法都可以：西／德文的千分位 (400000) 或小數 (400.0) (11-19 full2：西文「400.000 viviendas」)。"""
     have = set(number_values(translation, words=True))
-    return all(v in have for v in number_values(src))
+    alt = {round(float(m.group(0)), 6): float(m.group(0).replace(".", "")) for m in _DOT_THOUSANDS_RE.finditer(src or "")}
+    return all(v in have or (v in alt and alt[v] in have) for v in number_values(src))
 
 
 _EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
@@ -174,12 +179,19 @@ def _cn_to_int(s: str) -> Optional[int]:
     return total + num
 
 
+_CN_PERCENT_RE = re.compile(r"百分之([零〇一二兩两三四五六七八九十百]+)")
+
+
 def cn_numerals_to_digits(text: str) -> str:
-    """「九月二日」→「9月2日」、「十輪」→「10輪」、「二十二人」→「22人」。"""
+    """「九月二日」→「9月2日」、「十輪」→「10輪」、「二十二人」→「22人」、「百分之六」→「6%」。"""
     def repl(m: "re.Match") -> str:
         v = _cn_to_int(m.group(0))
         return m.group(0) if v is None else str(v)
-    return _CN_NUM_RE.sub(repl, text)
+
+    def repl_pct(m: "re.Match") -> str:
+        v = _cn_to_int(m.group(1))
+        return m.group(0) if v is None else f"{v}%"
+    return _CN_NUM_RE.sub(repl, _CN_PERCENT_RE.sub(repl_pct, text))
 
 
 def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[str]:

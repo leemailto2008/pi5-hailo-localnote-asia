@@ -220,3 +220,10 @@ def test_cpu_model_tried_when_hailo_fails_twice(monkeypatch):
     calls.clear()
     res = asyncio.run(tt.translate_minutes("【Action Items】\n• 完成全員複訓", "en", use_cpu=False))
     assert True not in calls and "Complete全员" in res["text"]     # 不能用 CPU 時不試
+
+
+def test_percent_words_and_dot_thousands():
+    # 11-19 full2：英→中「6% discount」譯成「百分之六的折扣」；西文「400.000 viviendas」(句點千分位) 譯成「400,000 homes」
+    assert tt.fix_numerals("asked for a 6% discount", "要求給予百分之六的折扣", "zh") == "要求給予6%的折扣"
+    assert tt.numbers_ok("se han construido 400.000 viviendas", "only 400,000 homes were built")
+    assert tt.numbers_ok("pi is 3.141", "圓周率是3.141")
