@@ -77,8 +77,11 @@ def in_target_language(text: str, target: str) -> bool:
 
 
 def untranslated_left(translation: str, target: str) -> bool:
-    """翻成英文的結果還夾著中文字 (模型把職稱、人名留成中文)。"""
-    return target == "en" and bool(_CJK_RE.search(translation))
+    """譯文沒翻乾淨：翻成英文還夾著中文字 (模型把職稱、人名留成中文)；翻成中文卻一個中文字都沒有
+    (11-19 自測：en_short 3 行、德文那份 8 行模型原樣回英文，原本被當成翻好了)。"""
+    if target == "en":
+        return bool(_CJK_RE.search(translation))
+    return not _CJK_RE.search(translation) and len(_LATIN_RE.findall(translation)) >= 4   # 「AfD」「IBM」這種縮寫翻中文本來就保留
 
 
 # 數字保護 (2026-11-19 紀要翻譯自測：中翻英「200萬」→「200,000」、「40萬」→「40,000」；法→中「11 billion」→「十億」、

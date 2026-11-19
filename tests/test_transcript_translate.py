@@ -163,3 +163,16 @@ def test_minutes_translation_lines_headers_empty_items_and_foreign_lines(monkeyp
     assert res["text"].splitlines() == ["【Summary】", "• Government policies affect rental and sales prices",
                                         "• Housing demand rose", "", "【Decisions】", "• None"]
     assert seen == ["La demanda de vivienda sube"]       # 只有西文那行送模型；英文行照抄、「None」不送
+
+
+def test_chinese_target_output_still_english_is_retranslated(monkeypatch):
+    # 11-19 自測：en_short 翻中文有 3 行、德文那份 8 行模型原樣回英文，原本被當成翻好了
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
+        if len(rows) > 1:
+            return "\n".join(f"{n}| {t}" for n, t in rows)           # 多行請求：原樣回英文
+        return "1| 9月2日舉辦簡報訓練"
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt.translate_minutes("【摘要】\n• Training presentation scheduled for September 2\n• Budget review", "zh"))
+    assert res["text"].splitlines()[1] == "• 9月2日舉辦簡報訓練"
+    assert tt.untranslated_left("Budget review", "zh") and not tt.untranslated_left("AfD", "zh")
