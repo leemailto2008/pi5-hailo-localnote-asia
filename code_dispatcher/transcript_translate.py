@@ -85,6 +85,15 @@ def untranslated_left(translation: str, target: str) -> bool:
     return not _CJK_RE.search(translation) and len(_LATIN_RE.findall(translation)) >= 4   # 「AfD」「IBM」這種縮寫翻中文本來就保留
 
 
+def mostly_translated(translation: str, target: str) -> bool:
+    """沒翻乾淨的譯文還能不能用：翻英文時中文字只佔少數 (「Complete全员 training」可用)；整句還是中文 (模型改寫成簡體中文、
+    11-19 GS3 完整逐字稿中翻英 4 句「已经安装了8个警示灯…」) 不能用，保留原文。翻中文沒有此限制。"""
+    if target != "en":
+        return True
+    cjk = len(_CJK_RE.findall(translation))
+    return cjk <= 0.3 * (cjk + len(_LATIN_RE.findall(translation)))
+
+
 # 數字保護 (2026-11-19 紀要翻譯自測：中翻英「200萬」→「200,000」、「40萬」→「40,000」；法→中「11 billion」→「十億」、
 # 「200 million」→「二百萬」；英→中「$800,000」→「八百萬美元」)：中翻英前先把「N萬／N億／N千」換成完整阿拉伯數字，
 # 不讓模型自己換算；翻完比對數值 (萬、億、thousand、million、billion 都換算成數值)，原文的數值譯文要都有，
@@ -400,11 +409,12 @@ async def _translate_flat(flat: Sequence[str], target: str,
                     done[idx] = other
                     continue
             prepared = prepare_source(src, target)
-            usable = [t for t in (got.get(n), single, other) if t and numbers_ok(prepared, t)]
-            if usable:                          # 數值對、只是夾中文字：用它 (比原文好)
+            usable = [t for t in (got.get(n), single, other) if t and numbers_ok(prepared, t) and mostly_translated(t, target)]
+            if usable:                          # 數值對、只是夾少數中文字：用它 (比原文好)
                 done[idx] = usable[0]
-            elif got.get(n) or single or other:  # 數值都不對：保留原文，不讓錯的數字出現
-                stats["number_fallback_units"] += 1
+            elif any(t and not numbers_ok(prepared, t) for t in (got.get(n), single, other)) and not any(
+                    t and numbers_ok(prepared, t) for t in (got.get(n), single, other)):
+                stats["number_fallback_units"] += 1   # 數值都不對：保留原文，不讓錯的數字出現
             else:
                 stats["fallback_units"] += 1
         return True

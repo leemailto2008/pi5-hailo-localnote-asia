@@ -145,7 +145,8 @@ def test_wrong_number_is_retried_then_source_kept(monkeypatch):
     res = asyncio.run(tt.translate_minutes("【Summary】\n• 預算200萬\n• 好的12人", "en"))
     lines = res["text"].splitlines()
     assert lines[1] == "• 預算200萬"                     # 兩次數值都錯：保留原文，不讓錯的數字出現
-    assert lines[2] == "• ok 好的12人" and res["number_fallback_units"] == 1
+    assert lines[2] == "• 好的12人"                      # 「ok 好的12人」幾乎還是中文：保留原文
+    assert res["number_fallback_units"] == 1 and res["fallback_units"] == 1
     assert any("2,000,000" in p for p in calls)          # 送模型的是換算好的阿拉伯數字
 
 
@@ -234,3 +235,9 @@ def test_first_chunk_is_smaller():
     chunks = tt.group_chunks(units)
     assert sum(len(u) for _i, u in chunks[0]) <= tt.FIRST_CHUNK_CHARS < sum(len(u) for _i, u in chunks[1])
     assert [i for c in chunks for i, _u in c] == list(range(12))
+
+
+def test_mostly_translated_rejects_chinese_rewrite():
+    assert tt.mostly_translated("Complete全员 training before August 15", "en")
+    assert not tt.mostly_translated("已经安装了8个警示灯，并在8月15日之前完成全员复训。", "en")
+    assert tt.mostly_translated("anything", "zh")
