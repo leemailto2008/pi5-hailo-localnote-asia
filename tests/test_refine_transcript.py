@@ -885,6 +885,8 @@ def test_needs_join_space_between_english_slices():
     assert not needs_join_space("。", "好")
     assert not needs_join_space("議題", "There")
     assert not needs_join_space("", "There")
+    assert not needs_join_space("10月2", "1日")          # 數字被切在兩片之間
+    assert not needs_join_space("4", "5萬元")
 
 
 def test_token_pieces_keeps_punct_with_previous_piece():
@@ -893,3 +895,11 @@ def test_token_pieces_keeps_punct_with_previous_piece():
     times = [0.0, 0.4, 1.9, 2.0, 2.3, 2.6, 2.9, 3.2]
     out = split_at_pauses(0.0, 4.0, toks, times, [1.9])
     assert [t for _a, _b, t in out] == ["the battery.", "The next topic is budget"]
+
+
+def test_join_does_not_split_numbers():
+    text, _ = rt.format_transcript([Sentence(0, 1, "負責人會在10月2", 1), Sentence(1, 2, "1日前提出改善報告。", 1, cont=True),
+                                    Sentence(3, 4, "攤位費4", 1), Sentence(4, 5, "5萬元。", 1, cont=True)])
+    assert "10月21日前" in text and "4 5" not in text and "45萬元" in text
+    text, _ = rt.format_transcript([Sentence(0, 1, "the first topic is training.", 1), Sentence(1, 2, "There are 30 seats", 1, cont=True)])
+    assert "training. There" in text

@@ -560,8 +560,10 @@ _JOIN_NEXT_RE = re.compile(r"^[A-Za-z0-9]")
 def needs_join_space(prev_token: str, next_token: str) -> bool:
     """前一片最後一個字與下一片第一個字都是英文／數字（或前一片以英文標點結尾）且中間沒空白 → 要補一個空白。
     SenseVoice 每片第一個 token 不帶前置空白；2026-11-19 en_long 高精度稿出現 23 處「training.There」「seats.22」。"""
+    # 數字接數字不補：一個數字被切在兩片之間 (11-20 GS3 60 分「10月2 1日」「4 5萬元」「第10 6個議題」5 處，e72929b 造成)
     return bool(prev_token and next_token and not prev_token[-1].isspace()
-                and _JOIN_PREV_RE.search(prev_token) and _JOIN_NEXT_RE.match(next_token))
+                and _JOIN_PREV_RE.search(prev_token) and _JOIN_NEXT_RE.match(next_token)
+                and not (prev_token[-1].isdigit() and next_token[0].isdigit()))
 
 
 def token_span(times: Sequence[float], start_s: float, end_s: float) -> Optional[Tuple[float, float]]:
@@ -1088,6 +1090,14 @@ def _is_ascii_word_char(ch: str) -> bool:
     return ch.isascii() and ch.isalnum()
 
 
+def _space_between(last: str, first: str) -> bool:
+    """接兩段時中間要不要空格：前段以半形標點結尾、或兩邊都是英數字。數字接數字不補 (一個數字被切成兩段：
+    11-20 GS3 60 分高精度稿「10月2 1日」「4 5萬元」「第10 6個議題」5 處，完整逐字稿翻譯因此 3 句保留原文)。"""
+    if last.isdigit() and first.isdigit():
+        return False
+    return last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first))
+
+
 def _join(parts: Sequence[Sentence]) -> str:
     """同一人的連續句子接成一段。前句結尾是「。」且與下一句的停頓很短（VAD 在句中切開）→ 「。」改「，」；
     英文（前句以半形標點或英數字結尾，後句以英數字開頭）用空格接；其他沒有標點的前句補「，」。
@@ -1100,11 +1110,11 @@ def _join(parts: Sequence[Sentence]) -> str:
             first = s.text[:1]
             if s.cont:
                 # 同一個 VAD 句子切開的後段：原樣接回，只補英文詞之間的空格
-                if last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first)):
+                if _space_between(last, first):
                     out += " "
             elif prev.text.endswith("。") and s.start - prev.end <= MERGE_GAP_S:
                 out = out[:-1] + "，"
-            elif last in _ASCII_PUNCT or (_is_ascii_word_char(last) and _is_ascii_word_char(first)):
+            elif _space_between(last, first):
                 out += " "
             elif last not in _PUNCT:
                 out += "，"
