@@ -1072,6 +1072,20 @@ def minutes_extra_start(text: str) -> Optional[int]:
     return e.start() if e else None
 
 
+_GEN_LOOP_RE = re.compile(r"(.{2,40}?)\1{9,}", re.S)
+
+
+def generation_loop_start(text: str, tail: int = 600) -> Optional[int]:
+    """模型陷入重複迴圈 (同一段 2–40 字連續 10 次以上) 時回傳迴圈的起點 (保留第一次)，否則 None。只看最後 tail 字。
+    2026-11-19 越南文 6 分紀要：「Key Participants: Hà, Hà, Hà…」寫滿 600 tokens、138 s，待辦與決議都沒產生。"""
+    text = text or ""
+    off = max(0, len(text) - tail)
+    for m in _GEN_LOOP_RE.finditer(text, off):
+        if any(ch.isalnum() for ch in m.group(1)):   # 「------」「| - |」這種純符號重複不算
+            return m.start() + len(m.group(1))
+    return None
+
+
 SECTION_MISSING_NOTE = "（模型輸出長度不足，此段未產生，請參考逐字稿）"
 
 # 逐字稿中明講的「決議是…」(STT 端 fix_meeting_terms 已把 決意/捷一… 改回「決議」)。

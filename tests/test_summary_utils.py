@@ -1342,3 +1342,12 @@ def test_drop_meeting_meta_bullets_removes_invented_meeting_info():
     only = "## 摘要\n- Attendees: A, B\n\n## 決議\n- 無"
     assert summary_utils.drop_meeting_meta_bullets(only) == only
     assert summary_utils.compact_notes("- Attendees: A, B, C\n- Meeting date: 5/15\n- Budget cut to 3 servers") == "- Budget cut to 3 servers"
+
+
+def test_generation_loop_start():
+    from summary_utils import generation_loop_start
+    t = "## Summary\n- Key Participants: " + "Hà, " * 30
+    assert t[:generation_loop_start(t)] == "## Summary\n- Key Participants: Hà,"
+    assert generation_loop_start("## Summary\n- 預算 80 萬\n| - | - | - |\n| - | - | - |") is None
+    assert generation_loop_start("-" * 80) is None
+    assert generation_loop_start("| 確認 | - | - |\n" * 3) is None
