@@ -107,6 +107,16 @@ def test_english_output_with_chinese_left_is_retranslated(monkeypatch):
     assert res["text"] == "Speaker 1: EN Ask the team leader to confirm"
 
 
+def test_only_real_english_counts_as_english():
+    # 11-19 德文會議按 Translate to English：只看「沒有中文字」時 134 句德文全被照抄
+    assert tt.in_target_language("Okay, the training course is on September 2nd.", "en")
+    assert not tt.in_target_language("So, ich lad die auf den Getränk ein.", "en")
+    assert not tt.in_target_language("Kaffee mit Milch ohne Zucker wäre super!", "en")
+    assert not tt.in_target_language("Le prix du pétrole est en baisse.", "en")
+    assert not tt.in_target_language("好，我們開始今天的週會。", "en")
+    assert tt.in_target_language("好，我們開始今天的週會。", "zh") and not tt.in_target_language("The budget is fine.", "zh")
+
+
 def test_parse_output_tolerates_formats():
     got = tt.parse_output("1| Hello\n2. World\n 3：Third\nnoise\n4| ", 3)
     assert got == {1: "Hello", 2: "World", 3: "Third"}

@@ -33,6 +33,7 @@ _LABEL_RE = re.compile(r"^(說話人(\d+)[：:]|Speaker\s*(\d+)\s*[:：])\s*")
 _SENT_END_RE = re.compile(r"(?<=[。！？!?；;])|(?<=[.](?=\s))")
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
+_NON_EN_LATIN_RE = re.compile(r"[À-ɏḀ-ỿ]")     # 帶附加符號的拉丁字母：德、法、西、越…
 _NUM_LINE_RE = re.compile(r"^\s*(\d+)\s*[|｜.、:：)）]\s*(.*)$")
 
 SYSTEM = {
@@ -45,10 +46,14 @@ SYSTEM = {
 
 
 def in_target_language(text: str, target: str) -> bool:
-    """這個單位已經是目標語言 (照抄，不送模型)。英文：沒有中文字；中文：中文字不少於英文字母的一半。"""
+    """這個單位已經是目標語言 (照抄，不送模型)。
+    英文：沒有中文字、沒有英文以外的拉丁字母 (ä é ñ ß…)、英文功能詞比例夠 (summary_utils.english_share ≥ 0.5)。
+    只看「沒有中文字」不夠：11-19 德文會議按 Translate to English，134 句德文全被當成英文照抄。太短的英文句 (「Yes.」) 會送模型，只是多花一點時間。
+    中文：中文字不少於英文字母的一半。"""
     cjk, latin = len(_CJK_RE.findall(text)), len(_LATIN_RE.findall(text))
     if target == "en":
-        return cjk == 0
+        from summary_utils import english_share
+        return cjk == 0 and not _NON_EN_LATIN_RE.search(text) and english_share(text) >= 0.5
     return cjk > 0 and cjk * 2 >= latin
 
 
