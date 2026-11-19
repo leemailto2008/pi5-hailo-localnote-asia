@@ -192,3 +192,13 @@ def test_english_number_words_in_translation_count():
     assert tt.numbers_ok("至少要做1輪迴歸測試", "at least one round of regression tests")
     assert tt.numbers_ok("3位工程師", "three engineers") and not tt.numbers_ok("3位工程師", "two engineers")
     assert tt.numbers_ok("one of the issues", "其中一個問題")      # 原文的英文數字詞不要求譯文出現
+
+
+def test_number_scales_in_other_languages_and_space_thousands():
+    # 11-19 完整逐字稿自測：西文「6 millones」、法文「105 000 hectares」、重複的「un 74%」都被當成數值不符
+    assert tt.number_values("casi 6 millones de personas") == [6000000.0]
+    assert tt.number_values("105 000 hectards, 45 000") == [105000.0, 45000.0]
+    assert tt.number_values("March 15th, 5 juta orang") == [15.0, 5000000.0]
+    assert tt.numbers_ok("casi 6 millones de personas en 5 años", "almost 6 million people in 5 years")
+    assert tt.numbers_ok("un 74% en 8 años, el alquiler un 40%, un 74% las ventas", "74% in 8 years, rent 40%, sales")
+    assert tt.numbers_ok("105 000 hectards", "10.5萬公頃")

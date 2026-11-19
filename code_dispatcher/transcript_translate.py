@@ -89,13 +89,20 @@ def untranslated_left(translation: str, target: str) -> bool:
 # 不讓模型自己換算；翻完比對數值 (萬、億、thousand、million、billion 都換算成數值)，原文的數值譯文要都有，
 # 不符就單獨重翻，仍不符就保留原文 (寧可不翻，也不能翻錯數字)。月份 (9月→September) 不比。
 _CN_SCALE = {"千": 10 ** 3, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "亿": 10 ** 8}
-_EN_SCALE = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
-_NUM_RE = re.compile(r"(\d+(?:,\d{3})+|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|thousand|million|billion)?(?!\d)(?!,\d{3})", re.I)
+# 英、西、法、德、印尼文的大數單位 (11-19 完整逐字稿自測：西文「6 millones」譯成「6 million」被當成數值不符)
+_EN_SCALE = {"thousand": 10 ** 3, "million": 10 ** 6, "millions": 10 ** 6, "billion": 10 ** 9, "billions": 10 ** 9,
+             "millón": 10 ** 6, "millon": 10 ** 6, "millones": 10 ** 6, "milliard": 10 ** 9, "milliards": 10 ** 9,
+             "millionen": 10 ** 6, "milliarde": 10 ** 9, "milliarden": 10 ** 9,
+             "juta": 10 ** 6, "miliar": 10 ** 9}
+_SCALE_WORDS = "|".join(sorted(_EN_SCALE, key=len, reverse=True))
+# 千分位：逗號、或空格／不換行空格 (法文「105 000 hectares」)
+_NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?!\d)|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|(?:" + _SCALE_WORDS + r")\b)?(?!\d)",
+                     re.I)
 _CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
-    v = float(num.replace(",", ""))
+    v = float(re.sub(r"[,\u00a0\u202f ]", "", num))
     if unit:
         v *= _CN_SCALE.get(unit, _EN_SCALE.get(unit.lower(), 1))
     return round(v, 6)
@@ -122,14 +129,9 @@ def number_values(text: str, words: bool = False) -> List[float]:
 
 
 def numbers_ok(src: str, translation: str) -> bool:
-    """原文的每個數值在譯文裡都出現 (次數也夠)。"""
-    have = number_values(translation, words=True)
-    for v in number_values(src):
-        if v in have:
-            have.remove(v)
-        else:
-            return False
-    return True
+    """原文出現過的每個數值，譯文裡至少出現一次 (重複次數不比：西文「un 74%…un 74%」譯文只寫一次也是對的)。"""
+    have = set(number_values(translation, words=True))
+    return all(v in have for v in number_values(src))
 
 
 _EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
