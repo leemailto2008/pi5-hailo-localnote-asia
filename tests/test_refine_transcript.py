@@ -874,3 +874,14 @@ def test_run_in_subprocess_passes_env_overrides():
     assert res["transcript"] == "3"
     res = asyncio.run(rt.run_in_subprocess("x.ogg", cmd=_child(script)))
     assert res["transcript"] == os.environ.get("PI5_SHERPA_THREADS", "unset")
+
+
+def test_needs_join_space_between_english_slices():
+    from refine_transcript import needs_join_space
+    assert needs_join_space("training.", "There")
+    assert needs_join_space("seats.", "22")
+    assert needs_join_space("cover", "the")
+    assert not needs_join_space("training.", " There")
+    assert not needs_join_space("。", "好")
+    assert not needs_join_space("議題", "There")
+    assert not needs_join_space("", "There")

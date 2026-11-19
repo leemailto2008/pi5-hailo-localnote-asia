@@ -548,6 +548,17 @@ def pause_slices(samples) -> List[Tuple[int, int]]:
     return out
 
 
+_JOIN_PREV_RE = re.compile(r"[A-Za-z0-9.,!?;:'\"%)]$")
+_JOIN_NEXT_RE = re.compile(r"^[A-Za-z0-9]")
+
+
+def needs_join_space(prev_token: str, next_token: str) -> bool:
+    """前一片最後一個字與下一片第一個字都是英文／數字（或前一片以英文標點結尾）且中間沒空白 → 要補一個空白。
+    SenseVoice 每片第一個 token 不帶前置空白；2026-11-19 en_long 高精度稿出現 23 處「training.There」「seats.22」。"""
+    return bool(prev_token and next_token and not prev_token[-1].isspace()
+                and _JOIN_PREV_RE.search(prev_token) and _JOIN_NEXT_RE.match(next_token))
+
+
 def token_span(times: Sequence[float], start_s: float, end_s: float) -> Optional[Tuple[float, float]]:
     """一片辨識出的字（起點時間，秒）→ 句子範圍：第一個字前 MISSED_HEAD_S 到最後一個字後 MISSED_TAIL_S，不超出該片。"""
     if not times:
@@ -780,6 +791,9 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         for i0, i1, text, _lang, tokens, timestamps in decoded:
             if len(tokens) == len(timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in timestamps]
+                tokens = list(tokens)
+                if tokens and all_tokens and needs_join_space(all_tokens[-1], tokens[0]):
+                    tokens[0] = " " + tokens[0]
                 all_tokens.extend(tokens)
                 all_times.extend(times)
                 span = token_span(times, i0 / SAMPLE_RATE, i1 / SAMPLE_RATE)
