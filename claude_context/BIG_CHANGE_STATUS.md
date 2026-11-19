@@ -24,6 +24,8 @@
   podcast 紀要 74.1 → 46.6 s、藍牙 30 分 80.2 → 50.4 s（各 1 場）；GS3 30 分、藍牙 30 分 suite 都 PASS 20/20。
 - 11-19 凌晨（#55）：結尾總結「同一件事交給不同人」的待辦兩列都收（0133af4，GS3 60 分 recap 0.8333 → 1.0）；GS3 240 分除 swap 增量外全過
   （swap 推測是 zram 被清空後的第一場長會議才增量，未直接驗證；之後兩場 60 分 +0／+2）；外語混合沒變差。.228 目前 0133af4。
+- 11-19 上午（#56）：網頁翻譯「連同完整逐字稿一起翻」（7e24f0c、224eac6；30 分會議中翻英約 14 分，翻好的先顯示）；
+  英文／外語會議逐段重點不再只剩議題名稱（b29a174）、「議題：議題」重複清掉（82791e4）。.228 目前 459bd6b。
 
 ## 11-16 白天～11-17 早上摘要（給使用者看；細節在 #46、#47）
 - 11-17 下午～晚上（#49）：Whisper 即時稿「不是英語卻輸出英文／亂碼」用 YouTube 真實外語實測（12 種、44 段＋中英文對照，約 2,200 片）。
@@ -897,6 +899,29 @@
    GS3 60 分（0133af4，20261119_054049_60min）suite PASS 20/20：recap 1.0（兩列主持面試都在）、cer_num 0.0199、fact 0.9749、topic 1.0、紀要 65.9 s、stt_tail 1.0、RAM 4,342、swap 101→+2。
    （待辦表另有「公安複訓｜太組長」——ASR 把蔡組長聽成太組長，跟「完成全員複訓｜蔡組長」事項不同沒去重；修改前就會這樣，沒動。）
    偵查但不改：錄音中每 10 s detect_language 整份即時稿（PC 240 分 7.9 萬字 13.7 ms）；分說話人已 4 執行緒。
+56. 11-19 上午（loop＋使用者新需求）。
+   (1) 英文逐段整理提示詞（b29a174）：外語／英文會議逐段重點常只剩議題名稱——原提示詞「each starting with "- Topic name:" (for example "- Training:"…)」
+       被照填成「- Topic name: Social Policy」。.228 Hailo 離線 A/B（.cc_scratch/foreign_next/exp_mapen.py，de es fr id vi th 6 分＋en_long／en_short 實錄，各 2 次）：
+       var（範例「30 seats on Sept 2, 22 signed up」）作廢——正好是 en_short 測資內容；var2「- <topic>: <…>」照抄佔位字 32／124 條；
+       var3 只改格式句時另一句「"<Name> will <action> by <deadline>"」被照抄、en_long 負責人不見；採用 var4（兩句都不用角括號）：
+       照抄佔位字 59→0；只剩議題名稱 de 1.00→0、es 0.50→0、fr 0.38→0、id 0.75→0.25、vi 1.00→0.50、en_long 0.17→0.25；
+       事實 en_long 0.70/0.60→0.70/0.63、en_short 0.79→0.84；帶數字 54 條 2 條多寫年份（drop_unspoken_years 會拿掉）；泰文兩版都錯。
+       e2e：en_long PASS（3,933 字走單次整理，沒用到逐段提示詞）；外語 6 分 de es fr id vi 最終紀要由議題名稱變成有內容的條目
+       （de 8 條、es 8 條其中 4 條西文、fr 8 條、id 7 條；vi 編造數字 3→0，仍照範本寫 Topic／Discussion／Outcome）。
+   (2) 82791e4：德文那份 4 條「- Kaffee-tee: Kaffee-tee.」（SenseVoice 亂碼片）→ compact_notes 冒號前後一樣只留一份；存檔 3,897 條只改這 4 條。
+       GS3 30 分（82791e4，acoustic_gs3/20261119_104027_30min）PASS 20/20：cer_num 0.0171、fact 0.9622、recap 1.0、topic 1.0、紀要 71.2 s、swap +0；
+       德文 e2e 重跑：「Kaffee-tee」不再重複（內容仍是亂碼片）。
+   (3) 使用者 11:2x：同事反應網頁「Translate to Mandarin／English」只翻紀要 → 7e24f0c＋224eac6：完整逐字稿翻譯背景工作
+       （transcript_translate.py、POST／GET /api/translate_transcript、網頁「連同完整逐字稿一起翻」預設勾選，紀要翻完接著翻逐字稿、逐段顯示）。
+       逐行（高精度稿一行一位說話人）再依句末切 ≤140 字單位、每請求 ≤360 字編號「N| 原文」；對不上或翻英文還夾中文的單位單獨重翻；
+       說話人標籤不送模型；已是目標語言的單位照抄；Hailo 與 CPU 兩路同時、依原順序組回；錄音開始兩路在段落之間停（CPU 預填期間每 0.5 s 檢查）。
+       .228 實測（/home/pi/ln_e2e/tr_test）：GS3 30 分高精度稿 7,569 字 → 英文 18 段 831.7 s（第一段 80 s 出現）、246 行說話人全對、
+       0 句保留原文、2 行夾簡體「组长」（→ 224eac6 重翻）；en_long 3,987 字 → 中文 13 段 180.6 s、13 行全對、沒有英文殘留，
+       1 行把下一行開頭也翻進來（資訊重複、沒遺失，不處理）。速度受 Hailo 約 4.5 tok/s 限制：30 分會議中翻英約 14 分。
+   網頁實測（Playwright，.228）：最後一場是德文 6 分，按 Translate to English → 「134 句原本就是 English 照抄」——in_target_language 只看「沒有中文字」。
+   → 459bd6b：沒有中文字、沒有 ä é ñ ß 這類字母、英文功能詞比例 ≥ 0.5 才照抄（外語 6 分照抄單位 de 113→21、es 99→2、fr 86→6、vi 61→1、id 64→26；en_long 54/56 仍照抄）。
+   重測：德文逐字稿翻成英文、逐段顯示（99 s 完成 7/16 段）。
+   pytest（Windows）751 passed（3 個既有 Windows socket 失敗）。
 6. ✅ 錄音中預先整理（premap）：11-16 08:42 使用者確認開啟（#46）。
 7. ✅ 即時預覽：中文句末全形標點後不補空白（併入第 2 項的 live_join_sep）。
 
