@@ -2766,23 +2766,18 @@ async function translateMinutesTo(target, btn) {
     return;
   }
   el.enBox.hidden = false;           // 開始新錄音時 clearPreviousOutputs() 會把結果框藏起來 (10-15 起)，之前翻譯結果因此看不到
-  const srcLang = (result && result.lang) || 'zh';
-  if (srcLang === target) {          // 紀要本來就是這個語言：直接顯示
-    el.enBox.textContent = text;
-    el.ttsBtn.disabled = false;
-    if (el.trFullChk && el.trFullChk.checked) translateTranscriptTo(target, null);   // 逐字稿可能中英夾雜，照樣翻
-    return;
-  }
+  // 不再因 result.lang === target 就直接顯示原文 (2026-11-19 自測)：外語會議判成 en，紀要裡夾的德文／西文行
+  // 按 Translate to English 會原樣顯示。後端逐行判斷，已是目標語言的行照抄 (整份都是時幾乎立刻回來)。
   btn.disabled = true;
   let secs = 0;
   const label = target === 'en' ? 'Translating to English' : '翻譯成中文中';
-  el.enBox.textContent = `${label}（樹莓派邊緣推論約需 30~60 秒，已耗時 0s）…`;
+  el.enBox.textContent = `${label}（樹莓派上約需 20~120 秒，已耗時 0s）…`;
   const timer = setInterval(() => {
     secs++;
-    el.enBox.textContent = `${label}（樹莓派邊緣推論約需 30~60 秒，已耗時 ${secs}s）…`;
+    el.enBox.textContent = `${label}（樹莓派上約需 20~120 秒，已耗時 ${secs}s）…`;
   }, 1000);
   try {
-    const r = await api(API.translate, { text, to: target }, 100000);   // 樹莓派上翻譯約 30–60 秒 (後端上限 90 秒)
+    const r = await api(API.translate, { text, to: target }, 300000);   // 逐行翻、數字不符會重翻：紀要約 20–120 秒
     el.enBox.textContent = r.text || '（無翻譯結果）';
     el.ttsBtn.disabled = false;
   } catch (e) {

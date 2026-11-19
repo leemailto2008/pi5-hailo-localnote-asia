@@ -34,14 +34,23 @@ _SENT_END_RE = re.compile(r"(?<=[。！？!?；;])|(?<=[.](?=\s))")
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 _NON_EN_LATIN_RE = re.compile(r"[À-ɏḀ-ỿ]")     # 帶附加符號的拉丁字母：德、法、西、越…
+_OTHER_SCRIPT_RE = re.compile(r"[฀-๿぀-ヿ가-힯Ѐ-ӿ]")   # 泰、假名、韓、俄
+# 西、法、德、印尼文常見功能詞 (不收跟英文同形的 a、in、an、die、no…)
+_FOREIGN_FUNCTION_WORDS = frozenset(
+    "de la el los las que y del por para con una se lo su al es "            # 西
+    "le les et des du est une pour dans avec sur au aux pas qui ce sont "     # 法
+    "der das und ist nicht mit ein eine ich wir sie auf zu den dem von auch "  # 德
+    "yang dan di ini itu dengan untuk tidak ada kami kita akan dari ke juga".split())   # 印尼
 _NUM_LINE_RE = re.compile(r"^\s*(\d+)\s*[|｜.、:：)）]\s*(.*)$")
 
 SYSTEM = {
     "en": ("You are a professional interpreter. Translate each numbered line of a meeting transcript into natural English. "
            "Keep the same numbers, one output line per input line, written as \"N| translation\". "
-           "Keep names, company names, product names and numbers as they are. Output only the numbered lines."),
+           "Keep names, company names and product names as they are. Copy every number with the same digits "
+           "(write 12,500 as 12,500; never spell numbers out in words). Output only the numbered lines."),
     "zh": ("你是專業口譯員。把會議逐字稿每一行編號的句子翻成通順的台灣繁體中文。"
-           "每一行輸入對應一行輸出，格式「N| 翻譯」，編號照原文。人名、公司名、產品名與數字照原文。只輸出編號的各行。"),
+           "每一行輸入對應一行輸出，格式「N| 翻譯」，編號照原文。人名、公司名、產品名照原文。"
+           "數字一律用阿拉伯數字、數值不可改變（12,500 可寫成 12,500 或 1.25萬，不可寫成國字）。只輸出編號的各行。"),
 }
 
 
@@ -51,15 +60,81 @@ def in_target_language(text: str, target: str) -> bool:
     只看「沒有中文字」不夠：11-19 德文會議按 Translate to English，134 句德文全被當成英文照抄。太短的英文句 (「Yes.」) 會送模型，只是多花一點時間。
     中文：中文字不少於英文字母的一半。"""
     cjk, latin = len(_CJK_RE.findall(text)), len(_LATIN_RE.findall(text))
+    if not re.search(r"[^\W\d_]", text):       # 只有標點／數字 (「...」「.」)：照抄
+        return True
     if target == "en":
         from summary_utils import english_share
-        return cjk == 0 and not _NON_EN_LATIN_RE.search(text) and english_share(text) >= 0.5
+        if cjk or _NON_EN_LATIN_RE.search(text) or _OTHER_SCRIPT_RE.search(text):
+            return False
+        # 紀要條目很精簡 (「Government policies affect rental and sales prices」幾乎沒有 the／is)，只看英文功能詞會被當成外語重翻
+        # (11-19 自測)；所以 4 個字以上、沒有西／法／德／印尼文常見功能詞的也算英文 (「Wunderbar.」「medio ambientales.」這種短句仍送翻)；
+        # 英文功能詞夠多時夾一兩個外語功能詞也算。
+        words = re.findall(r"[A-Za-z]+", text.lower())
+        foreign = sum(w in _FOREIGN_FUNCTION_WORDS for w in words)
+        share = english_share(text)
+        return (share >= 0.5 and foreign * 5 <= len(words)) or (foreign == 0 and len(words) >= 4)
     return cjk > 0 and cjk * 2 >= latin
 
 
 def untranslated_left(translation: str, target: str) -> bool:
     """翻成英文的結果還夾著中文字 (模型把職稱、人名留成中文)。"""
     return target == "en" and bool(_CJK_RE.search(translation))
+
+
+# 數字保護 (2026-11-19 紀要翻譯自測：中翻英「200萬」→「200,000」、「40萬」→「40,000」；法→中「11 billion」→「十億」、
+# 「200 million」→「二百萬」；英→中「$800,000」→「八百萬美元」)：中翻英前先把「N萬／N億／N千」換成完整阿拉伯數字，
+# 不讓模型自己換算；翻完比對數值 (萬、億、thousand、million、billion 都換算成數值)，原文的數值譯文要都有，
+# 不符就單獨重翻，仍不符就保留原文 (寧可不翻，也不能翻錯數字)。月份 (9月→September) 不比。
+_CN_SCALE = {"千": 10 ** 3, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "亿": 10 ** 8}
+_EN_SCALE = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
+_NUM_RE = re.compile(r"(\d+(?:,\d{3})+|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|thousand|million|billion)?(?!\d)(?!,\d{3})", re.I)
+_CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
+
+
+def _scaled(num: str, unit: Optional[str]) -> float:
+    v = float(num.replace(",", ""))
+    if unit:
+        v *= _CN_SCALE.get(unit, _EN_SCALE.get(unit.lower(), 1))
+    return round(v, 6)
+
+
+def number_values(text: str) -> List[float]:
+    """文字裡的數值 (換算萬／億／million…，去掉千分位)；「9月」的月份不算 (翻成英文會變成 September)。"""
+    text = text or ""
+    out = []
+    for m in _NUM_RE.finditer(text):
+        if not m.group(2) and text[m.end():m.end() + 1] == "月":
+            continue
+        out.append(_scaled(m.group(1), m.group(2)))
+    return out
+
+
+def numbers_ok(src: str, translation: str) -> bool:
+    """原文的每個數值在譯文裡都出現 (次數也夠)。"""
+    have = number_values(translation)
+    for v in number_values(src):
+        if v in have:
+            have.remove(v)
+        else:
+            return False
+    return True
+
+
+def prepare_source(text: str, target: str) -> str:
+    """送模型前的原文：中翻英時「200萬」→「2,000,000」、「1.5億」→「150,000,000」 (模型換算常錯)。"""
+    if target != "en":
+        return text
+
+    def repl(m: "re.Match") -> str:
+        v = _scaled(m.group(1), m.group(2))
+        return f"{int(v):,}" if v == int(v) else f"{v:,}"
+    return _CN_SCALED_RE.sub(repl, text)
+
+
+def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
+    """這個單位的譯文可用：有內容、翻英文時沒夾中文字、數值都在。"""
+    return bool(translation) and not untranslated_left(translation, target) \
+        and numbers_ok(prepare_source(src, target), translation)
 
 
 def _split_long(sentence: str, limit: int) -> List[str]:
@@ -109,7 +184,7 @@ def group_chunks(units: Sequence[Tuple[int, str]], limit: Optional[int] = None) 
 
 
 def build_prompt(chunk: Sequence[Tuple[int, str]], target: str) -> str:
-    lines = "\n".join(f"{n}| {u}" for n, (_i, u) in enumerate(chunk, 1))
+    lines = "\n".join(f"{n}| {prepare_source(u, target)}" for n, (_i, u) in enumerate(chunk, 1))
     head = "Translate into English:" if target == "en" else "翻成繁體中文："
     return f"{head}\n{lines}"
 
@@ -177,15 +252,14 @@ def _num_predict(chunk: Sequence[Tuple[int, str]], target: str) -> int:
     return int(min(900, max(120, est)))
 
 
-async def translate_transcript(text: str, target: str,
-                               on_progress: Optional[Callable[[int, int, str], None]] = None,
-                               should_stop: Callable[[], bool] = lambda: False,
-                               use_cpu: bool = True) -> Dict[str, Any]:
-    """翻譯完整逐字稿。on_progress(已翻段數, 總段數, 目前連續翻好的部分)；回傳 {text, chunks, kept, fallback_units, stopped}。"""
+async def _translate_flat(flat: Sequence[str], target: str,
+                          on_progress: Optional[Callable[[int, int, Dict[int, str], int], None]],
+                          should_stop: Callable[[], bool], use_cpu: bool) -> Dict[str, Any]:
+    """逐字稿與紀要共用：flat 是依序的翻譯單位；已是目標語言的照抄，其餘依序合成請求，Hailo 與 CPU 兩路同時翻。
+    on_progress(已翻段數, 總段數, done, 從頭連續翻好的單位數)。回傳 {done, chunks, translated_chunks, kept_units, units,
+    fallback_units, number_fallback_units, stopped}；done 沒有的單位由呼叫端保留原文。"""
     if target not in SYSTEM:
         raise ValueError("target 必須是 en 或 zh")
-    rows = parse_lines(text)
-    flat = [u for _spk, units in rows for u in units]
     done: Dict[int, str] = {}
     todo = []
     for i, u in enumerate(flat):
@@ -196,7 +270,7 @@ async def translate_transcript(text: str, target: str,
     chunks = group_chunks(todo)
     total = len(chunks)
     finished = [False] * total
-    stats = {"fallback_units": 0, "stopped": False}
+    stats = {"fallback_units": 0, "number_fallback_units": 0, "stopped": False}
     queue = list(range(total))
     lock = asyncio.Lock()
 
@@ -209,15 +283,9 @@ async def translate_transcript(text: str, target: str,
             k = chunks[c][-1][0] + 1
         return len(flat)
 
-    def localize(t: str) -> str:
-        if target != "zh":
-            return t
-        from summary_utils import to_taiwan_traditional
-        return to_taiwan_traditional(t)
-
     def report() -> None:
         if on_progress:
-            on_progress(sum(finished), total, localize(assemble(rows, done, target, upto=prefix_upto())))
+            on_progress(sum(finished), total, done, prefix_upto())
 
     async def translate_chunk(c: int, *, hailo_only: bool, cpu_first: bool) -> bool:
         chunk = chunks[c]
@@ -227,20 +295,24 @@ async def translate_transcript(text: str, target: str,
             return False
         got = parse_output(out, len(chunk))
         for n, (idx, src) in enumerate(chunk, 1):
-            if n in got and not untranslated_left(got[n], target):
+            if unit_ok(src, got.get(n), target):
                 done[idx] = got[n]
                 continue
-            # 對不上的單位、或翻英文還夾著中文字 (11-19 GS3 30 分實測 246 行有 2 行留下「组长」) 單獨重翻一次；
-            # 重翻還是沒有就用多行請求的結果，再沒有才保留原文
+            # 對不上的單位、翻英文還夾中文字 (11-19 GS3 30 分 246 行有 2 行留下「组长」)、或數值對不上：單獨重翻一次
             one = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
                 return False
             single = parse_output(one, 1).get(1)
-            if single and not untranslated_left(single, target):
+            if unit_ok(src, single, target):
                 done[idx] = single
-            elif got.get(n) or single:
-                done[idx] = got.get(n) or single
+                continue
+            prepared = prepare_source(src, target)
+            usable = [t for t in (got.get(n), single) if t and numbers_ok(prepared, t)]
+            if usable:                          # 數值對、只是夾中文字：用它 (比原文好)
+                done[idx] = usable[0]
+            elif got.get(n) or single:          # 數值兩次都不對：保留原文，不讓錯的數字出現
+                stats["number_fallback_units"] += 1
             else:
                 stats["fallback_units"] += 1
         return True
@@ -282,6 +354,61 @@ async def translate_transcript(text: str, target: str,
                     queue.remove(c)
             except LLMError as e:
                 logger.warning("[Translate] 第 %d/%d 段保底也失敗，保留原文：%s", c + 1, total, e)
-    out = localize(assemble(rows, done, target))
-    return {"text": out, "chunks": total, "translated_chunks": sum(finished), "kept_units": len(flat) - len(todo),
-            "units": len(flat), "fallback_units": stats["fallback_units"], "stopped": stats["stopped"]}
+    return {"done": done, "chunks": total, "translated_chunks": sum(finished), "kept_units": len(flat) - len(todo),
+            "units": len(flat), "fallback_units": stats["fallback_units"],
+            "number_fallback_units": stats["number_fallback_units"], "stopped": stats["stopped"]}
+
+
+def _localize(text: str, target: str) -> str:
+    if target != "zh":
+        return text
+    from summary_utils import to_taiwan_traditional
+    return to_taiwan_traditional(text)
+
+
+async def translate_transcript(text: str, target: str,
+                               on_progress: Optional[Callable[[int, int, str], None]] = None,
+                               should_stop: Callable[[], bool] = lambda: False,
+                               use_cpu: bool = True) -> Dict[str, Any]:
+    """翻譯完整逐字稿。on_progress(已翻段數, 總段數, 目前連續翻好的部分)；回傳 {text, chunks, kept_units, fallback_units, stopped…}。"""
+    rows = parse_lines(text)
+    flat = [u for _spk, units in rows for u in units]
+
+    def progress(d: int, t: int, done: Dict[int, str], upto: int) -> None:
+        if on_progress:
+            on_progress(d, t, _localize(assemble(rows, done, target, upto=upto), target))
+
+    res = await _translate_flat(flat, target, progress, should_stop, use_cpu)
+    out = _localize(assemble(rows, res.pop("done"), target), target)
+    return {"text": out, **res}
+
+
+_MIN_HEAD_RE = re.compile(r"^\s*【[^】\n]{1,20}】\s*$")
+_MIN_BULLET_RE = re.compile(r"^(\s*[•\-*]\s*)(.*)$")
+_EMPTY_ITEM = {"無", "无", "none", "無。", "-", "—", "n/a", "na"}
+
+
+async def translate_minutes(text: str, target: str, should_stop: Callable[[], bool] = lambda: False,
+                            use_cpu: bool = False) -> Dict[str, Any]:
+    """網頁紀要翻譯 (「【摘要】\n• …」格式，段落標題網頁已給目標語言)：逐行翻，跟逐字稿同一套
+    (已是目標語言的行照抄、對不上／夾中文字／數值不符的行重翻、數值仍不符就保留原文)。
+    原本 /api/translate 整段送模型 (11-19 自測 11 份測資)：數字常翻錯、德文那份完全沒翻、英文會議裡夾的德文／西文行被網頁當成英文直接顯示。"""
+    lines = (text or "").splitlines()
+    units: List[str] = []
+    slots: List[Tuple[int, str, int]] = []        # (行號, 項目符號, 單位索引)
+    out_lines = list(lines)
+    for i, line in enumerate(lines):
+        if not line.strip() or _MIN_HEAD_RE.match(line):
+            continue
+        m = _MIN_BULLET_RE.match(line)
+        bullet, body = (m.group(1), m.group(2)) if m else ("", line.strip())
+        if body.strip().lower() in _EMPTY_ITEM:
+            out_lines[i] = bullet + ("None" if target == "en" else "無")
+            continue
+        slots.append((i, bullet, len(units)))
+        units.append(body.strip())
+    res = await _translate_flat(units, target, None, should_stop, use_cpu)
+    done = res.pop("done")
+    for i, bullet, k in slots:
+        out_lines[i] = bullet + done.get(k, units[k])
+    return {"text": _localize("\n".join(out_lines), target).strip(), **res}
