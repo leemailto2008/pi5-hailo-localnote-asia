@@ -49,7 +49,10 @@ SYSTEM = {
     "en": ("You are a professional interpreter. Translate each numbered line of a meeting transcript into natural English. "
            "Keep the same numbers, one output line per input line, written as \"N| translation\". "
            "Keep names, company names and product names as they are. Copy every number with the same digits "
-           "(write 12,500 as 12,500; never spell numbers out in words). Output only the numbered lines."),
+           "(write 12,500 as 12,500; never spell numbers out in words). Output only the numbered lines. "
+           # 11-19 exp_cpu：CPU qwen2.5:3b 中翻英 60 句 16 句回（簡體）中文；加這句 0 句 (Hailo 那路同一句提示；
+           # 原文也可能是德／西／日…文，所以不寫「輸入是中文」)
+           "Every output line must be in English, never in Chinese or in the original language."),
     "zh": ("你是專業口譯員。把會議逐字稿每一行編號的句子翻成通順的台灣繁體中文。"
            "每一行輸入對應一行輸出，格式「N| 翻譯」，編號照原文。人名、公司名、產品名照原文。"
            "數字一律用阿拉伯數字、數值不可改變（12,500 可寫成 12,500 或 1.25萬，不可寫成國字）。只輸出編號的各行。"),
