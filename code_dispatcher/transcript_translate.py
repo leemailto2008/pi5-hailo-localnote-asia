@@ -372,11 +372,23 @@ async def _translate_flat(flat: Sequence[str], target: str,
             if unit_ok(src, single, target):
                 done[idx] = single
                 continue
+            other = None
+            if use_cpu and not cpu_first and not should_stop():
+                # Hailo 兩次都沒翻好 (11-19 v4：「Complete全员 training」兩次都夾中文)：換 CPU 的另一個模型 (qwen2.5:3b) 再試一次；
+                # 只在可以用 CPU 時 (沒在錄音、高精度逐字稿沒在跑)
+                alt = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
+                                      hailo_only=False, cpu_first=True, should_stop=should_stop)
+                if alt is None:
+                    return False
+                other = fix_numerals(src, parse_output(alt, 1).get(1), target)
+                if unit_ok(src, other, target):
+                    done[idx] = other
+                    continue
             prepared = prepare_source(src, target)
-            usable = [t for t in (got.get(n), single) if t and numbers_ok(prepared, t)]
+            usable = [t for t in (got.get(n), single, other) if t and numbers_ok(prepared, t)]
             if usable:                          # 數值對、只是夾中文字：用它 (比原文好)
                 done[idx] = usable[0]
-            elif got.get(n) or single:          # 數值兩次都不對：保留原文，不讓錯的數字出現
+            elif got.get(n) or single or other:  # 數值都不對：保留原文，不讓錯的數字出現
                 stats["number_fallback_units"] += 1
             else:
                 stats["fallback_units"] += 1

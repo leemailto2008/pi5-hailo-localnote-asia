@@ -202,3 +202,21 @@ def test_number_scales_in_other_languages_and_space_thousands():
     assert tt.numbers_ok("casi 6 millones de personas en 5 años", "almost 6 million people in 5 years")
     assert tt.numbers_ok("un 74% en 8 años, el alquiler un 40%, un 74% las ventas", "74% in 8 years, rent 40%, sales")
     assert tt.numbers_ok("105 000 hectards", "10.5萬公頃")
+
+
+def test_cpu_model_tried_when_hailo_fails_twice(monkeypatch):
+    # 11-19 v4：「Complete全员 training」Hailo 兩次都夾中文；可以用 CPU 時換 CPU 的模型再試一次
+    calls = []
+
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        calls.append(cpu_first)
+        n = re.findall(r"^(\d+)\| ", prompt, re.M)
+        if cpu_first:
+            return "1| Complete full staff retraining"
+        return "\n".join(f"{k}| Complete全员 retraining" for k in n)
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt.translate_minutes("【Action Items】\n• 完成全員複訓", "en", use_cpu=True))
+    assert res["text"].splitlines()[1] == "• Complete full staff retraining" and calls[-1] is True
+    calls.clear()
+    res = asyncio.run(tt.translate_minutes("【Action Items】\n• 完成全員複訓", "en", use_cpu=False))
+    assert True not in calls and "Complete全员" in res["text"]     # 不能用 CPU 時不試
