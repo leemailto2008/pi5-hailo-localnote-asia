@@ -72,7 +72,11 @@ def test_batch_char_limit():
     assert tr._next_batch(0) == [0, 1]          # 跟得上 (還沒翻的 ≤ 120 字)：一次 ≤ 120 字
     for _ in range(10):
         tr.add("字" * 50)
-    assert tr._next_batch(0) == [0, 1, 2, 3]    # 落後：一次最多 240 字 (4 段 200 字)
+    assert tr._next_batch(0) == list(range(9))  # 落後：一次最多 480 字 (9 段 450 字)
+    tr2 = lt.LiveTranslator("en", npu_shared=lambda: True)
+    for _ in range(12):
+        tr2.add("字" * 50)
+    assert tr2._next_batch(0) == [0, 1, 2, 3]   # 即時稿也用 NPU：最多 240 字
 
 
 def test_preference_roundtrip(tmp_path, monkeypatch):

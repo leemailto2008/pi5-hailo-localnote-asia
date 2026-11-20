@@ -31,8 +31,10 @@ LIVE_TR_PATH = os.path.join(DATA_DIR, "live_translate.json")
 BATCH_CHARS = 120     # 一次請求的原文字數上限 (跟得上時)
 # 落後時一次最多帶幾字：每次請求 NPU 都要在 Whisper 與 LLM 之間切換，外語一段就約 120 字，只帶一段時翻譯追不上
 # (11-20 德文 6 分：52 段 30 次請求、只翻 30 段、延遲 p50 136 s)
-# 480 字時一次生成約 1 分鐘，期間即時稿的 Whisper 只能排隊 (德文尾端 21.3 s)；240 字折衷
-BATCH_MAX_CHARS = 240
+# 即時稿不用 NPU (SenseVoice、中英文會議)：480 字 (11-20 SenseVoice 30 分 p50 20.3 s、紀要 58.7 s；240 字時 23.4 s、72 s)
+BATCH_MAX_CHARS = 480
+# 即時稿也用 NPU (Hailo Whisper／外語比對)：480 字一次生成約 1 分鐘，期間 Whisper 只能排隊 (德文尾端 21.3 s)，改 240
+BATCH_MAX_CHARS_NPU = 240
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
@@ -79,7 +81,8 @@ class LiveTranslator:
     on_update(self) 每翻好一批呼叫一次 (更新網頁)。"""
 
     def __init__(self, mode: str, on_update: Optional[Callable[["LiveTranslator"], Awaitable[None]]] = None,
-                 should_stop: Callable[[], bool] = lambda: False, npu_busy: Callable[[], bool] = lambda: False) -> None:
+                 should_stop: Callable[[], bool] = lambda: False, npu_busy: Callable[[], bool] = lambda: False,
+                 npu_shared: Callable[[], bool] = lambda: False) -> None:
         self.mode = mode
         self.src: List[str] = []
         self.out: Dict[int, str] = {}
@@ -98,6 +101,7 @@ class LiveTranslator:
         # 即時稿也在用 NPU (Hailo Whisper 即時稿，或 SenseVoice 的外語比對) 而且還有切片沒轉完時，先不送翻譯請求
         # (11-20 Whisper＋即時翻譯 5 分：尾端等待 15–24 s，門檻 10 s)
         self._npu_busy = npu_busy
+        self._npu_shared = npu_shared   # 這場即時稿也用 NPU：落後時批次上限用 BATCH_MAX_CHARS_NPU
 
     def add(self, text: str) -> None:
         if text and text.strip():
@@ -149,7 +153,8 @@ class LiveTranslator:
         """從 start 起、目標語言相同的段落 (至少一段)：合計 ≤ BATCH_CHARS 字；落後 (還沒翻的超過 BATCH_CHARS 字) 時最多 BATCH_MAX_CHARS 字。"""
         tgt = target_for(self.src[start], self.mode)
         pending = sum(len(t) for t in self.src[start:])
-        limit = max(BATCH_CHARS, min(BATCH_MAX_CHARS, pending)) if pending > BATCH_CHARS else BATCH_CHARS
+        cap = BATCH_MAX_CHARS_NPU if self._npu_shared() else BATCH_MAX_CHARS
+        limit = max(BATCH_CHARS, min(cap, pending)) if pending > BATCH_CHARS else BATCH_CHARS
         idxs, size = [], 0
         for i in range(start, len(self.src)):
             if idxs and (size + len(self.src[i]) > limit or target_for(self.src[i], self.mode) != tgt):

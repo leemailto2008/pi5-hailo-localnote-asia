@@ -1060,7 +1060,10 @@ class MeetingJobManager:
                     return stt_busy[0] or chunk_queue.qsize() > 0
                 return False
 
-            self._start_live_translate(job_id, npu_busy=_live_npu_busy)
+            def _live_npu_shared() -> bool:
+                return live_engine == "whisper" or (lang_guard is not None and lang_guard.foreign_mode())
+
+            self._start_live_translate(job_id, npu_busy=_live_npu_busy, npu_shared=_live_npu_shared)
             chunk_worker_task = asyncio.create_task(_chunk_stt_worker())
             self._chunk_worker_task = chunk_worker_task
 
@@ -1978,7 +1981,8 @@ class MeetingJobManager:
                                             clean_transcript)
         return "## 摘要\n- 會議內容已完整保留於逐字稿\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 確認逐字稿細節 | 全體 | 待定 |\n\n## 決議\n- 錄音與逐字稿存檔完成"
 
-    def _start_live_translate(self, job_id: Optional[str], npu_busy: Callable[[], bool] = lambda: False) -> None:
+    def _start_live_translate(self, job_id: Optional[str], npu_busy: Callable[[], bool] = lambda: False,
+                              npu_shared: Callable[[], bool] = lambda: False) -> None:
         """這場錄音的即時翻譯 (網頁選的目標語言；off 或 Hailo 不在時不開)。"""
         self._stop_live_translate()
         self.status.translation_live = None
@@ -2014,7 +2018,8 @@ class MeetingJobManager:
             await ws_manager.broadcast("translation_stream", {"job_id": job_id, "text": self.status.translation_live})
             self.notify_status_update()
 
-        tr = LiveTranslator(mode, on_update=on_update, should_stop=self._cancellation_token.is_set, npu_busy=npu_busy)
+        tr = LiveTranslator(mode, on_update=on_update, should_stop=self._cancellation_token.is_set, npu_busy=npu_busy,
+                            npu_shared=npu_shared)
         self._live_tr = tr
         self._live_tr_task = asyncio.create_task(tr.run())
         print(f"[MeetingMinutes] 即時翻譯：{mode}")
