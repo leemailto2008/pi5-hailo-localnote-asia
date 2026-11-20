@@ -1550,7 +1550,12 @@ async def post_feedback(req: FeedbackRequest) -> Dict[str, Any]:
     transcript = await asyncio.to_thread(_feedback_transcript) if req.include_transcript else None
     audio_src = None
     if req.include_audio:
-        job = minutes_manager.status.job or (minutes_manager.result.job if minutes_manager.result else None)
+        if minutes_manager.status.state in ("recording", "processing"):
+            # 錄音中母帶還沒合併完成 (11-20 實測 ffmpeg 讀到半截檔)：上一場的錄音照附，這場的不附
+            report["audio_note"] = "錄音或整理中，這場的錄音檔還沒完成，未附錄音"
+            job = minutes_manager.result.job if minutes_manager.result else None
+        else:
+            job = minutes_manager.status.job or (minutes_manager.result.job if minutes_manager.result else None)
         audio_src = os.path.join(AUDIO_CACHE_DIR, f"{job}.ogg") if job else ""
     try:
         rid = await asyncio.to_thread(issue_feedback.save, report, log_text, transcript, audio_src, req.audio_minutes)
