@@ -1,8 +1,11 @@
 import asyncio
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "code_dispatcher"))
+sys.modules.setdefault("config", types.SimpleNamespace(WHISPER_MODEL_SIZE="small", WHISPER_DEVICE="cpu", WHISPER_COMPUTE_TYPE="int8",
+                                                       DEFAULT_TTS_VOICE="x", DATA_DIR=os.path.join(os.path.dirname(__file__), "_tmp_data")))
 
 import live_translate as lt  # noqa: E402
 
@@ -69,7 +72,7 @@ def test_batch_char_limit():
     assert tr._next_batch(0) == [0, 1]          # 跟得上 (還沒翻的 ≤ 120 字)：一次 ≤ 120 字
     for _ in range(10):
         tr.add("字" * 50)
-    assert tr._next_batch(0) == list(range(9))  # 落後：一次最多 480 字 (9 段 450 字)
+    assert tr._next_batch(0) == [0, 1, 2, 3]    # 落後：一次最多 240 字 (4 段 200 字)
 
 
 def test_preference_roundtrip(tmp_path, monkeypatch):

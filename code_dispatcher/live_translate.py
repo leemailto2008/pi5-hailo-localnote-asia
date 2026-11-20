@@ -31,7 +31,8 @@ LIVE_TR_PATH = os.path.join(DATA_DIR, "live_translate.json")
 BATCH_CHARS = 120     # 一次請求的原文字數上限 (跟得上時)
 # 落後時一次最多帶幾字：每次請求 NPU 都要在 Whisper 與 LLM 之間切換，外語一段就約 120 字，只帶一段時翻譯追不上
 # (11-20 德文 6 分：52 段 30 次請求、只翻 30 段、延遲 p50 136 s)
-BATCH_MAX_CHARS = 480
+# 480 字時一次生成約 1 分鐘，期間即時稿的 Whisper 只能排隊 (德文尾端 21.3 s)；240 字折衷
+BATCH_MAX_CHARS = 240
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
