@@ -84,6 +84,7 @@ class LiveTranslator:
         self.latencies: List[float] = []
         self.kept = 0          # 沒翻成 (數值對不上、模型沒回)：顯示原文
         self.requests = 0
+        self.llm_calls = 0     # 含單句重翻
         self._event = asyncio.Event()
         self._closed = False
         self._go = asyncio.Event()      # 清掉時暫停送新請求 (pause／resume)
@@ -131,7 +132,7 @@ class LiveTranslator:
 
     def stats(self) -> Dict[str, Any]:
         return {"live_tr_mode": self.mode, "live_tr_segments": len(self.src), "live_tr_done": len(self.out),
-                "live_tr_requests": self.requests, "live_tr_kept": self.kept,
+                "live_tr_requests": self.requests, "live_tr_llm_calls": self.llm_calls, "live_tr_kept": self.kept,
                 "live_tr_lat_p50": _percentile(self.latencies, 0.5), "live_tr_lat_p90": _percentile(self.latencies, 0.9),
                 "live_tr_lat_max": round(max(self.latencies), 1) if self.latencies else None}
 
@@ -177,6 +178,7 @@ class LiveTranslator:
             try:
                 res = await tt._translate_flat(units, tgt, None, interrupted, use_cpu=False)
                 got = res["done"]
+                self.llm_calls += res.get("llm_calls", 0)
             except tt.LLMError as e:
                 logger.warning("[LiveTranslate] 第 %d–%d 段翻譯失敗，顯示原文：%s", idxs[0] + 1, idxs[-1] + 1, e)
                 got = {}

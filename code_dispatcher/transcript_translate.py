@@ -371,7 +371,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
     chunks = group_chunks(todo)
     total = len(chunks)
     finished = [False] * total
-    stats = {"fallback_units": 0, "number_fallback_units": 0, "stopped": False}
+    stats = {"fallback_units": 0, "number_fallback_units": 0, "stopped": False, "llm_calls": 0}
     queue = list(range(total))
     lock = asyncio.Lock()
 
@@ -390,6 +390,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
 
     async def translate_chunk(c: int, *, hailo_only: bool, cpu_first: bool) -> bool:
         chunk = chunks[c]
+        stats["llm_calls"] += 1
         out = await _complete(build_prompt(chunk, target), target, _num_predict(chunk, target),
                               hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
         if out is None:
@@ -402,6 +403,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                 done[idx] = got[n]
                 continue
             # 對不上的單位、翻英文還夾中文字 (11-19 GS3 30 分 246 行有 2 行留下「组长」)、或數值對不上：單獨重翻一次
+            stats["llm_calls"] += 1
             one = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
@@ -415,6 +417,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                 # 同一個模型兩次都沒翻好：換另一個模型再試一次。Hailo 那路 (11-19 v4：「Complete全员 training」兩次都夾中文)
                 # 換 CPU qwen2.5:3b，只在可以用 CPU 時 (沒在錄音、高精度逐字稿沒在跑)；CPU 那路換 Hailo qwen3:1.7b
                 # (11-19 exp_first：CPU 那路把整段中文改寫成簡體中文、「第三個議題是…」單獨重翻仍回中文，GS3 1200 字 6 句沒翻)
+                stats["llm_calls"] += 1
                 alt = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
                                       hailo_only=cpu_first, cpu_first=not cpu_first, should_stop=should_stop)
                 if alt is None:
@@ -473,7 +476,8 @@ async def _translate_flat(flat: Sequence[str], target: str,
                 logger.warning("[Translate] 第 %d/%d 段保底也失敗，保留原文：%s", c + 1, total, e)
     return {"done": done, "chunks": total, "translated_chunks": sum(finished), "kept_units": len(flat) - len(todo),
             "units": len(flat), "fallback_units": stats["fallback_units"],
-            "number_fallback_units": stats["number_fallback_units"], "stopped": stats["stopped"]}
+            "number_fallback_units": stats["number_fallback_units"], "stopped": stats["stopped"],
+            "llm_calls": stats["llm_calls"]}   # 呼叫模型次數 (含單句重翻)；即時翻譯用來看 NPU 被翻譯占多少
 
 
 def _localize(text: str, target: str) -> str:

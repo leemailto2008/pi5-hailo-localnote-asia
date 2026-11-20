@@ -288,3 +288,12 @@ def test_zh_target_rejects_mostly_untranslated():
     assert tt.untranslated_left("前年45,000 l'an dernier, donc c'est bon l'ampleur est impressionnante", "zh")
     assert not tt.untranslated_left("David負責，8月15日前完成 AfD 的報告", "zh")
     assert not tt.untranslated_left("我認為它已經存在，這是Nino。HINO是一種長期被關注的現象", "zh")
+
+
+def test_flat_counts_llm_calls_including_retries(monkeypatch):
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
+        return "\n".join(f"{n}| 预算" if "預算" in t else f"{n}| Hello" for n, t in rows)   # 預算那句兩次都回中文
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt._translate_flat(["你好", "預算"], "en", None, lambda: False, use_cpu=False))
+    assert res["llm_calls"] == 2 and res["done"] == {0: "Hello"}
