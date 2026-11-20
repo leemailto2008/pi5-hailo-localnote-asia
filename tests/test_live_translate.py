@@ -17,7 +17,7 @@ def test_target_for_auto_and_fixed():
 def test_translator_batches_uses_hailo_only_and_joins(monkeypatch):
     calls = []
 
-    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
         calls.append((list(units), target, use_cpu))
         return {"done": {k: f"<{target}:{u}>" for k, u in enumerate(units)}}
     monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
@@ -46,7 +46,7 @@ def test_translator_batches_uses_hailo_only_and_joins(monkeypatch):
 
 
 def test_translator_keeps_source_when_not_translated(monkeypatch):
-    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
         return {"done": {}}
     monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
 
@@ -64,9 +64,12 @@ def test_translator_keeps_source_when_not_translated(monkeypatch):
 
 def test_batch_char_limit():
     tr = lt.LiveTranslator("en")
-    for _ in range(5):
+    tr.add("字" * 50)
+    tr.add("字" * 50)
+    assert tr._next_batch(0) == [0, 1]          # 跟得上 (還沒翻的 ≤ 120 字)：一次 ≤ 120 字
+    for _ in range(10):
         tr.add("字" * 50)
-    assert tr._next_batch(0) == [0, 1]          # 50+50 ≤ 120，再加一段超過
+    assert tr._next_batch(0) == list(range(9))  # 落後：一次最多 480 字 (9 段 450 字)
 
 
 def test_preference_roundtrip(tmp_path, monkeypatch):
@@ -84,7 +87,7 @@ def test_preference_roundtrip(tmp_path, monkeypatch):
 def test_pause_holds_new_requests_until_resume(monkeypatch):
     calls = []
 
-    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
         calls.append(list(units))
         return {"done": {k: "x" for k, _u in enumerate(units)}}
     monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
@@ -107,7 +110,7 @@ def test_pause_holds_new_requests_until_resume(monkeypatch):
 def test_waits_while_npu_busy(monkeypatch):
     calls = []
 
-    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
         calls.append(list(units))
         return {"done": {k: "x" for k, _u in enumerate(units)}}
     monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
@@ -130,7 +133,7 @@ def test_waits_while_npu_busy(monkeypatch):
 def test_pause_interrupts_in_flight_batch_and_retries(monkeypatch):
     calls = []
 
-    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
         calls.append(list(units))
         for _ in range(50):                      # 模擬長請求，暫停時中止
             if should_stop():

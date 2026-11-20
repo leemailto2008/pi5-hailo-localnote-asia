@@ -355,8 +355,9 @@ def _num_predict(chunk: Sequence[Tuple[int, str]], target: str) -> int:
 
 async def _translate_flat(flat: Sequence[str], target: str,
                           on_progress: Optional[Callable[[int, int, Dict[int, str], int], None]],
-                          should_stop: Callable[[], bool], use_cpu: bool) -> Dict[str, Any]:
-    """逐字稿與紀要共用：flat 是依序的翻譯單位；已是目標語言的照抄，其餘依序合成請求，Hailo 與 CPU 兩路同時翻。
+                          should_stop: Callable[[], bool], use_cpu: bool, one_chunk: bool = False) -> Dict[str, Any]:
+    """one_chunk：要翻的單位合成一個請求 (即時翻譯：呼叫端已控制字數)。
+    逐字稿與紀要共用：flat 是依序的翻譯單位；已是目標語言的照抄，其餘依序合成請求，Hailo 與 CPU 兩路同時翻。
     on_progress(已翻段數, 總段數, done, 從頭連續翻好的單位數)。回傳 {done, chunks, translated_chunks, kept_units, units,
     fallback_units, number_fallback_units, stopped}；done 沒有的單位由呼叫端保留原文。"""
     if target not in SYSTEM:
@@ -368,7 +369,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
             done[i] = u
         else:
             todo.append((i, u))
-    chunks = group_chunks(todo)
+    chunks = [todo] if one_chunk and todo else group_chunks(todo)
     total = len(chunks)
     finished = [False] * total
     stats = {"fallback_units": 0, "number_fallback_units": 0, "stopped": False, "llm_calls": 0}

@@ -28,7 +28,10 @@ logger = logging.getLogger(__name__)
 LIVE_TR_CHOICES = ("off", "auto", "en", "zh")
 LIVE_TR_DEFAULT = os.environ.get("PI5_LIVE_TRANSLATE_DEFAULT", "auto")   # 2026-11-20 使用者確認預設：外語翻中文、中文翻英文
 LIVE_TR_PATH = os.path.join(DATA_DIR, "live_translate.json")
-BATCH_CHARS = 120     # 一次請求的原文字數上限 (= transcript_translate.FIRST_CHUNK_CHARS，一個請求翻完)
+BATCH_CHARS = 120     # 一次請求的原文字數上限 (跟得上時)
+# 落後時一次最多帶幾字：每次請求 NPU 都要在 Whisper 與 LLM 之間切換，外語一段就約 120 字，只帶一段時翻譯追不上
+# (11-20 德文 6 分：52 段 30 次請求、只翻 30 段、延遲 p50 136 s)
+BATCH_MAX_CHARS = 480
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
@@ -142,11 +145,13 @@ class LiveTranslator:
         return {"mode": self.mode, "segments": segs, "latencies": [round(x, 2) for x in self.latencies], **self.stats()}
 
     def _next_batch(self, start: int) -> List[int]:
-        """從 start 起、目標語言相同、合計 ≤ BATCH_CHARS 字的段落 (至少一段)。"""
+        """從 start 起、目標語言相同的段落 (至少一段)：合計 ≤ BATCH_CHARS 字；落後 (還沒翻的超過 BATCH_CHARS 字) 時最多 BATCH_MAX_CHARS 字。"""
         tgt = target_for(self.src[start], self.mode)
+        pending = sum(len(t) for t in self.src[start:])
+        limit = max(BATCH_CHARS, min(BATCH_MAX_CHARS, pending)) if pending > BATCH_CHARS else BATCH_CHARS
         idxs, size = [], 0
         for i in range(start, len(self.src)):
-            if idxs and (size + len(self.src[i]) > BATCH_CHARS or target_for(self.src[i], self.mode) != tgt):
+            if idxs and (size + len(self.src[i]) > limit or target_for(self.src[i], self.mode) != tgt):
                 break
             idxs.append(i)
             size += len(self.src[i])
@@ -176,7 +181,7 @@ class LiveTranslator:
             # (11-20：只在批次之間暫停時，進行中的那批連重翻可跑 30 s 以上，紀要仍比關翻譯慢 20–28 s)
             interrupted = lambda: self._should_stop() or not self._go.is_set()
             try:
-                res = await tt._translate_flat(units, tgt, None, interrupted, use_cpu=False)
+                res = await tt._translate_flat(units, tgt, None, interrupted, use_cpu=False, one_chunk=True)
                 got = res["done"]
                 self.llm_calls += res.get("llm_calls", 0)
             except tt.LLMError as e:
