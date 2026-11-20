@@ -1196,8 +1196,9 @@ class MeetingJobManager:
                 self._premap_task = None
             if self._live_tr is not None:
                 self._live_tr.close()   # 不再等新段落；剩下的段落 (含尾端切片) 翻完就結束，不擋紀要
-                if live_engine == "whisper":
-                    self._live_tr.pause()   # 尾端切片還要用 NPU (Hailo Whisper)：切片轉完再繼續翻
+                # 尾端切片可能要用 NPU (Hailo Whisper 即時稿，或 SenseVoice 的外語比對)：切片轉完再繼續翻
+                # (11-20：Whisper 5 分尾端等待 23.6 s、德文 SenseVoice＋外語比對 70.8 s)
+                self._live_tr.pause()
 
             # 等待剩餘切片隊列消化完畢 (依據隊列深度動態等待，保證全軌切片 100% 入稿)
             await chunk_queue.put(None)
