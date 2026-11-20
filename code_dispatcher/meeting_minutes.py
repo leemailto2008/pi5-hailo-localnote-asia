@@ -1048,11 +1048,11 @@ class MeetingJobManager:
 
             def _live_npu_busy() -> bool:
                 """即時稿正在用 NPU (Hailo Whisper 即時稿，或外語會議的 Whisper 比對) 而且還有切片沒轉完 → 即時翻譯先等。"""
-                if live_engine == "whisper":
-                    return stt_busy[0] or chunk_queue.qsize() > 0
-                # 外語會議的 Whisper 比對 (每片都比對)：只在還有切片排隊時讓路；正在轉的那片不等，否則翻譯幾乎排不到
-                # (11-20 德文 6 分：連轉的那片也等時 51 段只翻 25 段、延遲 p50 117 s)
-                return lang_guard is not None and lang_guard.foreign_mode() and chunk_queue.qsize() > 0
+                # 只在還有切片排隊時讓路；正在轉的那片不等，否則翻譯幾乎排不到
+                # (11-20：連轉的那片也等時，德文 51 段只翻 25 段、延遲 p50 117 s；法／西 Whisper 即時稿 p50 130／148 s)
+                if live_engine == "whisper" or (lang_guard is not None and lang_guard.foreign_mode()):
+                    return chunk_queue.qsize() > 0
+                return False
 
             self._start_live_translate(job_id, npu_busy=_live_npu_busy)
             chunk_worker_task = asyncio.create_task(_chunk_stt_worker())
