@@ -116,10 +116,6 @@ class LiveTranslator:
             self._added.append(time.time())
             self._event.set()
 
-    def pending(self) -> int:
-        """還沒翻的段落數 (錄音中預先整理紀要用來讓路：PI5_PREMAP_YIELD_S)。"""
-        return len(self.src) - len(self.out)
-
     def pause(self) -> None:
         """暫停送新請求 (進行中的那次照常翻完)：即時稿用 Hailo Whisper 時，錄音結束後 NPU 先讓給最後幾段即時稿
         (11-20 Whisper＋即時翻譯 5 分：尾端等待 23.6 s，門檻 10 s)。"""

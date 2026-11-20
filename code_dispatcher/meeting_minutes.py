@@ -66,7 +66,6 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
 # 再由 summary_utils.assemble_long_minutes() 組成三段式紀要 (1.7B 模型無法跨 20+ 條重點歸納，實測會照抄並擠掉待辦/決議)。
 SUMMARY_SINGLE_MAX_CHARS = int(os.environ.get("PI5_SUMMARY_SINGLE_MAX", "1200"))
 SUMMARY_CHUNK_CHARS = int(os.environ.get("PI5_SUMMARY_CHUNK", "1000"))
-PREMAP_YIELD_S = float(os.environ.get("PI5_PREMAP_YIELD_S", "0"))   # 錄音中預先整理讓即時翻譯先用 NPU，最多等幾秒 (0 = 不讓；11-20 量測中，預設關)
 SUMMARY_LONG_SINGLE_CHARS = int(os.environ.get("PI5_SUMMARY_LONG_SINGLE", "800"))   # 單次紀要超過這個字數，輸出上限 480 → 600
 # 長會議的結尾總結在這個長度以內就直接用原句 (recap_notes)，不交給 LLM 改寫；設 0 關閉
 SUMMARY_RECAP_VERBATIM_MAX = int(os.environ.get("PI5_SUMMARY_RECAP_VERBATIM_MAX", "400"))
@@ -1096,13 +1095,6 @@ class MeetingJobManager:
                     seg, _ = await asyncio.to_thread(apply_meeting_glossary, live[done_upto:end])
                     piece = seg.strip()
                     idx = len(self._premap_notes) + 1
-                    # 即時翻譯優先：還有沒翻的段落時先讓 NPU 給翻譯，最多等 PREMAP_YIELD_S 秒 (預先整理只是幫錄音後的紀要先做，晚一點沒關係)
-                    t_wait = time.time()
-                    while (PREMAP_YIELD_S > 0 and self._live_tr is not None and self._live_tr.pending() > 0
-                           and time.time() - t_wait < PREMAP_YIELD_S and not premap_stop.is_set()):
-                        await asyncio.sleep(1.0)
-                    if premap_stop.is_set() or self._cancellation_token.is_set():
-                        continue
                     t_req = time.time()
                     try:
                         # 用串流：錄音結束時取消串流，hailo-ollama 會立刻停止生成 (非串流請求取消後伺服器仍會跑完，
