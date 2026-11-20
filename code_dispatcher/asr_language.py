@@ -24,7 +24,7 @@ ASR_LANG_CHOICES = ("auto", "zh", "en", "fr", "es")
 ASR_LANG_DEFAULT = "auto"
 SV_SUPPORTED = frozenset({"auto", "zh", "en"})     # SenseVoiceSmall 可固定的語言 (另有 yue／ja／ko，目前選單沒列)
 ASR_LANG_PATH = os.path.join(DATA_DIR, "asr_language.json")
-LABELS = {"auto": "自動偵測", "zh": "中文", "en": "英文", "fr": "法文", "es": "西班牙文"}
+LABELS = {"auto": "自動偵測", "zh": "中文 (zh)", "en": "英文 (en)", "fr": "法文 (fr)", "es": "西班牙文 (es)"}   # 網頁顯示：名稱後加語言代碼 (11-20 使用者)
 
 
 def load_asr_language() -> str:

@@ -1198,6 +1198,10 @@ def refine(path: str, should_stop: StopFn = None,
     asr_stats: Dict[str, Any] = {}
     asr_lang = live_asr_language(path)
     out["asr_language"] = asr_lang
+    if asr_lang in ("zh", "en"):
+        out["asr"] = out["asr"].replace(f"語言 {ASR_LANGUAGE}", f"語言 {asr_lang}")
+    elif asr_lang != "auto":
+        out["asr"] = f"Hailo Whisper 即時稿文字（語音語系 {asr_lang}，SenseVoice 不支援）；時間與分句用 SenseVoice"
     sentences = transcribe(samples, should_stop, lambda f: report("asr", f), live_slices=live, stats=asr_stats,
                            whisper_live=whisper_live, language=asr_lang)
     out["asr_s"] = round(time.time() - t0, 1)
