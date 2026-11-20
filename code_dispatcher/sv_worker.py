@@ -57,15 +57,21 @@ def _child_main() -> None:
     from summary_utils import to_taiwan_traditional
 
     recognizer = None
+    loaded_lang = None
 
-    def load() -> float:
-        nonlocal recognizer
+    def load(language: str = "") -> float:
+        """language：auto／zh／en (語音語系設定，asr_language.sv_language)；空字串 = ASR_LANGUAGE。換語言時重新載入。"""
+        nonlocal recognizer, loaded_lang
+        language = language or ASR_LANGUAGE
         t0 = time.perf_counter()
-        if recognizer is None:
+        if recognizer is None or language != loaded_lang:
+            recognizer = None
             recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
                 model=model_path("asr"), tokens=model_path("tokens"), num_threads=LIVE_THREADS,
-                language=ASR_LANGUAGE, use_itn=True)
-            print(f"[SvWorker] SenseVoice loaded ({(time.perf_counter() - t0) * 1000:.0f} ms, pid {os.getpid()})", flush=True)
+                language=language, use_itn=True)
+            loaded_lang = language
+            print(f"[SvWorker] SenseVoice loaded, language {language} ({(time.perf_counter() - t0) * 1000:.0f} ms, pid {os.getpid()})",
+                  flush=True)
         return (time.perf_counter() - t0) * 1000
 
     print(f"[SvWorker] ready (pid {os.getpid()})", flush=True)
@@ -83,9 +89,13 @@ def _child_main() -> None:
             break
         try:
             if cmd == "load":
-                _write_frame(proto_out, {"ok": True, "load_ms": round(load())})
+                _write_frame(proto_out, {"ok": True, "load_ms": round(load(payload or ""))})
             elif cmd == "transcribe":
-                load()
+                if isinstance(payload, tuple):   # (音訊, 語言)
+                    payload, language = payload
+                else:
+                    language = ""
+                load(language)
                 t0 = time.perf_counter()
                 stream = recognizer.create_stream()
                 stream.accept_waveform(SAMPLE_RATE, np.asarray(payload, dtype=np.float32))
@@ -148,20 +158,20 @@ class SvWorker:
             return reply
         raise RuntimeError(f"sv worker {cmd} failed")
 
-    def warm_up(self) -> None:
-        """錄音一開始先載入模型（約 1–2 s），第一個切片就不用等。失敗只記 log，切片時會再試。"""
+    def warm_up(self, language: str = "") -> None:
+        """錄音一開始先載入模型（約 1–2 s），第一個切片就不用等。失敗只記 log，切片時會再試。language 同 transcribe。"""
         with self._lock:
             try:
-                reply = self._call("load", None, 60.0)
+                reply = self._call("load", language or None, 60.0)
                 print(f"[SvWorker] warm up done ({reply.get('load_ms')} ms)")
             except RuntimeError as e:
                 print(f"[SvWorker] warm up failed: {e}")
 
-    def transcribe(self, audio: Any) -> Dict[str, Any]:
-        """audio：16 kHz float32 單聲道。回傳 {"text", "inference_time_ms"}；失敗 raise RuntimeError。"""
+    def transcribe(self, audio: Any, language: str = "") -> Dict[str, Any]:
+        """audio：16 kHz float32 單聲道；language：auto／zh／en (空字串 = 預設)。回傳 {"text", "inference_time_ms"}；失敗 raise RuntimeError。"""
         timeout = 60.0 + 1.5 * len(audio) / 16000.0
         with self._lock:
-            return self._call("transcribe", audio, timeout)
+            return self._call("transcribe", (audio, language) if language else audio, timeout)
 
     def shutdown(self) -> None:
         """會議錄完就結束子行程，釋放模型記憶體。"""

@@ -749,16 +749,19 @@ def whisper_probe_npu(audio_np: np.ndarray) -> Optional[Dict[str, Any]]:
 def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: Optional[Any] = None,
                         info_out: Optional[Dict[str, str]] = None,
                         sv_out: Optional[Dict[str, Any]] = None,
-                        lang_guard: Optional[Any] = None) -> Optional[str]:
+                        lang_guard: Optional[Any] = None, language: str = "auto") -> Optional[str]:
     """錄音中的即時切片。engine = whisper → speech_to_text (Hailo Whisper，失敗退 CPU)；
     sensevoice → sv_worker，這段失敗就改走 speech_to_text (逐字稿區的 ASR 會列出兩種引擎各幾段)。
     sv_out：SenseVoice 這段成功時填入 sv_worker 的原始結果 (tokens／timestamps／lang／emotion，底噪也照填)，給高精度逐字稿沿用；
     有用 Whisper 比對時另填 wtext (Whisper 文字)，改用 Whisper 時 use = "whisper"。
-    lang_guard (sv_lang_guard.ForeignLangGuard，每場一個)：SenseVoice 不支援的語言改用 Hailo Whisper 的文字。"""
+    lang_guard (sv_lang_guard.ForeignLangGuard，每場一個)：SenseVoice 不支援的語言改用 Hailo Whisper 的文字。
+    language：語音語系設定 (asr_language，auto／zh／en／fr／id／es／ar)；不是 auto 時 SenseVoice／Whisper 固定這個語言。"""
+    from asr_language import sv_language, whisper_language
     if engine == "sensevoice":
         from sv_worker import LIVE_POST_LABEL, live_label, sv_worker
         try:
-            res = sv_worker.transcribe(audio_np)
+            sv_lang = sv_language(language)
+            res = sv_worker.transcribe(audio_np, language=sv_lang) if sv_lang != "auto" else sv_worker.transcribe(audio_np)
         except RuntimeError as e:
             print(f"[VoicePipeline] SenseVoice 即時切片失敗，這段改用 Hailo Whisper：{e}")
         else:
@@ -787,6 +790,9 @@ def speech_to_text_live(audio_np: np.ndarray, engine: str, cancellation_event: O
             if text:
                 print(f"[VoicePipeline] SenseVoice 即時切片：'{text}' (耗時 {res.get('inference_time_ms', 0)} ms)")
             return text
+    wh_lang = whisper_language(language)
+    if wh_lang:
+        return speech_to_text(audio_np, cancellation_event, info_out=info_out, language=wh_lang)
     return speech_to_text(audio_np, cancellation_event, info_out=info_out)
 
 

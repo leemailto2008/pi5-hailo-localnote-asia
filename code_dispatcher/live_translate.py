@@ -95,6 +95,10 @@ class LiveTranslator:
             self._added.append(time.time())
             self._event.set()
 
+    def pending(self) -> int:
+        """還沒翻的段落數 (錄音中預先整理紀要用來讓路：PI5_PREMAP_YIELD_S)。"""
+        return len(self.src) - len(self.out)
+
     def close(self) -> None:
         self._closed = True
         self._event.set()

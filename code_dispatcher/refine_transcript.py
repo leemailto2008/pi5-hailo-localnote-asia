@@ -131,7 +131,8 @@ def apply_whisper_choices(decoded: List[Tuple[int, int, str, str, List[str], Lis
 
 
 def apply_whisper_live(decoded: List[Tuple[int, int, str, str, List[str], List[float]]],
-                       whisper_live: Sequence[Dict[str, Any]]) -> List[Tuple[int, int, str, str, List[str], List[float]]]:
+                       whisper_live: Sequence[Dict[str, Any]],
+                       force: bool = False) -> List[Tuple[int, int, str, str, List[str], List[float]]]:
     """即時稿選 Whisper 的場次（2026-11-18）：decoded 是 SenseVoice 從母帶整段重新辨識的結果（切片 pause_slices，跟即時切片位置不同），
     whisper_live 是即時切片（s、n 樣本，wtext＝那片 Whisper 即時稿文字）。
     每片即時切片對到同時段的 SenseVoice 輸出（語言標記取重疊最長的片、文字取時間落在範圍內的字），照即時稿 ForeignLangGuard 的
@@ -164,7 +165,9 @@ def apply_whisper_live(decoded: List[Tuple[int, int, str, str, List[str], List[f
             rec = {"sv_lang": best_lang, "sv_text": sv_text, "wtext": wtext}
             guard.decide(best_lang, sv_text, wtext)
         entries.append(rec)
-    choices = refine_whisper_choices(entries)
+    # force：語音語系選了 SenseVoice 不支援的語言 (法／西，asr_language)，每片都用 Whisper 即時稿的文字
+    choices = ([n for n, w in enumerate(whisper_live) if (w.get("wtext") or "").strip()] if force
+               else refine_whisper_choices(entries))
     if not choices:
         return decoded
     ranges = [(int(whisper_live[n]["s"]), int(whisper_live[n]["s"]) + int(whisper_live[n]["n"]),
@@ -248,13 +251,14 @@ def live_asr_path(audio_path: str, suffix: str = LIVE_ASR_SUFFIX) -> str:
 
 
 def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_samples: int,
-                  suffix: str = LIVE_ASR_SUFFIX) -> Optional[str]:
-    """錄音結束時存即時切片的辨識結果；同資料夾舊的只留最近 LIVE_ASR_KEEP 場。存不了回 None（高精度稿就整段重新辨識）。"""
+                  suffix: str = LIVE_ASR_SUFFIX, language: str = "auto") -> Optional[str]:
+    """錄音結束時存即時切片的辨識結果；同資料夾舊的只留最近 LIVE_ASR_KEEP 場。存不了回 None（高精度稿就整段重新辨識）。
+    language：這場的語音語系設定 (asr_language)，高精度稿照用 (live_asr_language)。"""
     path = live_asr_path(audio_path, suffix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".part", "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "sample_rate": SAMPLE_RATE, "total_samples": int(total_samples),
+            json.dump({"version": 1, "sample_rate": SAMPLE_RATE, "total_samples": int(total_samples), "language": language,
                        "slices": list(slices)}, f, ensure_ascii=False)
         os.replace(path + ".part", path)
         old = sorted((p for p in (os.path.join(os.path.dirname(path), n) for n in os.listdir(os.path.dirname(path)))
@@ -265,6 +269,19 @@ def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_sampl
         logger.warning("[refine] live ASR results not saved (%s): %s", path, e)
         return None
     return path
+
+
+def live_asr_language(audio_path: str) -> str:
+    """這場錄音的語音語系設定 (存在 .live_asr.json 或 .live_whisper.json；沒有就是 auto)。"""
+    for suffix in (LIVE_ASR_SUFFIX, LIVE_WHISPER_SUFFIX):
+        path = live_asr_path(audio_path, suffix)
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f).get("language") or "auto"
+            except (OSError, ValueError) as e:
+                logger.warning("[refine] live ASR language unreadable (%s): %s", path, e)
+    return "auto"
 
 
 def progress_weights(audio_path: str) -> Dict[str, Tuple[float, float]]:
@@ -613,7 +630,8 @@ def assign_tokens(regions: Sequence[Tuple[float, float]], tokens: Sequence[str],
 def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = None,
                live_slices: Optional[Sequence[Dict[str, Any]]] = None,
                stats: Optional[Dict[str, Any]] = None,
-               whisper_live: Optional[Sequence[Dict[str, Any]]] = None) -> Optional[List[Sentence]]:
+               whisper_live: Optional[Sequence[Dict[str, Any]]] = None,
+               language: str = "") -> Optional[List[Sentence]]:
     """VAD 切句後逐句辨識，再依靈敏 VAD 的短停頓把句子切成小段（見 FINE_VAD_MIN_SILENCE_S；
     後段的 cont=True）。被 should_stop 中止時回傳 None。
     live_slices（load_live_asr）：pause 模式改用錄音時的切片，SenseVoice 已辨識過的片直接沿用（見 LIVE_ASR_REUSE）；
@@ -623,12 +641,16 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
     import sherpa_onnx
 
     _rec: List[Any] = []
+    # 語音語系 (asr_language，存在即時切片檔)：zh／en 時 SenseVoice 固定這個語言；SenseVoice 不支援的語系 (法／西)
+    # 每片都用 Whisper 即時稿的文字 (apply_whisper_live force)
+    sv_lang = language if language in ("zh", "en") else ASR_LANGUAGE
+    force_whisper = language not in ("", "auto", "zh", "en")
 
     def recognizer_() -> Any:
         """要辨識才載入（整場沿用即時稿、又沒有要補辨識的片時，就不必載入模型）。"""
         if not _rec:
             _rec.append(sherpa_onnx.OfflineRecognizer.from_sense_voice(
-                model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=ASR_LANGUAGE,
+                model=model_path("asr"), tokens=model_path("tokens"), num_threads=NUM_THREADS, language=sv_lang,
                 use_itn=True))
         return _rec[0]
 
@@ -771,7 +793,7 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
             stats.update(reused_slices=reused, decoded_slices=len(slices) - reused)
         if live_slices:
             logger.info("[refine] reused live SenseVoice results for %d of %d slices", reused, len(slices))
-        if ASR_LANGUAGE == "auto":
+        if sv_lang == "auto":
             major, flips = isolated_lang_flips([d[3] for d in decoded])
             if flips:
                 fixed = sherpa_onnx.OfflineRecognizer.from_sense_voice(
@@ -794,7 +816,7 @@ def transcribe(samples, should_stop: StopFn = None, on_progress: ProgressFn = No
         if live_slices:
             decoded = apply_whisper_choices(decoded, slices, live_slices)
         elif whisper_live:
-            decoded = apply_whisper_live(decoded, whisper_live)
+            decoded = apply_whisper_live(decoded, whisper_live, force=force_whisper)
         for i0, i1, text, _lang, tokens, timestamps in decoded:
             if len(tokens) == len(timestamps):
                 times = [i0 / SAMPLE_RATE + t for t in timestamps]
@@ -1174,8 +1196,10 @@ def refine(path: str, should_stop: StopFn = None,
     whisper_live = (load_live_asr(path, len(samples), LIVE_WHISPER_SUFFIX)
                     if live is None and ASR_SEGMENTATION == "pause" else None)
     asr_stats: Dict[str, Any] = {}
+    asr_lang = live_asr_language(path)
+    out["asr_language"] = asr_lang
     sentences = transcribe(samples, should_stop, lambda f: report("asr", f), live_slices=live, stats=asr_stats,
-                           whisper_live=whisper_live)
+                           whisper_live=whisper_live, language=asr_lang)
     out["asr_s"] = round(time.time() - t0, 1)
     out["asr_reused_slices"] = asr_stats.get("reused_slices", 0)
     out["asr_decoded_slices"] = asr_stats.get("decoded_slices")

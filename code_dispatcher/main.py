@@ -1478,6 +1478,34 @@ async def set_live_asr_config(req: LiveAsrRequest) -> Dict[str, Any]:
     return await asyncio.to_thread(_live_asr_config)
 
 
+class AsrLanguageRequest(BaseModel):
+    language: str = Field(..., description="auto = 自動偵測；zh／en = SenseVoice 或 Whisper 固定語言；fr／es = SenseVoice 不支援，即時稿與高精度稿用 Whisper")
+
+
+def _asr_language_config() -> Dict[str, Any]:
+    from asr_language import ASR_LANG_CHOICES, LABELS, SV_SUPPORTED, load_asr_language
+    return {"language": load_asr_language(), "choices": [{"value": c, "label": LABELS[c], "sensevoice": c in SV_SUPPORTED}
+                                                         for c in ASR_LANG_CHOICES]}
+
+
+@app.get("/api/config/asr_language", tags=["Demo UI"])
+async def get_asr_language_config() -> Dict[str, Any]:
+    """語音語系 (下一場錄音生效)：即時稿、高精度稿、即時翻譯的來源語言都跟著它。"""
+    return await asyncio.to_thread(_asr_language_config)
+
+
+@app.post("/api/config/asr_language", tags=["Demo UI"])
+async def set_asr_language_config(req: AsrLanguageRequest) -> Dict[str, Any]:
+    from asr_language import save_asr_language
+    try:
+        await asyncio.to_thread(save_asr_language, req.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"無法儲存語音語系：{e}")
+    return await asyncio.to_thread(_asr_language_config)
+
+
 class LiveTranslateRequest(BaseModel):
     target: str = Field(..., description="off = 不翻；auto = 外語翻中文、中文翻英文；en／zh = 一律翻成英文／中文")
 

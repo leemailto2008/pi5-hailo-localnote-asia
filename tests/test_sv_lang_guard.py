@@ -205,3 +205,17 @@ def test_retro_foreign_segments_replaces_opening_slices_only_in_foreign_meetings
     zh_guard = g.ForeignLangGuard(clock=lambda: 0.0)          # 不是外語會議：一段都不動
     segs2 = [DE_SV]
     assert g.retro_foreign_segments(zh_guard, segs2, recs[:1], str.strip) == 0 and segs2 == [DE_SV]
+
+
+def test_apply_whisper_live_force_replaces_every_slice():
+    """語音語系選 SenseVoice 不支援的語言（法／西）：不管判斷，每片都用 Whisper 即時稿的文字。"""
+    sr = rt.SAMPLE_RATE
+    en = "We will meet again next Tuesday to review the budget"
+    en_toks = re.findall(r"\s*\S+", en)
+    dec = [(i * 6 * sr, (i + 1) * 6 * sr, en, "<|en|>", en_toks, [0.3 * k for k in range(len(en_toks))]) for i in range(2)]
+    fr = "Nous allons revoir le budget mardi prochain"
+    live = [{"s": i * 6 * sr, "n": 6 * sr, "wtext": fr} for i in range(2)]
+    assert rt.apply_whisper_live(dec, live) == dec                      # 一般：英文跟英文對得上，不換
+    out = rt.apply_whisper_live(dec, live, force=True)
+    assert [d[2] for d in out if d[3] == rt.WHISPER_LANG_TAG] == [fr, fr]
+    assert not [d for d in out if d[3] != rt.WHISPER_LANG_TAG and d[4]]

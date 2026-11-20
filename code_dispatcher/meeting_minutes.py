@@ -66,6 +66,7 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
 # 再由 summary_utils.assemble_long_minutes() 組成三段式紀要 (1.7B 模型無法跨 20+ 條重點歸納，實測會照抄並擠掉待辦/決議)。
 SUMMARY_SINGLE_MAX_CHARS = int(os.environ.get("PI5_SUMMARY_SINGLE_MAX", "1200"))
 SUMMARY_CHUNK_CHARS = int(os.environ.get("PI5_SUMMARY_CHUNK", "1000"))
+PREMAP_YIELD_S = float(os.environ.get("PI5_PREMAP_YIELD_S", "0"))   # 錄音中預先整理讓即時翻譯先用 NPU，最多等幾秒 (0 = 不讓；11-20 量測中，預設關)
 SUMMARY_LONG_SINGLE_CHARS = int(os.environ.get("PI5_SUMMARY_LONG_SINGLE", "800"))   # 單次紀要超過這個字數，輸出上限 480 → 600
 # 長會議的結尾總結在這個長度以內就直接用原句 (recap_notes)，不交給 LLM 改寫；設 0 關閉
 SUMMARY_RECAP_VERBATIM_MAX = int(os.environ.get("PI5_SUMMARY_RECAP_VERBATIM_MAX", "400"))
@@ -889,7 +890,13 @@ class MeetingJobManager:
             live_asr_pos = 0
             # SenseVoice 不支援的語言（德／西／法／印尼／越／泰…）改用 Hailo Whisper 的文字 (2026-11-18，sv_lang_guard)：每場會議一個
             from sv_lang_guard import ForeignLangGuard, retro_foreign_segments
-            lang_guard = ForeignLangGuard()
+            # 語音語系 (2026-11-20，asr_language)：auto 才做外語比對；選定語系時即時稿／高精度稿固定這個語言，
+            # SenseVoice 不支援的語系 (法／西) 即時稿改用 Whisper
+            from asr_language import live_engine_for, load_asr_language, sv_language
+            asr_lang = load_asr_language()
+            self._asr_lang = asr_lang
+            self.status.metrics["asr_language"] = asr_lang
+            lang_guard = ForeignLangGuard() if asr_lang == "auto" else None
 
             # 即時逐字稿引擎 (2026-11-13)：預設／網頁選 SenseVoice 時用 SenseVoice (sv_worker，CPU 2、3)，網頁選 Whisper 或這台不能用時 Hailo Whisper。
             # 錄音開始、知道收音來源 (rec_stats["source"]) 後決定一次，整場不變；用 SenseVoice 時先載入模型。
@@ -902,13 +909,15 @@ class MeetingJobManager:
                 nonlocal live_engine, sv_warm_task
                 if live_engine is None and rec_stats.get("source"):
                     import refine_transcript   # SenseVoice 的套件與模型在不在（沒有就用 Whisper）
-                    live_engine = live_asr_engine(live_asr_pref, rec_stats["source"],
-                                                  sv_available=refine_transcript.check_available() is None)
+                    live_engine = live_engine_for(live_asr_engine(live_asr_pref, rec_stats["source"],
+                                                                  sv_available=refine_transcript.check_available() is None),
+                                                  asr_lang)
                     self.status.metrics["live_asr"] = live_engine
-                    print(f"[MeetingMinutes] 即時逐字稿引擎：{live_engine}（網頁選 {live_asr_pref}，收音 {rec_stats['source']}）")
+                    print(f"[MeetingMinutes] 即時逐字稿引擎：{live_engine}（網頁選 {live_asr_pref}，語系 {asr_lang}，收音 {rec_stats['source']}）")
                     if live_engine == "sensevoice":
                         from sv_worker import sv_worker
-                        sv_warm_task = asyncio.get_running_loop().create_task(asyncio.to_thread(sv_worker.warm_up))
+                        sv_warm_task = asyncio.get_running_loop().create_task(
+                            asyncio.to_thread(sv_worker.warm_up, sv_language(asr_lang)))
                 return live_engine or "whisper"
 
             async def _chunk_stt_worker():
@@ -957,7 +966,8 @@ class MeetingJobManager:
                                     self._thread_cancellation_token,
                                     info_out=stt_info,
                                     sv_out=sv_res,
-                                    lang_guard=lang_guard
+                                    lang_guard=lang_guard,
+                                    language=asr_lang
                                 )
                                 if sv_res.get("tokens") is not None:
                                     live_rec.update(src="sv", text=sv_res.get("raw_text", ""), lang=sv_res.get("lang", ""),
@@ -1063,6 +1073,13 @@ class MeetingJobManager:
                     seg, _ = await asyncio.to_thread(apply_meeting_glossary, live[done_upto:end])
                     piece = seg.strip()
                     idx = len(self._premap_notes) + 1
+                    # 即時翻譯優先：還有沒翻的段落時先讓 NPU 給翻譯，最多等 PREMAP_YIELD_S 秒 (預先整理只是幫錄音後的紀要先做，晚一點沒關係)
+                    t_wait = time.time()
+                    while (PREMAP_YIELD_S > 0 and self._live_tr is not None and self._live_tr.pending() > 0
+                           and time.time() - t_wait < PREMAP_YIELD_S and not premap_stop.is_set()):
+                        await asyncio.sleep(1.0)
+                    if premap_stop.is_set() or self._cancellation_token.is_set():
+                        continue
                     t_req = time.time()
                     try:
                         # 用串流：錄音結束時取消串流，hailo-ollama 會立刻停止生成 (非串流請求取消後伺服器仍會跑完，
@@ -1149,7 +1166,8 @@ class MeetingJobManager:
                 self.notify_status_update()
                 return
             rec_finish_time = time.time()
-            lang_guard.tail_only = True   # 尾端切片：還不是外語會議就不再載入 Whisper 比對 (見 sv_lang_guard.ForeignLangGuard)
+            if lang_guard is not None:
+                lang_guard.tail_only = True   # 尾端切片：還不是外語會議就不再載入 Whisper 比對 (見 sv_lang_guard.ForeignLangGuard)
             actual_record_sec = max(1.0, round(rec_finish_time - t0, 1))
             duration_sec = int(round(actual_record_sec))
             self.status.total = float(duration_sec)
@@ -1215,7 +1233,8 @@ class MeetingJobManager:
             if chunk_worker_done.is_set() and any(s.get("src") == "sv" for s in live_asr_slices):
                 # 切片全部辨識完才存 (逾時沒轉完就不存，高精度逐字稿整段重新辨識)
                 import refine_transcript
-                saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos)
+                saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos,
+                                                refine_transcript.LIVE_ASR_SUFFIX, asr_lang)
                 if saved:
                     n_sv = sum(1 for s in live_asr_slices if s.get("src") == "sv")
                     print(f"[MeetingMinutes] 即時 SenseVoice 結果已存 ({n_sv}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
@@ -1223,7 +1242,7 @@ class MeetingJobManager:
                 # 即時稿選 Whisper：存每片位置與 Whisper 文字 (高精度稿照舊整段 SenseVoice 重新辨識，只用來換掉 SenseVoice 不支援的語言)
                 import refine_transcript
                 saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos,
-                                                refine_transcript.LIVE_WHISPER_SUFFIX)
+                                                refine_transcript.LIVE_WHISPER_SUFFIX, asr_lang)
                 if saved:
                     n_w = sum(1 for s in live_asr_slices if s.get("wtext"))
                     print(f"[MeetingMinutes] 即時 Whisper 文字已存 ({n_w}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
@@ -1934,6 +1953,10 @@ class MeetingJobManager:
         self._stop_live_translate()
         self.status.translation_live = None
         mode = load_live_translate_preference()
+        # 自動：語音語系選定時跟著它 (中文翻英文、其他翻中文)；語系 auto 時逐段判斷
+        asr_lang = getattr(self, "_asr_lang", "auto")
+        if mode == "auto" and asr_lang != "auto":
+            mode = "en" if asr_lang == "zh" else "zh"
         self.status.metrics["live_tr_mode"] = mode
         if mode == "off":
             return
