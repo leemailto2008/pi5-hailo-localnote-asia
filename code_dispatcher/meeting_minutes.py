@@ -438,6 +438,12 @@ def _save_live_translation(job_id: str, data: Dict[str, Any]) -> str:
     with open(tmp, "w", encoding="utf-8") as f:
         _json.dump(data, f, ensure_ascii=False)
     os.replace(tmp, path)
+    # RAM 磁碟只留最近幾場 (同 .live_asr.json 的 LIVE_ASR_KEEP；11-20 一天測試累積 33 個)
+    from refine_transcript import LIVE_ASR_KEEP
+    folder = os.path.dirname(path)
+    old = sorted((os.path.join(folder, n) for n in os.listdir(folder) if n.endswith(".live_tr.json")), key=os.path.getmtime)
+    for p in old[:-LIVE_ASR_KEEP]:
+        os.remove(p)
     return path
 
 

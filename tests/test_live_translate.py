@@ -160,3 +160,16 @@ def test_pause_interrupts_in_flight_batch_and_retries(monkeypatch):
 
     tr = asyncio.run(scenario())
     assert tr.out == {0: "ok"} and tr.kept == 0 and len(calls) == 2 and tr.requests == 1
+
+
+def test_saved_live_translation_keeps_recent_files(tmp_path, monkeypatch):
+    import meeting_minutes as mm
+    import refine_transcript as rt
+    cache = tmp_path / "audio_cache"
+    cache.mkdir()
+    monkeypatch.setattr(mm, "AUDIO_CACHE_DIR", str(cache))
+    for k in range(rt.LIVE_ASR_KEEP + 3):
+        p = mm._save_live_translation(f"m_{k}", {"segments": []})
+        os.utime(p, (k, k))
+    left = sorted(os.listdir(tmp_path / "localnote_state"))
+    assert len(left) == rt.LIVE_ASR_KEEP and f"m_{rt.LIVE_ASR_KEEP + 2}.live_tr.json" in left
