@@ -1,6 +1,15 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
 （互動鎖已停用：claude.ai 雲端每小時排程 trig_01XfezGs1zV3uroLZy1NZm4D 於 2026-11-20 經使用者同意由 dr 停用，.228 只剩 CLI localnote 使用，不需再錯開。舊內容：互動 session 進行中，至 2026-11-21 09:00（台北；11-20 03:1x CLI 續期（夜間 loop 中）；11-19 15:0x CLI 續期；11-18 09:05 CLI 續期；11-17 09:45 使用者改用 Claude CLI 在本機工作，交接文件 to_claude_cli.md；CLI 工作時每輪續期這行；過期代表沒人在做，每小時排程接手））
 
+## 11-20 晚～週末（#60）：週末計畫 W1–W6（Andrew 11-23 回來 review；早報草稿 .cc_scratch/loop/monday_report_draft.md）
+- W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
+  錄音中回報不影響（1 分 PASS）；錄音中附錄音讀到半截檔 → 45cb670。使用說明 claude_context/ISSUE_FEEDBACK.md。.229 17:51 依使用者指示更新到 3ea6c8e。
+- W2（3ea6c8e＋即時翻譯 auto）全 PASS：數位 5／30／60／en_long cer_num 0.0153／0.018／0.0179／0.0779、swap 0；藍牙 30 0.0183、封包 100%；
+  GS3 30 0.0221、紀要 56.7 s；podcast 30 紀要 43 s、tail 1.4 s。
+- 即時翻譯延遲的來源：30 分前 10% 段落 p50 ~7 s，之後錄音中預先整理紀要（每段 ~35–40 s）插入時升到 30–75 s；
+  podcast 真人快速對談（5.3 中文字/s → 中翻英 ~4.1 tok/s，Hailo ~4.5）加預先整理超過上限，延遲 27→157 s 一路累積。W5 量「預先整理讓路 45 s」。
+- 5 分紀要秒數與輸出 token 成正比（約 0.25 s/token），開翻譯時較慢是輸出長度波動，不是翻譯。
+
 ## 11-20 白天（#59）：即時翻譯、語音語系、即時稿引擎切換、/health（給使用者看；量測在 .228，數位直送不出聲）
 - 即時翻譯（9551f92 起）：SenseVoice 即時稿每段送 Hailo LLM 翻譯（網頁翻譯同一套；錄音中只用 Hailo）；網頁「🌐 即時翻譯」選 自動（外語→中文 (zh)、中文→英文 (en)，使用者確認的預設）／一律英文／一律中文／關閉。
   A/B（SenseVoice，開／關翻譯，同測資）：5／10／30 分、en_long 全 PASS，cer_num、fact 開關相同；延遲 p50 8.2／8.5／33.3／11.4 s、p90 13.7／22.7／59.0／17.7 s；
