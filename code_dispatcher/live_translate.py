@@ -86,6 +86,8 @@ class LiveTranslator:
         self.requests = 0
         self._event = asyncio.Event()
         self._closed = False
+        self._go = asyncio.Event()      # 清掉時暫停送新請求 (pause／resume)
+        self._go.set()
         self._on_update = on_update
         self._should_stop = should_stop
 
@@ -98,6 +100,14 @@ class LiveTranslator:
     def pending(self) -> int:
         """還沒翻的段落數 (錄音中預先整理紀要用來讓路：PI5_PREMAP_YIELD_S)。"""
         return len(self.src) - len(self.out)
+
+    def pause(self) -> None:
+        """暫停送新請求 (進行中的那次照常翻完)：即時稿用 Hailo Whisper 時，錄音結束後 NPU 先讓給最後幾段即時稿
+        (11-20 Whisper＋即時翻譯 5 分：尾端等待 23.6 s，門檻 10 s)。"""
+        self._go.clear()
+
+    def resume(self) -> None:
+        self._go.set()
 
     def close(self) -> None:
         self._closed = True
@@ -149,6 +159,9 @@ class LiveTranslator:
                 self._event.clear()
                 await self._event.wait()
                 continue
+            await self._go.wait()
+            if self._should_stop():
+                return
             idxs = self._next_batch(done)
             tgt = target_for(self.src[idxs[0]], self.mode)
             units = [self.src[i] for i in idxs]

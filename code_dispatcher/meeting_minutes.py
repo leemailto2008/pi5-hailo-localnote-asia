@@ -1196,6 +1196,8 @@ class MeetingJobManager:
                 self._premap_task = None
             if self._live_tr is not None:
                 self._live_tr.close()   # 不再等新段落；剩下的段落 (含尾端切片) 翻完就結束，不擋紀要
+                if live_engine == "whisper":
+                    self._live_tr.pause()   # 尾端切片還要用 NPU (Hailo Whisper)：切片轉完再繼續翻
 
             # 等待剩餘切片隊列消化完畢 (依據隊列深度動態等待，保證全軌切片 100% 入稿)
             await chunk_queue.put(None)
@@ -1227,6 +1229,8 @@ class MeetingJobManager:
                 self.status.msg = f"🎧 錄音完成！正在結算最後 {cur_rem} 段逐字稿 (尾端已等 {cur_tail_wait}s)..."
                 self.notify_status_update()
                 await asyncio.sleep(0.5)
+            if self._live_tr is not None:
+                self._live_tr.resume()   # 尾端切片都轉完了 (或逾時)：繼續翻剩下的段落
             if live_engine == "sensevoice":   # 切片都轉完了：結束 SenseVoice 子行程，記憶體留給紀要與高精度逐字稿
                 from sv_worker import sv_worker
                 await asyncio.to_thread(sv_worker.shutdown)

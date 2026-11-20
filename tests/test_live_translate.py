@@ -79,3 +79,26 @@ def test_preference_roundtrip(tmp_path, monkeypatch):
         raise AssertionError("should reject")
     except ValueError:
         pass
+
+
+def test_pause_holds_new_requests_until_resume(monkeypatch):
+    calls = []
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+        calls.append(list(units))
+        return {"done": {k: "x" for k, _u in enumerate(units)}}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario():
+        tr = lt.LiveTranslator("en")
+        tr.pause()
+        task = asyncio.create_task(tr.run())
+        tr.add("第一段")
+        tr.close()
+        await asyncio.sleep(0.05)
+        held = list(calls)
+        tr.resume()
+        await asyncio.wait_for(task, 2)
+        return held
+
+    assert asyncio.run(scenario()) == [] and calls == [["第一段"]]
