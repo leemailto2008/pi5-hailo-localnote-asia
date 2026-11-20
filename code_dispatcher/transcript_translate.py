@@ -459,10 +459,10 @@ async def _translate_flat(flat: Sequence[str], target: str,
     if use_cpu and total >= 2:
         workers.append(worker("CPU", hailo_only=False, cpu_first=True))
     await asyncio.gather(*workers)
-    if queue and not stats["stopped"]:          # 兩路都失敗：最後再用預設順序試一次
+    if queue and not stats["stopped"]:          # 兩路都失敗：最後再用預設順序試一次 (不能用 CPU 時只試 Hailo：錄音中禁止 CPU 推論)
         for c in list(queue):
             try:
-                if await translate_chunk(c, hailo_only=False, cpu_first=False):
+                if await translate_chunk(c, hailo_only=not use_cpu, cpu_first=False):
                     finished[c] = True
                     queue.remove(c)
             except LLMError as e:

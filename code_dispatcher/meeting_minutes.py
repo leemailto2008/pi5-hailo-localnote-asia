@@ -41,6 +41,7 @@ AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 # LLM backend selection (Hailo-10H qwen3:1.7b preferred, CPU Ollama fallback) lives in llm_backend.py
 from llm_backend import aiter_chat_stream, LLMError
 from transcript_translate import english_minutes_lines
+from live_translate import LiveTranslator, load_live_translate_preference
 from meeting_glossary import apply_to_text as apply_meeting_glossary
 try:
     # 部署後 hailo_whisper 在 code_dispatcher 底下。NPU 每個切片 (約 6 秒) 已各自修過一次術語，
@@ -357,6 +358,7 @@ class JobStatus(BaseModel):
     msg: Optional[str] = None
     transcript: Optional[str] = None
     transcript_live: Optional[str] = None   # 見 MeetingResult.transcript_live
+    translation_live: Optional[str] = None   # 錄音中的即時翻譯 (live_translate)；沒開時 None
     audio_url: Optional[str] = None
     summary_stream: Optional[str] = None
     # LLM 原始輸出（未經 clean/ensure/merge 後處理），僅供 e2e 存檔比對，不影響畫面
@@ -423,6 +425,19 @@ def localize_parsed(parsed: Dict[str, Any], lang: str) -> Dict[str, Any]:
             if t.get(k) == "無":
                 t[k] = "None"
     return parsed
+
+
+def _save_live_translation(job_id: str, data: Dict[str, Any]) -> str:
+    """即時翻譯逐段結果 → 與 .live_asr.json 同一個 localnote_state 資料夾 (RAM 磁碟)。"""
+    import json as _json
+    from refine_transcript import live_asr_path
+    path = live_asr_path(os.path.join(AUDIO_CACHE_DIR, f"{job_id}.ogg"), ".live_tr.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, path)
+    return path
 
 
 def minutes_document(raw_markdown: str, transcript: str, formatted_dt: str, duration_sec: int, lang: str) -> str:
@@ -526,6 +541,8 @@ class MeetingJobManager:
         self._current_task: Optional[asyncio.Task] = None
         self._record_task: Optional[asyncio.Task] = None
         self._chunk_worker_task: Optional[asyncio.Task] = None
+        self._live_tr: Optional[LiveTranslator] = None        # 錄音中的即時翻譯 (_start_live_translate)
+        self._live_tr_task: Optional[asyncio.Task] = None
         self._premap_task: Optional[asyncio.Task] = None
         self._peaks_task: Optional[asyncio.Task] = None   # 錄音後背景算波形峰值 (留參考，避免被回收)
         self._premap_prefix: str = ""          # 錄音中已預先整理的逐字稿前段 (tidy_live_transcript 後)
@@ -711,6 +728,7 @@ class MeetingJobManager:
         if self._premap_task and not self._premap_task.done():
             self._premap_task.cancel()
         self._premap_task = None
+        self._stop_live_translate()
 
         # 3. Cancel asyncio pipeline task
         if self._current_task and not self._current_task.done():
@@ -978,6 +996,8 @@ class MeetingJobManager:
 
                                     live_segments.append(clean_t)
                                     live_seg_recs.append(live_rec)
+                                    if self._live_tr is not None:
+                                        self._live_tr.add(clean_t)
                                     # 智慧雙語拼接 (Bilingual live stream preview)
                                     if len(live_segments) == 1:
                                         curr_preview = clean_t
@@ -1010,6 +1030,7 @@ class MeetingJobManager:
                 finally:
                     chunk_worker_done.set()
 
+            self._start_live_translate(job_id)
             chunk_worker_task = asyncio.create_task(_chunk_stt_worker())
             self._chunk_worker_task = chunk_worker_task
 
@@ -1155,6 +1176,8 @@ class MeetingJobManager:
                 except Exception as e:
                     print(f"[MeetingMinutes] 錄音中預先整理結束時出錯: {e}")
                 self._premap_task = None
+            if self._live_tr is not None:
+                self._live_tr.close()   # 不再等新段落；剩下的段落 (含尾端切片) 翻完就結束，不擋紀要
 
             # 等待剩餘切片隊列消化完畢 (依據隊列深度動態等待，保證全軌切片 100% 入稿)
             await chunk_queue.put(None)
@@ -1905,6 +1928,50 @@ class MeetingJobManager:
             return merge_recap_into_minutes(ensure_sections(clean_summary_markdown(to_internal_sections("".join(accumulated)))),
                                             clean_transcript)
         return "## 摘要\n- 會議內容已完整保留於逐字稿\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 確認逐字稿細節 | 全體 | 待定 |\n\n## 決議\n- 錄音與逐字稿存檔完成"
+
+    def _start_live_translate(self, job_id: Optional[str]) -> None:
+        """這場錄音的即時翻譯 (網頁選的目標語言；off 或 Hailo 不在時不開)。"""
+        self._stop_live_translate()
+        self.status.translation_live = None
+        mode = load_live_translate_preference()
+        self.status.metrics["live_tr_mode"] = mode
+        if mode == "off":
+            return
+        try:
+            from npu_share import shared_group
+            if not shared_group():
+                print("[MeetingMinutes] 即時翻譯未啟用：沒有 Hailo (錄音中不可用 CPU 翻譯)")
+                self.status.metrics["live_tr_mode"] = "unavailable"
+                return
+        except Exception as e:
+            print(f"[MeetingMinutes] 即時翻譯未啟用: {e}")
+            self.status.metrics["live_tr_mode"] = "unavailable"
+            return
+
+        async def on_update(tr: LiveTranslator) -> None:
+            if self.status.job != job_id:   # 已經是下一場錄音
+                return
+            self.status.translation_live = tr.text()
+            self.status.metrics.update(tr.stats())
+            try:   # 逐段結果存 RAM 磁碟 (localnote_state/<job>.live_tr.json，量測延遲／正確率用；零磁碟寫入)
+                await asyncio.to_thread(_save_live_translation, job_id, tr.dump())
+            except (OSError, TypeError, ValueError) as e:
+                print(f"[MeetingMinutes] 即時翻譯結果存檔失敗：{e}")
+            from ws_manager import ws_manager
+            await ws_manager.broadcast("translation_stream", {"job_id": job_id, "text": self.status.translation_live})
+            self.notify_status_update()
+
+        tr = LiveTranslator(mode, on_update=on_update, should_stop=self._cancellation_token.is_set)
+        self._live_tr = tr
+        self._live_tr_task = asyncio.create_task(tr.run())
+        print(f"[MeetingMinutes] 即時翻譯：{mode}")
+
+    def _stop_live_translate(self) -> None:
+        task = getattr(self, "_live_tr_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._live_tr_task = None
+        self._live_tr = None
 
     async def _translate_foreign_minutes_lines(self, raw_markdown: str, minutes_lang: str) -> str:
         """英文紀要裡夾著的外語條目 (法文會議常見) 翻成英文 (transcript_translate.english_minutes_lines，只用 Hailo)；

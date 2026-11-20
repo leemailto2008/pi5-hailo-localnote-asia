@@ -1476,6 +1476,29 @@ async def set_live_asr_config(req: LiveAsrRequest) -> Dict[str, Any]:
     return await asyncio.to_thread(_live_asr_config)
 
 
+class LiveTranslateRequest(BaseModel):
+    target: str = Field(..., description="off = 不翻；auto = 外語翻中文、中文翻英文；en／zh = 一律翻成英文／中文")
+
+
+@app.get("/api/config/live_translate", tags=["Demo UI"])
+async def get_live_translate_config() -> Dict[str, Any]:
+    """錄音中的即時翻譯目標語言 (下一場錄音生效；只用 Hailo，和錄音中預先整理紀要輪流用 NPU)。"""
+    from live_translate import LIVE_TR_CHOICES, load_live_translate_preference
+    return {"target": await asyncio.to_thread(load_live_translate_preference), "choices": list(LIVE_TR_CHOICES)}
+
+
+@app.post("/api/config/live_translate", tags=["Demo UI"])
+async def set_live_translate_config(req: LiveTranslateRequest) -> Dict[str, Any]:
+    from live_translate import LIVE_TR_CHOICES, save_live_translate_preference
+    try:
+        await asyncio.to_thread(save_live_translate_preference, req.target)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"無法儲存即時翻譯設定：{e}")
+    return {"target": req.target, "choices": list(LIVE_TR_CHOICES)}
+
+
 @app.post("/api/config/mic", tags=["Demo UI"])
 async def set_mic_config(req: MicPreferenceRequest) -> Dict[str, Any]:
     from voice_pipeline import save_mic_preference
