@@ -75,7 +75,7 @@ class LiveTranslator:
     on_update(self) 每翻好一批呼叫一次 (更新網頁)。"""
 
     def __init__(self, mode: str, on_update: Optional[Callable[["LiveTranslator"], Awaitable[None]]] = None,
-                 should_stop: Callable[[], bool] = lambda: False) -> None:
+                 should_stop: Callable[[], bool] = lambda: False, npu_busy: Callable[[], bool] = lambda: False) -> None:
         self.mode = mode
         self.src: List[str] = []
         self.out: Dict[int, str] = {}
@@ -90,6 +90,9 @@ class LiveTranslator:
         self._go.set()
         self._on_update = on_update
         self._should_stop = should_stop
+        # 即時稿也在用 NPU (Hailo Whisper 即時稿，或 SenseVoice 的外語比對) 而且還有切片沒轉完時，先不送翻譯請求
+        # (11-20 Whisper＋即時翻譯 5 分：尾端等待 15–24 s，門檻 10 s)
+        self._npu_busy = npu_busy
 
     def add(self, text: str) -> None:
         if text and text.strip():
@@ -160,6 +163,8 @@ class LiveTranslator:
                 await self._event.wait()
                 continue
             await self._go.wait()
+            while self._npu_busy() and not self._should_stop():
+                await asyncio.sleep(0.3)
             if self._should_stop():
                 return
             idxs = self._next_batch(done)

@@ -959,16 +959,20 @@ class MeetingJobManager:
 
                                 stt_info: Dict[str, str] = {}
                                 sv_res: Dict[str, Any] = {}
-                                seg_text = await asyncio.to_thread(
-                                    speech_to_text_live,
-                                    pcm_np,
-                                    decide_live_engine(),
-                                    self._thread_cancellation_token,
-                                    info_out=stt_info,
-                                    sv_out=sv_res,
-                                    lang_guard=lang_guard,
-                                    language=asr_lang
-                                )
+                                stt_busy[0] = True
+                                try:
+                                    seg_text = await asyncio.to_thread(
+                                        speech_to_text_live,
+                                        pcm_np,
+                                        decide_live_engine(),
+                                        self._thread_cancellation_token,
+                                        info_out=stt_info,
+                                        sv_out=sv_res,
+                                        lang_guard=lang_guard,
+                                        language=asr_lang
+                                    )
+                                finally:
+                                    stt_busy[0] = False
                                 if sv_res.get("tokens") is not None:
                                     live_rec.update(src="sv", text=sv_res.get("raw_text", ""), lang=sv_res.get("lang", ""),
                                                     emotion=sv_res.get("emotion", ""), tokens=sv_res["tokens"],
@@ -1040,7 +1044,14 @@ class MeetingJobManager:
                 finally:
                     chunk_worker_done.set()
 
-            self._start_live_translate(job_id)
+            stt_busy = [False]
+
+            def _live_npu_busy() -> bool:
+                """即時稿正在用 NPU (Hailo Whisper 即時稿，或外語會議的 Whisper 比對) 而且還有切片沒轉完 → 即時翻譯先等。"""
+                uses_npu = live_engine == "whisper" or (lang_guard is not None and lang_guard.foreign_mode())
+                return uses_npu and (stt_busy[0] or chunk_queue.qsize() > 0)
+
+            self._start_live_translate(job_id, npu_busy=_live_npu_busy)
             chunk_worker_task = asyncio.create_task(_chunk_stt_worker())
             self._chunk_worker_task = chunk_worker_task
 
@@ -1955,7 +1966,7 @@ class MeetingJobManager:
                                             clean_transcript)
         return "## 摘要\n- 會議內容已完整保留於逐字稿\n\n## 待辦\n| 事項 | 負責人 | 時間 |\n|---|---|---|\n| 確認逐字稿細節 | 全體 | 待定 |\n\n## 決議\n- 錄音與逐字稿存檔完成"
 
-    def _start_live_translate(self, job_id: Optional[str]) -> None:
+    def _start_live_translate(self, job_id: Optional[str], npu_busy: Callable[[], bool] = lambda: False) -> None:
         """這場錄音的即時翻譯 (網頁選的目標語言；off 或 Hailo 不在時不開)。"""
         self._stop_live_translate()
         self.status.translation_live = None
@@ -1991,7 +2002,7 @@ class MeetingJobManager:
             await ws_manager.broadcast("translation_stream", {"job_id": job_id, "text": self.status.translation_live})
             self.notify_status_update()
 
-        tr = LiveTranslator(mode, on_update=on_update, should_stop=self._cancellation_token.is_set)
+        tr = LiveTranslator(mode, on_update=on_update, should_stop=self._cancellation_token.is_set, npu_busy=npu_busy)
         self._live_tr = tr
         self._live_tr_task = asyncio.create_task(tr.run())
         print(f"[MeetingMinutes] 即時翻譯：{mode}")
