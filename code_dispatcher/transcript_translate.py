@@ -86,7 +86,11 @@ def untranslated_left(translation: str, target: str) -> bool:
     (11-19 自測：en_short 3 行、德文那份 8 行模型原樣回英文，原本被當成翻好了)。"""
     if target == "en":
         return bool(_CJK_RE.search(translation))
-    return not _CJK_RE.search(translation) and len(_LATIN_RE.findall(translation)) >= 4   # 「AfD」「IBM」這種縮寫翻中文本來就保留
+    cjk, latin = len(_CJK_RE.findall(translation)), len(_LATIN_RE.findall(translation))
+    if cjk == 0:
+        return latin >= 4   # 「AfD」「IBM」這種縮寫翻中文本來就保留
+    # 只翻了開頭幾個字、後面還是原文 (11-20 法文即時翻譯「前年45,000 l'an dernier, donc c'est bon…」)
+    return latin >= 12 and latin > 4 * cjk   # 人名多的「Ijasa Jokowi再度接受Forensik驗證」(20 對 6) 不算
 
 
 def mostly_translated(translation: str, target: str) -> bool:

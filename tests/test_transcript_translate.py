@@ -282,3 +282,9 @@ def test_english_minutes_lines_translates_only_foreign_bullets(monkeypatch):
     seen.clear()
     assert asyncio.run(tt.english_minutes_lines("## 摘要\n- Budget is 800,000\n- 7 people")) == ("## 摘要\n- Budget is 800,000\n- 7 people", 0)
     assert seen == []
+
+
+def test_zh_target_rejects_mostly_untranslated():
+    assert tt.untranslated_left("前年45,000 l'an dernier, donc c'est bon l'ampleur est impressionnante", "zh")
+    assert not tt.untranslated_left("David負責，8月15日前完成 AfD 的報告", "zh")
+    assert not tt.untranslated_left("我認為它已經存在，這是Nino。HINO是一種長期被關注的現象", "zh")
