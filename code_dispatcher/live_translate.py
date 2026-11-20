@@ -171,12 +171,18 @@ class LiveTranslator:
             tgt = target_for(self.src[idxs[0]], self.mode)
             units = [self.src[i] for i in idxs]
             self.requests += 1
+            # 暫停 (錄音結束、紀要要用 NPU) 時連進行中的請求也停掉，紀要出來後這批整批重翻
+            # (11-20：只在批次之間暫停時，進行中的那批連重翻可跑 30 s 以上，紀要仍比關翻譯慢 20–28 s)
+            interrupted = lambda: self._should_stop() or not self._go.is_set()
             try:
-                res = await tt._translate_flat(units, tgt, None, self._should_stop, use_cpu=False)
+                res = await tt._translate_flat(units, tgt, None, interrupted, use_cpu=False)
                 got = res["done"]
             except tt.LLMError as e:
                 logger.warning("[LiveTranslate] 第 %d–%d 段翻譯失敗，顯示原文：%s", idxs[0] + 1, idxs[-1] + 1, e)
                 got = {}
+            if not self._go.is_set() and not self._should_stop():
+                self.requests -= 1
+                continue
             now = time.time()
             for k, i in enumerate(idxs):
                 if k in got:

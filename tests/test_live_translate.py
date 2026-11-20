@@ -125,3 +125,32 @@ def test_waits_while_npu_busy(monkeypatch):
         return held
 
     assert asyncio.run(scenario()) == [] and calls == [["第一段"]]
+
+
+def test_pause_interrupts_in_flight_batch_and_retries(monkeypatch):
+    calls = []
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu):
+        calls.append(list(units))
+        for _ in range(50):                      # 模擬長請求，暫停時中止
+            if should_stop():
+                return {"done": {}}
+            await asyncio.sleep(0.01)
+        return {"done": {k: "ok" for k, _u in enumerate(units)}}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario():
+        tr = lt.LiveTranslator("en")
+        task = asyncio.create_task(tr.run())
+        tr.add("第一段")
+        await asyncio.sleep(0.05)
+        tr.pause()                               # 進行中的請求被中止，不算翻好
+        tr.close()
+        await asyncio.sleep(0.1)
+        assert tr.out == {}
+        tr.resume()
+        await asyncio.wait_for(task, 3)
+        return tr
+
+    tr = asyncio.run(scenario())
+    assert tr.out == {0: "ok"} and tr.kept == 0 and len(calls) == 2 and tr.requests == 1
