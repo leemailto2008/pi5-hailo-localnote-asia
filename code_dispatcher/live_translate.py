@@ -62,6 +62,13 @@ def save_live_translate_preference(target: str) -> str:
     return target
 
 
+def effective_mode(pref: str, asr_lang: str) -> str:
+    """這場即時翻譯實際的模式：網頁選「自動」且語音語系選定時跟著語系 (中文翻英文、其他翻中文)；語系 auto 時逐段判斷。"""
+    if pref == "auto" and asr_lang not in ("", "auto"):
+        return "en" if asr_lang == "zh" else "zh"
+    return pref
+
+
 def target_for(text: str, mode: str) -> str:
     """這段要翻成哪種語言：auto 時中文 (中文字不少於英文字母的一半) 翻英文，其他翻中文。"""
     if mode in ("en", "zh"):

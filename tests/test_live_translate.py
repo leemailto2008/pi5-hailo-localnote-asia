@@ -177,3 +177,10 @@ def test_saved_live_translation_keeps_recent_files(tmp_path, monkeypatch):
         os.utime(p, (k, k))
     left = sorted(os.listdir(tmp_path / "localnote_state"))
     assert len(left) == rt.LIVE_ASR_KEEP and f"m_{rt.LIVE_ASR_KEEP + 2}.live_tr.json" in left
+
+
+def test_effective_mode_follows_asr_language():
+    assert lt.effective_mode("auto", "auto") == "auto"
+    assert lt.effective_mode("auto", "zh") == "en"
+    assert lt.effective_mode("auto", "en") == "zh" and lt.effective_mode("auto", "fr") == "zh" and lt.effective_mode("auto", "es") == "zh"
+    assert lt.effective_mode("en", "zh") == "en" and lt.effective_mode("off", "fr") == "off"

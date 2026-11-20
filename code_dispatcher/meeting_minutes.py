@@ -41,7 +41,7 @@ AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 # LLM backend selection (Hailo-10H qwen3:1.7b preferred, CPU Ollama fallback) lives in llm_backend.py
 from llm_backend import aiter_chat_stream, LLMError
 from transcript_translate import english_minutes_lines
-from live_translate import LiveTranslator, load_live_translate_preference
+from live_translate import LiveTranslator, load_live_translate_preference, effective_mode as effective_live_translate_mode
 from meeting_glossary import apply_to_text as apply_meeting_glossary
 try:
     # 部署後 hailo_whisper 在 code_dispatcher 底下。NPU 每個切片 (約 6 秒) 已各自修過一次術語，
@@ -1986,11 +1986,7 @@ class MeetingJobManager:
         """這場錄音的即時翻譯 (網頁選的目標語言；off 或 Hailo 不在時不開)。"""
         self._stop_live_translate()
         self.status.translation_live = None
-        mode = load_live_translate_preference()
-        # 自動：語音語系選定時跟著它 (中文翻英文、其他翻中文)；語系 auto 時逐段判斷
-        asr_lang = getattr(self, "_asr_lang", "auto")
-        if mode == "auto" and asr_lang != "auto":
-            mode = "en" if asr_lang == "zh" else "zh"
+        mode = effective_live_translate_mode(load_live_translate_preference(), getattr(self, "_asr_lang", "auto"))
         self.status.metrics["live_tr_mode"] = mode
         if mode == "off":
             return
