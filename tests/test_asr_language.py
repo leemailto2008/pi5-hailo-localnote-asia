@@ -36,3 +36,14 @@ def test_refine_reads_saved_language(tmp_path):
     assert rt.live_asr_language(audio) == "auto"
     rt.save_live_asr(audio, [{"s": 0, "n": 16000, "wtext": "hola"}], 16000, rt.LIVE_WHISPER_SUFFIX, "es")
     assert rt.live_asr_language(audio) == "es"
+
+
+def test_short_whisper_live_file_still_loads(tmp_path):
+    import refine_transcript as rt
+    cache = tmp_path / "audio_cache"
+    cache.mkdir()
+    audio = str(cache / "m_2.ogg")
+    rt.save_live_asr(audio, [{"s": 0, "n": 16000 * 6, "wtext": "hola"}], 16000 * 6, rt.LIVE_WHISPER_SUFFIX, "es")
+    out = rt.load_live_asr(audio, 16000 * 60, rt.LIVE_WHISPER_SUFFIX)    # 尾端逾時：只蓋到前 6 s
+    assert out is not None and out[0]["wtext"] == "hola" and out[-1]["src"] == "tail"
+    assert rt.load_live_asr(audio, 16000 * 60) is None                   # SenseVoice 切片檔不放寬

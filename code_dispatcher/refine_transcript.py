@@ -312,7 +312,9 @@ def load_live_asr(audio_path: str, n_samples: int, suffix: str = LIVE_ASR_SUFFIX
             logger.warning("[refine] live ASR slices not contiguous at %d (expected %d); re-decode everything", s["s"], pos)
             return None
         pos += int(s["n"])
-    if abs(pos - n_samples) > LIVE_ASR_MAX_DRIFT_S * SAMPLE_RATE:
+    # Whisper 即時稿文字只用來換字：錄音結束時尾端切片逾時沒轉完 (只蓋到前段) 也可以用，後段照用 SenseVoice
+    short_ok = suffix == LIVE_WHISPER_SUFFIX and pos < n_samples
+    if abs(pos - n_samples) > LIVE_ASR_MAX_DRIFT_S * SAMPLE_RATE and not short_ok:
         logger.warning("[refine] live ASR covers %.2f s but audio is %.2f s; re-decode everything",
                        pos / SAMPLE_RATE, n_samples / SAMPLE_RATE)
         return None

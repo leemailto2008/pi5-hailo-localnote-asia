@@ -892,7 +892,7 @@ class MeetingJobManager:
             from sv_lang_guard import ForeignLangGuard, retro_foreign_segments
             # 語音語系 (2026-11-20，asr_language)：auto 才做外語比對；選定語系時即時稿／高精度稿固定這個語言，
             # SenseVoice 不支援的語系 (法／西) 即時稿改用 Whisper
-            from asr_language import live_engine_for, load_asr_language, sv_language
+            from asr_language import live_engine_for, load_asr_language, sv_language, sv_supported
             asr_lang = load_asr_language()
             self._asr_lang = asr_lang
             self.status.metrics["asr_language"] = asr_lang
@@ -1252,7 +1252,10 @@ class MeetingJobManager:
                 if saved:
                     n_sv = sum(1 for s in live_asr_slices if s.get("src") == "sv")
                     print(f"[MeetingMinutes] 即時 SenseVoice 結果已存 ({n_sv}/{len(live_asr_slices)} 片，{live_asr_pos / 16000:.1f} s)：{saved}")
-            elif chunk_worker_done.is_set() and live_engine == "whisper" and any(s.get("wtext") for s in live_asr_slices):
+            elif ((chunk_worker_done.is_set() or not sv_supported(asr_lang)) and live_engine == "whisper"
+                  and any(s.get("wtext") for s in live_asr_slices)):
+                # 語系選 SenseVoice 不支援的語言 (法／西) 時尾端逾時沒轉完也存：高精度稿只能靠這些 Whisper 文字
+                # (11-20 法文 6 分：尾端 85 s 逾時沒存，高精度稿改用 SenseVoice 自動偵測，整份變成亂碼英文)
                 # 即時稿選 Whisper：存每片位置與 Whisper 文字 (高精度稿照舊整段 SenseVoice 重新辨識，只用來換掉 SenseVoice 不支援的語言)
                 import refine_transcript
                 saved = await asyncio.to_thread(refine_transcript.save_live_asr, raw_ogg, live_asr_slices, live_asr_pos,
