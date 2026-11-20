@@ -1552,7 +1552,7 @@ async def post_feedback(req: FeedbackRequest) -> Dict[str, Any]:
     if req.include_audio:
         if minutes_manager.status.state in ("recording", "processing"):
             # 錄音中母帶還沒合併完成 (11-20 實測 ffmpeg 讀到半截檔)：上一場的錄音照附，這場的不附
-            report["audio_note"] = "錄音或整理中，這場的錄音檔還沒完成，未附錄音"
+            report["audio_note"] = "錄音或整理中，這場的錄音檔還沒完成；附的是上一場的錄音（見 attachments.audio 的 job id）"
             job = minutes_manager.result.job if minutes_manager.result else None
         else:
             job = minutes_manager.status.job or (minutes_manager.result.job if minutes_manager.result else None)

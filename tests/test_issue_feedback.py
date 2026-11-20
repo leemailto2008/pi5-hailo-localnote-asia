@@ -56,3 +56,10 @@ def test_prune_by_count_and_age(tmp_path, monkeypatch):
     removed = fb.prune(now)
     assert removed == names[:2]                    # 太舊的 1 筆＋超過 3 筆的 1 筆
     assert sorted(os.listdir(tmp_path)) == names[2:]
+
+
+def test_audio_attachment_names_its_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(fb, "FEEDBACK_DIR", str(tmp_path / "feedback"))
+    monkeypatch.setattr(fb, "cut_audio", lambda src, dst, minutes: None)
+    rid = fb.save({"description": "x"}, "", audio_src=str(tmp_path / "m_123.ogg"), audio_minutes=3)
+    assert fb.load(rid)["attachments"]["audio"] == "audio.ogg（m_123 最後 3 分鐘）"

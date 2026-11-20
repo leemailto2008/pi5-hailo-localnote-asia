@@ -91,7 +91,8 @@ def save(report: Dict[str, Any], log_text: str, transcript: Optional[str] = None
         attachments["transcript"] = "transcript.txt"
     if audio_src is not None:
         err = cut_audio(audio_src, os.path.join(folder, "audio.ogg"), audio_minutes)
-        attachments["audio"] = err or f"audio.ogg（最後 {max(1, min(AUDIO_MAX_MIN, int(audio_minutes)))} 分鐘）"
+        job = os.path.splitext(os.path.basename(audio_src))[0]
+        attachments["audio"] = err or f"audio.ogg（{job} 最後 {max(1, min(AUDIO_MAX_MIN, int(audio_minutes)))} 分鐘）"
     report = {**report, "id": rid, "attachments": attachments}
     tmp = os.path.join(folder, "feedback.json.part")
     with open(tmp, "w", encoding="utf-8") as f:
