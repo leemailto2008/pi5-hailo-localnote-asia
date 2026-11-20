@@ -184,3 +184,15 @@ def test_effective_mode_follows_asr_language():
     assert lt.effective_mode("auto", "zh") == "en"
     assert lt.effective_mode("auto", "en") == "zh" and lt.effective_mode("auto", "fr") == "zh" and lt.effective_mode("auto", "es") == "zh"
     assert lt.effective_mode("en", "zh") == "en" and lt.effective_mode("off", "fr") == "off"
+
+
+def test_premap_preference_default_and_independent_of_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(lt, "LIVE_TR_PATH", str(tmp_path / "live_translate.json"))
+    assert lt.load_premap_with_translate() is True                 # 預設維持原本做法
+    lt.save_live_translate_preference("zh")
+    lt.save_premap_with_translate(False)
+    assert lt.load_live_translate_preference() == "zh" and lt.load_premap_with_translate() is False
+    lt.save_live_translate_preference("en")                         # 改目標語言不影響 premap
+    assert lt.load_premap_with_translate() is False
+    (tmp_path / "live_translate.json").write_text('{"target": "auto", "premap": "no"}', encoding="utf-8")
+    assert lt.load_premap_with_translate() is True                  # 值不對時用預設

@@ -41,7 +41,8 @@ AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 # LLM backend selection (Hailo-10H qwen3:1.7b preferred, CPU Ollama fallback) lives in llm_backend.py
 from llm_backend import aiter_chat_stream, LLMError
 from transcript_translate import english_minutes_lines
-from live_translate import LiveTranslator, load_live_translate_preference, effective_mode as effective_live_translate_mode
+from live_translate import (LiveTranslator, load_live_translate_preference, load_premap_with_translate,
+                            effective_mode as effective_live_translate_mode)
 from meeting_glossary import apply_to_text as apply_meeting_glossary
 try:
     # 部署後 hailo_whisper 在 code_dispatcher 底下。NPU 每個切片 (約 6 秒) 已各自修過一次術語，
@@ -1116,7 +1117,12 @@ class MeetingJobManager:
                     print(f"[MeetingMinutes] 錄音中預先整理第 {idx} 段：{len(piece)} → {len(text)} 字 ({time.time() - t_req:.1f}s)")
 
             self._premap_task = None
-            if SUMMARY_PREMAP and not bypass_summary:
+            # 即時翻譯開著且網頁取消「翻譯時錄音中先整理紀要」：不預先整理，NPU 全給翻譯 (錄音後紀要較慢，見 live_translate)
+            skip_for_translate = self._live_tr is not None and not load_premap_with_translate()
+            if skip_for_translate:
+                print("[MeetingMinutes] 即時翻譯開著、設定為錄音中不預先整理紀要")
+                self.status.metrics["summary_premap_skipped"] = "live_translate"
+            if SUMMARY_PREMAP and not bypass_summary and not skip_for_translate:
                 try:
                     from npu_share import shared_group
                     if shared_group():

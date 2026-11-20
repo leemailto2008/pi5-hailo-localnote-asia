@@ -39,27 +39,52 @@ _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 
-def load_live_translate_preference() -> str:
+# 即時翻譯開著時錄音中要不要照常預先整理紀要 (2026-11-21 做成選項，預設 True＝維持原本做法；使用者週一決定)：
+# 中文 30 分 (.228 W7)：不預先整理時即時翻譯 p50 11.6 s、p90 29.3 s，錄音後紀要 141 s；預先整理時 26.0／64.9 s、紀要 66 s。
+# 語速快的 podcast (W8) 不預先整理也追不上 (p50 57 s)，紀要卻從 43 s 變 156 s。
+PREMAP_WITH_TRANSLATE_DEFAULT = True
+
+
+def _read_pref() -> Dict[str, Any]:
     try:
         with open(LIVE_TR_PATH, encoding="utf-8") as f:
-            pref = json.load(f).get("target", LIVE_TR_DEFAULT)
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except FileNotFoundError:
-        return LIVE_TR_DEFAULT
-    except (OSError, ValueError, AttributeError) as e:
-        logger.warning("[LiveTranslate] preference unreadable (%s); using %s", e, LIVE_TR_DEFAULT)
-        return LIVE_TR_DEFAULT
+        return {}
+    except (OSError, ValueError) as e:
+        logger.warning("[LiveTranslate] preference unreadable (%s); using defaults", e)
+        return {}
+
+
+def _write_pref(data: Dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(LIVE_TR_PATH), exist_ok=True)
+    tmp = LIVE_TR_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, LIVE_TR_PATH)
+
+
+def load_live_translate_preference() -> str:
+    pref = _read_pref().get("target", LIVE_TR_DEFAULT)
     return pref if pref in LIVE_TR_CHOICES else LIVE_TR_DEFAULT
 
 
 def save_live_translate_preference(target: str) -> str:
     if target not in LIVE_TR_CHOICES:
         raise ValueError(f"target 必須是 {'/'.join(LIVE_TR_CHOICES)}")
-    os.makedirs(os.path.dirname(LIVE_TR_PATH), exist_ok=True)
-    tmp = LIVE_TR_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"target": target}, f)
-    os.replace(tmp, LIVE_TR_PATH)
+    _write_pref({**_read_pref(), "target": target})
     return target
+
+
+def load_premap_with_translate() -> bool:
+    v = _read_pref().get("premap", PREMAP_WITH_TRANSLATE_DEFAULT)
+    return v if isinstance(v, bool) else PREMAP_WITH_TRANSLATE_DEFAULT
+
+
+def save_premap_with_translate(enabled: bool) -> bool:
+    _write_pref({**_read_pref(), "premap": bool(enabled)})
+    return bool(enabled)
 
 
 def effective_mode(pref: str, asr_lang: str) -> str:

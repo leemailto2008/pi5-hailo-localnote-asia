@@ -1634,26 +1634,34 @@ async def set_asr_language_config(req: AsrLanguageRequest) -> Dict[str, Any]:
 
 
 class LiveTranslateRequest(BaseModel):
-    target: str = Field(..., description="off = 不翻；auto = 外語翻中文、中文翻英文；en／zh = 一律翻成英文／中文")
+    target: Optional[str] = Field(default=None, description="off = 不翻；auto = 外語翻中文、中文翻英文；en／zh = 一律翻成英文／中文")
+    premap: Optional[bool] = Field(default=None, description="即時翻譯開著時錄音中是否照常預先整理紀要 (false：翻譯較快、錄音後紀要較慢)")
+
+
+def _live_translate_config() -> Dict[str, Any]:
+    from live_translate import LIVE_TR_CHOICES, load_live_translate_preference, load_premap_with_translate
+    return {"target": load_live_translate_preference(), "premap": load_premap_with_translate(), "choices": list(LIVE_TR_CHOICES)}
 
 
 @app.get("/api/config/live_translate", tags=["Demo UI"])
 async def get_live_translate_config() -> Dict[str, Any]:
-    """錄音中的即時翻譯目標語言 (下一場錄音生效；只用 Hailo，和錄音中預先整理紀要輪流用 NPU)。"""
-    from live_translate import LIVE_TR_CHOICES, load_live_translate_preference
-    return {"target": await asyncio.to_thread(load_live_translate_preference), "choices": list(LIVE_TR_CHOICES)}
+    """錄音中的即時翻譯目標語言、翻譯時是否預先整理紀要 (下一場錄音生效；只用 Hailo，和錄音中預先整理紀要輪流用 NPU)。"""
+    return await asyncio.to_thread(_live_translate_config)
 
 
 @app.post("/api/config/live_translate", tags=["Demo UI"])
 async def set_live_translate_config(req: LiveTranslateRequest) -> Dict[str, Any]:
-    from live_translate import LIVE_TR_CHOICES, save_live_translate_preference
+    from live_translate import save_live_translate_preference, save_premap_with_translate
     try:
-        await asyncio.to_thread(save_live_translate_preference, req.target)
+        if req.target is not None:
+            await asyncio.to_thread(save_live_translate_preference, req.target)
+        if req.premap is not None:
+            await asyncio.to_thread(save_premap_with_translate, req.premap)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"無法儲存即時翻譯設定：{e}")
-    return {"target": req.target, "choices": list(LIVE_TR_CHOICES)}
+    return await asyncio.to_thread(_live_translate_config)
 
 
 @app.post("/api/config/mic", tags=["Demo UI"])
