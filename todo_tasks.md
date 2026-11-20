@@ -14,6 +14,16 @@
 
 ### 最優先、最重要的 5 項
 
+0b. **Issue feedback 按鈕（11-20 使用者要求，進行中）** 設計：
+   1) 按下自動抓：時間（台北）、主機名稱、版本 commit（git archive 自動填入 build_info.py）、設定（語音語系、即時稿引擎、即時翻譯、麥克風偏好、會議詞彙數）、
+      目前 /api/status 全部（job id、state、phase、metrics）、高精度稿狀態、/health、藍牙快取狀態（不下 HCI 指令）、服務 log 前 15 分鐘（journalctl，最多 3,000 行）、
+      瀏覽器端：網址、User-Agent、螢幕大小、最近 50 筆 JS 錯誤／未處理的 Promise 錯誤／toast 訊息；使用者必填問題描述、選填名字。
+   2) 存 Pi 一般磁碟 DATA_DIR/feedback/<YYYYMMDD_HHMMSS>_<主機>_<4 碼>/（feedback.json、service.log、選填附件），部署與重開都不動；
+      保留 90 天或最多 200 筆、總量 300 MB，超過刪最舊的。
+   3) 取出：網頁「Issue 回報清單」可看、單筆下載 zip、全部打包下載；PC 端 tools/pull_feedback.ps1 一鍵拉回 .cc_scratch/feedback/。
+   4) 可選附件（預設不勾，隱私）：本場逐字稿（即時稿＋高精度稿＋紀要）、本場錄音最後 N 分鐘（預設 5 分、最多 10 分，ogg 約 0.1–0.5 MB/分）；錄音中按也可以（附件取到按下當時）。
+   錄音中按下時：只寫檔與讀 log，不跑 HCI、不跑推論。
+
 0. **11-20 使用者決定的三項（進行中，.228 驗證，通過後更新 .229）**
    - 即時翻譯（SenseVoice 即時稿＋Hailo LLM 逐段翻譯）：預設 外語→中文 (zh)、中文→英文 (en)，網頁可選。中文 5／10／30 分 PASS、數字全對、
      目標語言 95–100%、延遲 p50 8–33 s；錄音結束暫停翻譯、紀要出來再翻（收尾不再變慢）。剩：Whisper 即時稿（法／西）時翻譯延遲 2 分以上，2cfed60／9698ba5 重測中。

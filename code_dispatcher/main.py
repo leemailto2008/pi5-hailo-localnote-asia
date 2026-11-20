@@ -1478,6 +1478,128 @@ async def set_live_asr_config(req: LiveAsrRequest) -> Dict[str, Any]:
     return await asyncio.to_thread(_live_asr_config)
 
 
+class FeedbackClient(BaseModel):
+    url: str = Field(default="", max_length=500)
+    user_agent: str = Field(default="", max_length=500)
+    screen: str = Field(default="", max_length=50)
+    errors: List[str] = Field(default_factory=list, max_length=50, description="瀏覽器最近的 JS 錯誤／未處理的 Promise 錯誤")
+    toasts: List[str] = Field(default_factory=list, max_length=50, description="最近顯示給使用者的提示訊息")
+
+
+class FeedbackRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=5000, description="使用者描述的問題 (必填)")
+    name: str = Field(default="", max_length=100)
+    include_transcript: bool = False
+    include_audio: bool = False
+    audio_minutes: int = Field(default=5, ge=1, le=10)
+    client: FeedbackClient = Field(default_factory=FeedbackClient)
+
+
+def _feedback_snapshot() -> Dict[str, Any]:
+    """按下 Issue 回報當下的盒子狀態 (只讀：不下藍牙 HCI 指令、不跑推論)。"""
+    import socket
+    import build_info
+    import meeting_glossary
+    from asr_language import load_asr_language
+    from live_translate import load_live_translate_preference
+    from meeting_minutes import minutes_manager
+    from voice_pipeline import load_live_asr_preference, load_mic_preference
+    snap: Dict[str, Any] = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "host": socket.gethostname(),
+                            "version": build_info.version()}
+    try:
+        snap["settings"] = {"asr_language": load_asr_language(), "live_asr": load_live_asr_preference(),
+                            "live_translate": load_live_translate_preference(), "mic": load_mic_preference(),
+                            "glossary_terms": len(meeting_glossary.terms())}
+    except (OSError, ValueError) as e:
+        snap["settings"] = {"error": str(e)}
+    snap["status"] = minutes_manager.status.model_dump()
+    res = minutes_manager.result
+    snap["last_result"] = {"job": res.job, "lang": getattr(res, "lang", None)} if res else None
+    snap["refine"] = {k: v for k, v in _refine_job.snapshot().items() if k != "result"}
+    try:
+        snap["health"] = get_system_health()
+    except Exception as e:   # 健康檢查本身出錯也要能回報
+        snap["health"] = {"error": f"{type(e).__name__}: {e}"}
+    snap["bluetooth_cached"] = _last_bt_status_cache or None   # 只用快取，不下 HCI 指令
+    return snap
+
+
+def _feedback_transcript() -> str:
+    """本場即時稿、高精度稿、紀要 (Issue 回報可選附件)。"""
+    from meeting_minutes import minutes_manager
+    st, res = minutes_manager.status, minutes_manager.result
+    parts = [f"# job {st.job or (res.job if res else '')}", "", "## 即時稿", st.transcript_live or (res.transcript_live if res else "") or "",
+             "", "## 即時翻譯", st.translation_live or ""]
+    ref = _refine_job.snapshot()
+    if ref.get("result"):
+        parts += ["", "## 高精度稿", (ref["result"] or {}).get("transcript") or ""]
+    if res and res.markdown:
+        parts += ["", "## 紀要", res.markdown]
+    return "\n".join(parts)
+
+
+@app.post("/api/feedback", tags=["Demo UI"])
+async def post_feedback(req: FeedbackRequest) -> Dict[str, Any]:
+    """Issue 回報：存使用者描述＋當下狀態＋服務 log (＋可選逐字稿／錄音片段)，事後除錯用。"""
+    import issue_feedback
+    from meeting_minutes import minutes_manager
+    snap = await asyncio.to_thread(_feedback_snapshot)
+    report = {**snap, "description": req.description, "name": req.name, "client": req.client.model_dump(),
+              "include_transcript": req.include_transcript, "include_audio": req.include_audio}
+    log_text = await asyncio.to_thread(issue_feedback.service_log)
+    transcript = await asyncio.to_thread(_feedback_transcript) if req.include_transcript else None
+    audio_src = None
+    if req.include_audio:
+        job = minutes_manager.status.job or (minutes_manager.result.job if minutes_manager.result else None)
+        audio_src = os.path.join(AUDIO_CACHE_DIR, f"{job}.ogg") if job else ""
+    try:
+        rid = await asyncio.to_thread(issue_feedback.save, report, log_text, transcript, audio_src, req.audio_minutes)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Issue 回報存檔失敗：{e}")
+    return {"id": rid, "folder": os.path.join(issue_feedback.FEEDBACK_DIR, rid)}
+
+
+@app.get("/api/feedback", tags=["Demo UI"])
+async def list_feedback() -> Dict[str, Any]:
+    import issue_feedback
+    return {"reports": await asyncio.to_thread(issue_feedback.list_reports), "folder": issue_feedback.FEEDBACK_DIR}
+
+
+def _zip_response(path: str, filename: str) -> FileResponse:
+    from starlette.background import BackgroundTask
+    return FileResponse(path, media_type="application/zip", filename=filename,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.remove(path)))
+
+
+@app.get("/api/feedback/export.zip", tags=["Demo UI"])
+async def export_feedback() -> FileResponse:
+    """全部 Issue 回報打包成一個 zip。"""
+    import issue_feedback
+    import socket
+    path = await asyncio.to_thread(issue_feedback.make_zip)
+    return _zip_response(path, f"localnote_feedback_{socket.gethostname()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip")
+
+
+@app.get("/api/feedback/{report_id}", tags=["Demo UI"])
+async def get_feedback(report_id: str) -> Dict[str, Any]:
+    import issue_feedback
+    try:
+        return await asyncio.to_thread(issue_feedback.load, report_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError:
+        raise HTTPException(status_code=404, detail="找不到這筆回報")
+
+
+@app.get("/api/feedback/{report_id}/zip", tags=["Demo UI"])
+async def get_feedback_zip(report_id: str) -> FileResponse:
+    import issue_feedback
+    if not issue_feedback.valid_id(report_id) or not os.path.isdir(os.path.join(issue_feedback.FEEDBACK_DIR, report_id)):
+        raise HTTPException(status_code=404, detail="找不到這筆回報")
+    path = await asyncio.to_thread(issue_feedback.make_zip, [report_id])
+    return _zip_response(path, f"{report_id}.zip")
+
+
 class AsrLanguageRequest(BaseModel):
     language: str = Field(..., description="auto = 自動偵測；zh／en = SenseVoice 或 Whisper 固定語言；fr／es = SenseVoice 不支援，即時稿與高精度稿用 Whisper")
 

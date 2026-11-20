@@ -191,6 +191,18 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
 </style>
 </head>
 <body>
+<script>
+/* Issue 回報 (2026-11-20)：最近的 JS 錯誤與提示訊息，按「🐞 Issue 回報」時一起送出；放最前面才收得到後面腳本的錯誤 */
+window.__lnErrors = []; window.__lnToasts = [];
+(function () {
+  const keep = (arr, s) => { arr.push(new Date().toTimeString().slice(0, 8) + ' ' + String(s).slice(0, 500)); if (arr.length > 50) arr.shift(); };
+  window.__lnKeep = keep;
+  window.addEventListener('error', e => keep(window.__lnErrors, (e.message || 'error') + (e.filename ? ' @' + e.filename + ':' + e.lineno : '')));
+  window.addEventListener('unhandledrejection', e => keep(window.__lnErrors, 'unhandledrejection: ' + ((e.reason && (e.reason.message || e.reason)) || '')));
+  const ce = console.error.bind(console);
+  console.error = (...a) => { keep(window.__lnErrors, 'console.error: ' + a.map(x => (x && x.message) || x).join(' ')); ce(...a); };
+})();
+</script>
 
 <header class="topbar">
   <div style="display:flex;align-items:center;gap:10px;min-width:0">
@@ -203,6 +215,7 @@ del.pl-del{color:#dc2626;text-decoration:line-through;text-decoration-color:#dc2
     <span class="pill sys" id="sysPill">盒子：—</span>
     <span class="pill npu" id="npuPill" style="display:inline-flex;background:linear-gradient(135deg,#0284c7 0%,#0369a1 100%);color:#fff;font-weight:700;box-shadow:0 2px 6px rgba(2,132,199,0.3);border:1px solid #38bdf8;cursor:help" title="AI 加速晶片 (NPU)">⚡ NPU：負載 0% · --°C</span>
     <button class="pill" id="btnToggleNpu" style="cursor:pointer;background:var(--card);border:1px solid var(--line);font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;" title="點擊切換顯示/隱藏 AI 加速晶片 (NPU) 狀態卡片">⚡ NPU 狀態</button>
+    <button class="pill" id="btnFeedback" style="cursor:pointer;background:#fff7ed;border:1px solid #fdba74;font-size:12px;color:#9a3412;display:inline-flex;align-items:center;gap:4px;font-weight:700" title="遇到問題按這裡：記下當下狀態、服務 log 和你的描述，事後除錯用">🐞 Issue 回報</button>
     <button class="pill" id="btnToggleMetrics" style="cursor:pointer;background:var(--card);border:1px solid var(--line);font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;" title="點擊切換顯示/隱藏核心效能與耗時指標（預設隱藏，Demo 給客戶時不露餡）">📊 效能指標</button>
   </div>
 </header>
@@ -848,7 +861,7 @@ async function api(path, body, timeoutMs = 15000) {
     throw err;
   }
 }
-function toast(msg, ms = 1800) { el.toast.textContent = msg; el.toast.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.toast.classList.remove('show'), ms); }
+function toast(msg, ms = 1800) { try { window.__lnKeep(window.__lnToasts, msg); } catch (_) {} el.toast.textContent = msg; el.toast.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.toast.classList.remove('show'), ms); }
 function fmt(s) {
   s = Math.max(0, Math.round(s));
   const p2 = n => String(n).padStart(2, '0');
@@ -3224,6 +3237,74 @@ function mock(path, body) {
   if (path === API.netSwitch) return { ok: true };
   return {};
 }
+</script>
+<dialog id="fbDialog" style="max-width:560px;width:calc(100% - 32px);border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--card);color:var(--ink)">
+  <form method="dialog" id="fbForm" style="display:flex;flex-direction:column;gap:10px">
+    <b style="font-size:16px">🐞 Issue 回報</b>
+    <div style="font-size:12.5px;color:var(--muted)">會自動記下：時間、版本、目前設定、會議／錄音狀態、服務 log（前 15 分鐘）、瀏覽器錯誤。請描述你看到的問題、當時在做什麼。</div>
+    <textarea id="fbDesc" rows="5" maxlength="5000" required placeholder="例：錄到第 3 分鐘即時翻譯停住不動；按停止後紀要一直轉圈…" style="font:inherit;font-size:14px;resize:vertical"></textarea>
+    <input id="fbName" maxlength="100" placeholder="你的名字（選填）" style="font:inherit;font-size:14px">
+    <label style="font-size:13px"><input type="checkbox" id="fbTranscript"> 附上本場逐字稿（即時稿、翻譯、高精度稿、紀要）</label>
+    <label style="font-size:13px"><input type="checkbox" id="fbAudio"> 附上本場錄音最後
+      <select id="fbAudioMin" style="font:inherit;font-size:13px"><option>1</option><option>3</option><option selected>5</option><option>10</option></select> 分鐘（錄音結束後才有）</label>
+    <div style="font-size:12px;color:var(--muted)">逐字稿與錄音可能含會議內容，預設不附；只存在這台盒子上。</div>
+    <div class="row" style="gap:8px;justify-content:flex-end">
+      <button type="button" class="btn" id="fbCancel">取消</button>
+      <button type="submit" class="btn primary" id="fbSubmit">送出回報</button>
+    </div>
+    <details id="fbListBox">
+      <summary style="font-size:13px">已存的回報（下載給工程除錯）</summary>
+      <div style="margin:6px 0"><a href="/api/feedback/export.zip" id="fbExportAll">⬇️ 全部打包下載（zip）</a></div>
+      <div id="fbList" style="font-size:12.5px;max-height:220px;overflow-y:auto"></div>
+    </details>
+  </form>
+</dialog>
+<script>
+/* ---------- Issue 回報 (2026-11-20) ---------- */
+(function () {
+  const dlg = document.getElementById('fbDialog');
+  if (!dlg) return;
+  const $f = id => document.getElementById(id);
+  const esc2 = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  async function loadList() {
+    try {
+      const r = await fetch('/api/feedback');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const rows = (d.reports || []).map(x => `<div style="padding:4px 0;border-bottom:1px solid var(--line)">
+        <a href="/api/feedback/${encodeURIComponent(x.id)}/zip">⬇️ ${esc2(x.time || x.id)}</a> ${esc2(x.name)}<br>
+        <span style="color:var(--muted)">${esc2(x.description)}</span></div>`);
+      $f('fbList').innerHTML = rows.join('') || '<span style="color:var(--muted)">還沒有回報</span>';
+    } catch (e) {
+      $f('fbList').textContent = '讀不到回報清單：' + e.message;
+    }
+  }
+  $f('btnFeedback').addEventListener('click', () => { dlg.showModal(); loadList(); });
+  $f('fbCancel').addEventListener('click', () => dlg.close());
+  $f('fbListBox').addEventListener('toggle', loadList);
+  $f('fbForm').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const desc = $f('fbDesc').value.trim();
+    if (!desc) { $f('fbDesc').focus(); return; }
+    $f('fbSubmit').disabled = true;
+    try {
+      const body = { description: desc, name: $f('fbName').value.trim(), include_transcript: $f('fbTranscript').checked,
+        include_audio: $f('fbAudio').checked, audio_minutes: Number($f('fbAudioMin').value),
+        client: { url: location.href, user_agent: navigator.userAgent, screen: `${screen.width}x${screen.height}`,
+                  errors: window.__lnErrors.slice(-50), toasts: window.__lnToasts.slice(-50) } };
+      const r = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail ? (typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail)) : 'HTTP ' + r.status);
+      $f('fbDesc').value = '';
+      dlg.close();
+      toast('🐞 已存下回報：' + d.id, 3500);
+    } catch (e) {
+      toast('Issue 回報失敗：' + e.message, 4000);
+    } finally {
+      $f('fbSubmit').disabled = false;
+    }
+  });
+})();
 </script>
 </body>
 </html>
