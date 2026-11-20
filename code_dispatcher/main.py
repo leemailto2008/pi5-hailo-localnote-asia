@@ -395,8 +395,10 @@ def get_system_health() -> Dict[str, Any]:
         print(f"[Health] llm backend probe failed: {e}")
 
     return {
-        "status": "healthy" if (redis_ok and ollama_ok) else "degraded",
-        "redis_connected": redis_ok,
+        # redis／RQ 是舊的程式碼審查佇列，LocalNote 錄音、紀要、翻譯都不用 (2026-11-20 使用者同意不再算進健康狀態)；
+        # 健康 = 有可用的 LLM 後端 (Hailo 或 CPU Ollama)
+        "status": "healthy" if (ollama_ok or llm_backend_label.startswith("Hailo")) else "degraded",
+        "redis_connected": redis_ok,   # 僅供參考 (舊佇列)，不影響 status
         "ollama_running": ollama_ok,
         "llm_backend": llm_backend_label,
         "available_models_count": len(active_models),
