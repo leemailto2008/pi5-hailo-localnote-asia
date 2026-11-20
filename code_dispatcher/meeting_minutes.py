@@ -1196,8 +1196,8 @@ class MeetingJobManager:
                 self._premap_task = None
             if self._live_tr is not None:
                 self._live_tr.close()   # 不再等新段落；剩下的段落 (含尾端切片) 翻完就結束，不擋紀要
-                # 尾端切片可能要用 NPU (Hailo Whisper 即時稿，或 SenseVoice 的外語比對)：切片轉完再繼續翻
-                # (11-20：Whisper 5 分尾端等待 23.6 s、德文 SenseVoice＋外語比對 70.8 s)
+                # 錄音結束後 NPU 先給尾端切片 (Hailo Whisper 即時稿或 SenseVoice 的外語比對) 與紀要，紀要出來再翻剩下的段落
+                # (11-20：Whisper 5 分尾端等待 23.6 s、德文外語比對 70.8 s；SenseVoice 10／30 分紀要多 20／26 s)
                 self._live_tr.pause()
 
             # 等待剩餘切片隊列消化完畢 (依據隊列深度動態等待，保證全軌切片 100% 入稿)
@@ -1230,8 +1230,6 @@ class MeetingJobManager:
                 self.status.msg = f"🎧 錄音完成！正在結算最後 {cur_rem} 段逐字稿 (尾端已等 {cur_tail_wait}s)..."
                 self.notify_status_update()
                 await asyncio.sleep(0.5)
-            if self._live_tr is not None:
-                self._live_tr.resume()   # 尾端切片都轉完了 (或逾時)：繼續翻剩下的段落
             if live_engine == "sensevoice":   # 切片都轉完了：結束 SenseVoice 子行程，記憶體留給紀要與高精度逐字稿
                 from sv_worker import sv_worker
                 await asyncio.to_thread(sv_worker.shutdown)
@@ -1456,6 +1454,8 @@ class MeetingJobManager:
             finally:
                 llm_done_event.set()
                 llm_ticker_task.cancel()
+                if self._live_tr is not None:
+                    self._live_tr.resume()   # 紀要出來了：翻錄音結束時還沒翻的段落
             raw_markdown = _safe_post(ground_todo_table, raw_markdown, transcript)   # 待辦的負責人／時間必須出自逐字稿
             raw_markdown = _safe_post(drop_unspoken_years, raw_markdown, transcript)  # 模型自己補的年份 (逐字稿沒說) 拿掉
             raw_markdown = _safe_post(strip_unspoken_example_labels, raw_markdown, transcript, MAP_EXAMPLE_LABELS)   # 照抄提示詞範例的標籤
@@ -1527,6 +1527,8 @@ class MeetingJobManager:
             if self._premap_task and not self._premap_task.done():
                 self._premap_task.cancel()
             self._premap_task = None
+            if self._live_tr is not None:
+                self._live_tr.resume()   # 沒走到紀要的路徑 (不出紀要、例外)：別讓即時翻譯一直停著
 
     async def regenerate(self) -> str:
         """Regenerate meeting summary from existing transcript without recording again."""
