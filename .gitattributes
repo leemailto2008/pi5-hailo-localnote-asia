@@ -1,1 +1,2 @@
 code_dispatcher/build_info.py export-subst
+*.sh text eol=lf
