@@ -166,21 +166,39 @@ def numbers_ok(src: str, translation: str) -> bool:
 _EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
 
 
-# 即時稿 (SenseVoice ITN) 偶爾把「十」和個位數字混寫：「加裝十0只警示燈」「做十0輪」=10、「二十5」=25
-# (11-21 240 分即時翻譯 31 段保留原文，多數是這種：數值比對看不懂「十0」，譯文的 10 被當成對不上)
-_MIXED_TENS_RE = re.compile("(?<![0-9一二三四五六七八九十百千萬億])([一二三四五六七八九]?)十([0-9])(?![0-9])")
-_CN_ONE_DIGIT = {"": 1, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+# 即時稿 (SenseVoice ITN) 偶爾把阿拉伯數字和國字數字混寫：「加裝十0只警示燈」=10、「二十5」=25、「第1三個議題」=13、
+# 「第一7二個」=172、「第1八十四個」=184 (11-21 W11 240 分即時翻譯 31 段保留原文有 12 段是這種，W15 剩「第1三個」：數值比對看不懂)
+_MIXED_NUM_RE = re.compile("(?<![0-9零〇一二三四五六七八九十百千萬億兩])[0-9零〇一二三四五六七八九十]+(?![0-9零〇一二三四五六七八九十百千萬億兩])")
+_CN_ONE_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
-def fix_mixed_tens(text: str) -> str:
-    return _MIXED_TENS_RE.sub(lambda m: str(_CN_ONE_DIGIT[m.group(1)] * 10 + int(m.group(2))), text)
+def _mixed_value(run: str) -> "int | None":
+    """混寫 (同時有阿拉伯數字與國字數字) 的一串換成數值；不是混寫或看不懂就 None (原樣保留)。"""
+    if not (re.search("[0-9]", run) and re.search("[零〇一二三四五六七八九十]", run)) or run.count("十") > 1:
+        return None
+    digit = lambda c: int(c) if c.isdigit() else _CN_ONE_DIGIT[c]
+    if "十" not in run:
+        return int("".join(str(digit(c)) for c in run))
+    left, right = run.split("十")
+    if len(right) > 1:
+        return None
+    tens = digit(left[-1]) if left else 1
+    hundreds = int("".join(str(digit(c)) for c in left[:-1])) if len(left) > 1 else 0
+    return hundreds * 100 + tens * 10 + (digit(right) if right else 0)
+
+
+def fix_mixed_numbers(text: str) -> str:
+    def repl(m: "re.Match") -> str:
+        v = _mixed_value(m.group(0))
+        return m.group(0) if v is None else str(v)
+    return _MIXED_NUM_RE.sub(repl, text)
 
 
 def prepare_source(text: str, target: str) -> str:
     """送模型前的原文，數字先換成目標語言的寫法 (模型自己換算常錯)：
     中翻英「200萬」→「2,000,000」、「1.5億」→「150,000,000」；英翻中「11 billion」→「110億」、「200 million」→「2億」、
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
-    text = fix_mixed_tens(text)
+    text = fix_mixed_numbers(text)
     if target == "en":
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))

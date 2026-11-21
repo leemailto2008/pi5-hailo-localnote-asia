@@ -310,10 +310,10 @@ def test_fix_titles_team_lead():
 
 
 def test_fix_mixed_tens():
-    assert tt.fix_mixed_tens("已經加裝十0只警示燈") == "已經加裝10只警示燈"
-    assert tt.fix_mixed_tens("至少要做十0輪迴歸測試") == "至少要做10輪迴歸測試"
-    assert tt.fix_mixed_tens("二十5人") == "25人"
-    assert tt.fix_mixed_tens("第十個議題、10月15日、三十") == "第十個議題、10月15日、三十"     # 正常寫法不動
+    assert tt.fix_mixed_numbers("已經加裝十0只警示燈") == "已經加裝10只警示燈"
+    assert tt.fix_mixed_numbers("至少要做十0輪迴歸測試") == "至少要做10輪迴歸測試"
+    assert tt.fix_mixed_numbers("二十5人") == "25人"
+    assert tt.fix_mixed_numbers("第十個議題、10月15日、三十") == "第十個議題、10月15日、三十"     # 正常寫法不動
     assert tt.numbers_ok(tt.prepare_source("已經加裝十0只警示燈", "en"), "10 warning lights have been installed")
 
 
@@ -323,3 +323,10 @@ def test_en_k_m_suffix_numbers():
     assert tt.numbers_ok(tt.prepare_source("預算200萬", "en"), "Budget 2M")
     assert 1000.0 not in tt.number_values("the 2km road and B2K", words=True)     # 小寫 m／k 接字母不算
     assert not tt.numbers_ok(p, "The budget is 8K yuan; report on November 7.")       # 數值錯仍要擋
+
+
+def test_fix_mixed_numbers_digit_concat_and_hundreds():
+    assert tt.fix_mixed_numbers("第1三個議題是教育訓練") == "第13個議題是教育訓練"
+    assert tt.fix_mixed_numbers("第一7二個議題") == "第172個議題"
+    assert tt.fix_mixed_numbers("第1八十四個議題") == "第184個議題"
+    assert tt.fix_mixed_numbers("第一個、二十個、一百二十三、2025年、三十5") == "第一個、二十個、一百二十三、2025年、35"
