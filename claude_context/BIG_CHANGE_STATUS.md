@@ -34,6 +34,8 @@
 - podcast 30（勾預先整理）紀要：074a512 36 s、914215b 50／50 s、dc4ae4b 38 s。50 s 那兩次是最後一段 Hailo 生成超過 33 s 沒寫完、由 CPU 備援 48 s 收尾
   （hailo-ollama log 請求順序正常、沒有翻譯插隊；紀要程式沒改）→ 模型生成長度變動，CPU 備援把上限壓在約 50 s。翻譯 p50 85 s（074a512 144 s）。
 - dc4ae4b（翻英文夾中文時挑最少）W20 30 分 PASS（cer 0.0176、fact 0.969、紀要 66 s）；夾中文段數每場 3–8 段變動大，看不出差異（邏輯上不會變多）。
+- dc4ae4b 夜間實機：GS3 60 cer_num 0.0221、fact 0.981、紀要 70 s（沒翻譯時 57 s）；藍牙 60（第一次）封包 100%、掉包 0、cer_num 0.0218、facts 0.978、
+  紀要 55 s、錄音 CPU 6.3%、即時翻譯 528/528 p50 20 s。
 - B1：914215b 通過今晚實機，但 21:38 自動執行被 Claude Code 權限檢查擋下（.229 也連不到），等使用者決定（`.cc_scratch/tmp/b1_run.sh 914215b`）。
 - 搬到 Mac 的前置（dr 11-21 指示）：tools/*.cmd 金鑰讀 PI5_SSH_KEY、新增 shell 版 6 支＋pi_common.sh（.228 實測輸出與 cmd 相同）、*.sh 固定 LF、
   CLAUDE.md 路徑一般化、check_feedback.sh 相對路徑、喚醒提示詞 .cc_scratch/loop/wake_prompt.md、tests/test_tools_shell.py。
