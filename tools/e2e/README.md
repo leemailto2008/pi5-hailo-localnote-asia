@@ -13,6 +13,7 @@
 | `e2e.py` | 單一案例：null sink 注入 (`/dev/shm/ln_force_source`) → `/api/record` → 即時播放 → 評分 + `mon.py` 資源取樣 |
 | `run_suite.py` | 多案例：套 `thresholds.json`，輸出 `suite.json`、`summary.md`、`junit.xml`；任一失敗 exit 1 |
 | `speaker_selftest.py` | 聲學自測（在接喇叭的電腦上執行）：喇叭播放講稿 → 耳麥 → 藍牙 mSBC → app，錄完用 fixture 評分；只用標準函式庫 |
+| `tail_race.py` | 上一場紀要一出來就立刻開下一場，檢查上一場即時翻譯翻完（Pi 上：`python3 tail_race.py <job>`；同時跑的那場 run_suite 評分會失敗，看 RACE PASS／FAIL） |
 | `thresholds.json` | 門檻（`default` + `per_minutes` 覆寫） |
 | `../ci/deploy_on_pi.sh` | CD：部署程式到 Pi、健康檢查、失敗自動回滾 |
 | `../ci/prepare_test_data.sh` | 檢查/解出與 fixture sha256 相符的測試音檔 |
