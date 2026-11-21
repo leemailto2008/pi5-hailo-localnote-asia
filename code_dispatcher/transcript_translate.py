@@ -224,6 +224,22 @@ def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[
     return fixed if numbers_ok(prepared, fixed) else translation
 
 
+# 中文職稱的英文：小模型把「組長」翻成 Captain（船長／隊長的意思），會議裡是 Team Lead
+# (11-21 抽查中文 30 分即時翻譯：每場 4–5 次「Captain Cai」)。原文沒有隊長／船長／機長時才換。
+_CAPTAIN_RE = re.compile(r"\bCaptain\b")
+
+
+def fix_titles(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or "組長" not in src or any(t in src for t in ("隊長", "船長", "機長")):
+        return translation
+    return _CAPTAIN_RE.sub("Team Lead", translation)
+
+
+def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    """模型輸出的固定修正：數字 (fix_numerals) 與職稱 (fix_titles)。"""
+    return fix_titles(src, fix_numerals(src, translation, target), target)
+
+
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
     """這個單位的譯文可用：有內容、翻英文時沒夾中文字、數值都在。"""
     return bool(translation) and not untranslated_left(translation, target) \
@@ -399,7 +415,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
         got = parse_output(out, len(chunk))
         for n, (idx, src) in enumerate(chunk, 1):
             if n in got:
-                got[n] = fix_numerals(src, got[n], target)
+                got[n] = postfix(src, got[n], target)
             if unit_ok(src, got.get(n), target):
                 done[idx] = got[n]
                 continue
@@ -409,7 +425,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
                 return False
-            single = fix_numerals(src, parse_output(one, 1).get(1), target)
+            single = postfix(src, parse_output(one, 1).get(1), target)
             if unit_ok(src, single, target):
                 done[idx] = single
                 continue
@@ -423,7 +439,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                                       hailo_only=cpu_first, cpu_first=not cpu_first, should_stop=should_stop)
                 if alt is None:
                     return False
-                other = fix_numerals(src, parse_output(alt, 1).get(1), target)
+                other = postfix(src, parse_output(alt, 1).get(1), target)
                 if unit_ok(src, other, target):
                     done[idx] = other
                     continue

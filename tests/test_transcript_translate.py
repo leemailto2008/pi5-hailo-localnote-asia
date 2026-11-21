@@ -297,3 +297,11 @@ def test_flat_counts_llm_calls_including_retries(monkeypatch):
     monkeypatch.setattr(tt, "_complete", complete)
     res = asyncio.run(tt._translate_flat(["你好", "預算"], "en", None, lambda: False, use_cpu=False))
     assert res["llm_calls"] == 2 and res["done"] == {0: "Hello"}
+
+
+def test_fix_titles_team_lead():
+    assert tt.fix_titles("負責人是蔡組長。", "The person in charge is Captain Cai.", "en") == "The person in charge is Team Lead Cai."
+    assert tt.fix_titles("隊長和組長都在", "Captain and team lead", "en") == "Captain and team lead"   # 原文真的有隊長
+    assert tt.fix_titles("船長說", "Captain said", "en") == "Captain said"
+    assert tt.fix_titles("蔡組長", "蔡組長", "zh") == "蔡組長"
+    assert tt.postfix("負責人是蔡組長，預算八十萬", "Captain Cai, budget 800,000", "en") == "Team Lead Cai, budget 800,000"
