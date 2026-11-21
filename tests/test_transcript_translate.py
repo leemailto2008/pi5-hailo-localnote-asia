@@ -307,3 +307,11 @@ def test_fix_titles_team_lead():
     assert tt.fix_titles("蔡組長", "Captains and Captaincy", "en") == "Captains and Captaincy"
     assert tt.fix_titles("蔡組長", "蔡組長", "zh") == "蔡組長"
     assert tt.postfix("負責人是蔡組長，預算八十萬", "Captain Cai, budget 800,000", "en") == "Team Lead Cai, budget 800,000"
+
+
+def test_fix_mixed_tens():
+    assert tt.fix_mixed_tens("已經加裝十0只警示燈") == "已經加裝10只警示燈"
+    assert tt.fix_mixed_tens("至少要做十0輪迴歸測試") == "至少要做10輪迴歸測試"
+    assert tt.fix_mixed_tens("二十5人") == "25人"
+    assert tt.fix_mixed_tens("第十個議題、10月15日、三十") == "第十個議題、10月15日、三十"     # 正常寫法不動
+    assert tt.numbers_ok(tt.prepare_source("已經加裝十0只警示燈", "en"), "10 warning lights have been installed")

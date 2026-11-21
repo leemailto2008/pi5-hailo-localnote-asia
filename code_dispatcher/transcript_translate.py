@@ -160,10 +160,21 @@ def numbers_ok(src: str, translation: str) -> bool:
 _EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
 
 
+# 即時稿 (SenseVoice ITN) 偶爾把「十」和個位數字混寫：「加裝十0只警示燈」「做十0輪」=10、「二十5」=25
+# (11-21 240 分即時翻譯 31 段保留原文，多數是這種：數值比對看不懂「十0」，譯文的 10 被當成對不上)
+_MIXED_TENS_RE = re.compile("(?<![0-9一二三四五六七八九十百千萬億])([一二三四五六七八九]?)十([0-9])(?![0-9])")
+_CN_ONE_DIGIT = {"": 1, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def fix_mixed_tens(text: str) -> str:
+    return _MIXED_TENS_RE.sub(lambda m: str(_CN_ONE_DIGIT[m.group(1)] * 10 + int(m.group(2))), text)
+
+
 def prepare_source(text: str, target: str) -> str:
     """送模型前的原文，數字先換成目標語言的寫法 (模型自己換算常錯)：
     中翻英「200萬」→「2,000,000」、「1.5億」→「150,000,000」；英翻中「11 billion」→「110億」、「200 million」→「2億」、
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
+    text = fix_mixed_tens(text)
     if target == "en":
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))
