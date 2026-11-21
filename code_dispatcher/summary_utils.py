@@ -1086,6 +1086,32 @@ def generation_loop_start(text: str, tail: int = 600) -> Optional[int]:
     return None
 
 
+LINE_REPEAT_MIN_CHARS = 20   # 短行 (「- 無」「| 確認 | - | - |」) 重複是正常的
+LINE_REPEAT_RUN = 3          # 連續幾行都是前面寫過的一模一樣的行，才算整塊照抄
+
+
+def line_repeat_start(text: str) -> Optional[int]:
+    """模型把前面寫過的條列整塊再抄一遍：連續 LINE_REPEAT_RUN 行 (每行至少 LINE_REPEAT_MIN_CHARS 字) 都和前面某行一模一樣時，
+    回傳這串的行首。11-22 W27 英文 en_long：「## Decisions」底下把摘要條列整份重抄、再重複，寫到 600 tokens、紀要 134 s
+    (同份逐字稿平常 68 s)。偶爾一行重複 (摘要與決議寫同一件事) 不算。內容第一遍已寫完，呼叫端直接截斷停止，不用重寫。"""
+    seen: set = set()
+    pos, run_start, run = 0, 0, 0
+    for line in (text or "").split("\n")[:-1]:   # 最後一行可能還沒寫完
+        key = re.sub(r"\s+", " ", line).strip()
+        if len(key) >= LINE_REPEAT_MIN_CHARS and key in seen:
+            if run == 0:
+                run_start = pos
+            run += 1
+            if run >= LINE_REPEAT_RUN:
+                return run_start
+        elif key:
+            run = 0
+        if len(key) >= LINE_REPEAT_MIN_CHARS:
+            seen.add(key)
+        pos += len(line) + 1
+    return None
+
+
 SECTION_MISSING_NOTE = "（模型輸出長度不足，此段未產生，請參考逐字稿）"
 
 # 逐字稿中明講的「決議是…」(STT 端 fix_meeting_terms 已把 決意/捷一… 改回「決議」)。

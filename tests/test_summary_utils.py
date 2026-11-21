@@ -1351,3 +1351,16 @@ def test_generation_loop_start():
     assert generation_loop_start("## Summary\n- 預算 80 萬\n| - | - | - |\n| - | - | - |") is None
     assert generation_loop_start("-" * 80) is None
     assert generation_loop_start("| 確認 | - | - |\n" * 3) is None
+
+
+def test_line_repeat_start_block_copy():
+    # 11-22 W27：Decisions 底下把前面的條列整塊重抄 → 從重抄的第一行截斷；偶爾一行重複不算
+    from summary_utils import line_repeat_start
+    body = ["- Budget: $800,000 next year; hardware $500,000", "- Training: 30 seats, 22 signed, 8 left",
+            "- Safety: 8 warning lights installed; refresher by Aug 15"]
+    text = "## Summary\n" + "\n".join(body) + "\n\n## Decisions\n" + "\n".join(body) + "\n- Hiring"
+    cut = line_repeat_start(text)
+    assert cut is not None and text[:cut].endswith("## Decisions\n")
+    one = "## Summary\n" + body[0] + "\n" + body[1] + "\n\n## Decisions\n" + body[0] + "\n- 其他決議寫完了\n"
+    assert line_repeat_start(one) is None                     # 只重複一行
+    assert line_repeat_start("| 確認 | - | - |\n" * 5) is None   # 短行重複不算

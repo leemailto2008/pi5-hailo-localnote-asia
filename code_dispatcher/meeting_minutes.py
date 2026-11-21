@@ -59,7 +59,7 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            drop_unspoken_years, fill_missing_topics, strip_unspoken_example_labels,
                            ground_todo_table, is_recap_chunk, keep_alive_plan, localize_minutes,
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
-                           clean_live_segment, live_join_sep, map_notes_complete, minutes_extra_start, generation_loop_start, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
+                           clean_live_segment, live_join_sep, map_notes_complete, minutes_extra_start, line_repeat_start, generation_loop_start, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
                            tidy_live_transcript)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
@@ -1942,6 +1942,15 @@ class MeetingJobManager:
                               self.status.metrics["llm_early_stop"] = True
                               print(f"[MeetingMinutes] 紀要三段已寫完，模型開始多寫 ({curr_text[extra_at:extra_at + 20]!r})，停止生成")
                               break
+                          # 整塊條列照抄 (11-22 W27 英文 en_long：重抄到 600 tokens、134 s)：內容第一遍已寫完，截斷停止、不重寫
+                          if "\n" in token:
+                              rep_at = line_repeat_start(curr_text)
+                              if rep_at is not None:
+                                  n_tokens = len(accumulated)
+                                  accumulated = [curr_text[:rep_at]]
+                                  self.status.metrics["llm_early_stop"] = True
+                                  print(f"[MeetingMinutes] 紀要開始整塊重抄 ({curr_text[rep_at:rep_at + 30]!r})，停止生成")
+                                  break
                           # 重複迴圈 (11-19 越南文：「Hà, Hà, Hà…」寫滿 600 tokens、138 s)：每 8 個 token 檢查一次，停止生成
                           if len(accumulated) % 8 == 0:
                               loop_at = generation_loop_start(curr_text)
