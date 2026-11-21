@@ -208,3 +208,35 @@ def test_prep_for_translate_applies_term_fixes_and_glossary(monkeypatch):
         raise ValueError("bad glossary")
     monkeypatch.setattr(mm, "apply_meeting_glossary", boom)
     assert mm.MeetingJobManager._prep_for_translate("原文") == "原文"   # 修不了照原文
+
+
+def test_next_recording_lets_previous_tail_finish(monkeypatch):
+    """11-21 W14：紀要出來 24 s 後就開下一場，上一場最後 4 段沒翻到。下一場開始時，已錄完的上一場在背景翻完；取消錄音照舊停掉。"""
+    import meeting_minutes as mm
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        await asyncio.sleep(0.05)
+        return {"done": {k: "x" for k, _u in enumerate(units)}}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario(closed, keep_tail):
+        m = mm.MeetingJobManager.__new__(mm.MeetingJobManager)
+        tr = lt.LiveTranslator("en")
+        tr.add("最後一段")
+        if closed:
+            tr.close()
+        tr.pause()                      # 錄音結束後暫停、紀要後才補翻
+        m._live_tr, m._live_tr_task = tr, asyncio.create_task(tr.run())
+        task = m._live_tr_task
+        await asyncio.sleep(0.01)
+        m._stop_live_translate(keep_tail=keep_tail)
+        assert m._live_tr is None and m._live_tr_task is None
+        try:
+            await asyncio.wait_for(task, 2)
+        except asyncio.CancelledError:
+            return "cancelled"
+        return tr.out
+
+    assert asyncio.run(scenario(closed=True, keep_tail=True)) == {0: "x"}
+    assert asyncio.run(scenario(closed=True, keep_tail=False)) == "cancelled"     # 取消錄音
+    assert asyncio.run(scenario(closed=False, keep_tail=True)) == "cancelled"     # 還在錄 (沒 close) 不留

@@ -428,6 +428,9 @@ def localize_parsed(parsed: Dict[str, Any], lang: str) -> Dict[str, Any]:
     return parsed
 
 
+LIVE_TR_TAIL_MAX_S = 180   # 下一場開始時，上一場剩下的段落最多再翻這麼久
+
+
 def _save_live_translation(job_id: str, data: Dict[str, Any]) -> str:
     """即時翻譯逐段結果 → 與 .live_asr.json 同一個 localnote_state 資料夾 (RAM 磁碟)。"""
     import json as _json
@@ -1982,7 +1985,7 @@ class MeetingJobManager:
     def _start_live_translate(self, job_id: Optional[str], npu_busy: Callable[[], bool] = lambda: False,
                               npu_shared: Callable[[], bool] = lambda: False) -> None:
         """這場錄音的即時翻譯 (網頁選的目標語言；off 或 Hailo 不在時不開)。"""
-        self._stop_live_translate()
+        self._stop_live_translate(keep_tail=True)
         self.status.translation_live = None
         mode = effective_live_translate_mode(load_live_translate_preference(), getattr(self, "_asr_lang", "auto"))
         self.status.metrics["live_tr_mode"] = mode
@@ -2000,14 +2003,14 @@ class MeetingJobManager:
             return
 
         async def on_update(tr: LiveTranslator) -> None:
-            if self.status.job != job_id:   # 已經是下一場錄音
-                return
-            self.status.translation_live = tr.text()
-            self.status.metrics.update(tr.stats())
             try:   # 逐段結果存 RAM 磁碟 (localnote_state/<job>.live_tr.json，量測延遲／正確率用；零磁碟寫入)
                 await asyncio.to_thread(_save_live_translation, job_id, tr.dump())
             except (OSError, TypeError, ValueError) as e:
                 print(f"[MeetingMinutes] 即時翻譯結果存檔失敗：{e}")
+            if self.status.job != job_id:   # 已經是下一場錄音 (上一場尾端段落在背景翻完)：只存檔，不蓋掉畫面
+                return
+            self.status.translation_live = tr.text()
+            self.status.metrics.update(tr.stats())
             from ws_manager import ws_manager
             await ws_manager.broadcast("translation_stream", {"job_id": job_id, "text": self.status.translation_live})
             self.notify_status_update()
@@ -2031,10 +2034,21 @@ class MeetingJobManager:
             print(f"[MeetingMinutes] 即時翻譯前修正失敗，照原文翻：{e}")
             return segment
 
-    def _stop_live_translate(self) -> None:
+    def _stop_live_translate(self, keep_tail: bool = False) -> None:
+        """keep_tail=True (下一場錄音開始)：上一場已錄完、只剩紀要後補翻的尾端段落時，讓它在背景翻完並存檔，
+        最多 LIVE_TR_TAIL_MAX_S 秒 (11-21 W14：60 分紀要出來 24 s 後就開下一場，最後 4 段沒翻到)；
+        其他情況 (取消錄音) 照舊停掉。"""
         task = getattr(self, "_live_tr_task", None)
+        tr = getattr(self, "_live_tr", None)
         if task is not None and not task.done():
-            task.cancel()
+            if keep_tail and tr is not None and tr.closed:
+                tr.resume()
+                tails = self.__dict__.setdefault("_live_tr_tails", set())
+                tails.add(task)
+                task.add_done_callback(tails.discard)
+                asyncio.get_running_loop().call_later(LIVE_TR_TAIL_MAX_S, task.cancel)
+            else:
+                task.cancel()
         self._live_tr_task = None
         self._live_tr = None
 

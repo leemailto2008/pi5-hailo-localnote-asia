@@ -153,6 +153,10 @@ class LiveTranslator:
         self._closed = True
         self._event.set()
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def text(self) -> str:
         """目前翻好的部分 (從頭連續)，依目標語言接起來。"""
         parts, prev_t = [], None
