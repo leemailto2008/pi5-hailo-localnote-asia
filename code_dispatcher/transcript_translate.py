@@ -480,8 +480,8 @@ async def _translate_flat(flat: Sequence[str], target: str,
                     continue
             prepared = prepare_source(src, target)
             usable = [t for t in (got.get(n), single, other) if t and numbers_ok(prepared, t) and mostly_translated(t, target)]
-            if usable:                          # 數值對、只是夾少數中文字：用它 (比原文好)
-                done[idx] = usable[0]
+            if usable:                          # 數值對、只是夾少數中文字：用夾最少的那個 (比原文好；11-21 W17「New竹」「报价」)
+                done[idx] = min(usable, key=lambda t: len(_CJK_RE.findall(t)))
             elif any(t and not numbers_ok(prepared, t) for t in (got.get(n), single, other)) and not any(
                     t and numbers_ok(prepared, t) for t in (got.get(n), single, other)):
                 stats["number_fallback_units"] += 1   # 數值都不對：保留原文，不讓錯的數字出現

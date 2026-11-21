@@ -330,3 +330,15 @@ def test_fix_mixed_numbers_digit_concat_and_hundreds():
     assert tt.fix_mixed_numbers("第一7二個議題") == "第172個議題"
     assert tt.fix_mixed_numbers("第1八十四個議題") == "第184個議題"
     assert tt.fix_mixed_numbers("第一個、二十個、一百二十三、2025年、三十5") == "第一個、二十個、一百二十三、2025年、35"
+
+
+def test_residual_chinese_picks_cleanest_usable(monkeypatch):
+    # 11-21 W17：批次與單獨重翻都夾中文時，用夾最少的那個 (原本固定用批次那個)
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
+        if len(rows) > 1:
+            return "\n".join(f"{n}| There is an exhibition in New竹 with booth fee报价 today" for n, _t in rows)
+        return "1| There is an exhibition in New竹 with a booth fee today"
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt._translate_flat(["新竹有一場展覽，攤位費報價。", "今天開會。"], "en", None, lambda: False, False))
+    assert res["done"][0] == "There is an exhibition in New竹 with a booth fee today"
