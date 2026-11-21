@@ -39,7 +39,10 @@
 - dc4ae4b 數位 120 分＋翻譯（W23）：cer_num 0.0183、fact 0.986（同 W3）、紀要 81 s、RAM 4,302、swap +49、翻譯 1,148/1,148 p50 29 s、錄音中 RAM +38 MB/h。
 - ef76a4e：英文職稱後的中文人名轉拼音（「Team Lead蔡」→「Team Lead Cai」，W11–W20 真實譯文 7 處全對）；9803332：中文星期換英文（「on周二」→「on Tuesday」）。
   中文 30 分夾中文段數 W20 8 → W24 3 → W26 2（只剩地名「新竹」），cer 0.018／fact 0.9669 不變；W25 GS3 30（ef76a4e）cer_num 0.0235、fact 0.957（聲學變動內）。
-- B1：914215b 通過今晚實機，但 21:38 自動執行被 Claude Code 權限檢查擋下（.229 也連不到），等使用者決定（`.cc_scratch/tmp/b1_run.sh 914215b`）。
+- B1：914215b 通過 11-21 晚實機，但 21:38 自動執行被 Claude Code 權限檢查擋下（.229 也連不到），等使用者決定。
+  之後的 9803332 也補齊實機（W28 藍牙 30 封包 100%、cer_num 0.021、facts 0.969；GS3 30＝ef76a4e；數位 30／5／en_long）→ 建議 `b1_run.sh 9803332`。
+- 74ff581：紀要整塊逐字重抄時提早停止（歷史 79 份只中 2 份真重抄）。英文 en_long 紀要偶爾 133 s（8 份有 3 份寫滿 600 tokens，11-19 就有）是「決議」段換句話重述摘要，
+  74ff581 抓不到、也沒有安全的條數上限（正常決議 2–9 條），不再追。
 - 搬到 Mac 的前置（dr 11-21 指示）：tools/*.cmd 金鑰讀 PI5_SSH_KEY、新增 shell 版 6 支＋pi_common.sh（.228 實測輸出與 cmd 相同）、*.sh 固定 LF、
   CLAUDE.md 路徑一般化、check_feedback.sh 相對路徑、喚醒提示詞 .cc_scratch/loop/wake_prompt.md、tests/test_tools_shell.py。
 
