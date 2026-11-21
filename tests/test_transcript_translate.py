@@ -342,3 +342,13 @@ def test_residual_chinese_picks_cleanest_usable(monkeypatch):
     monkeypatch.setattr(tt, "_complete", complete)
     res = asyncio.run(tt._translate_flat(["新竹有一場展覽，攤位費報價。", "今天開會。"], "en", None, lambda: False, False))
     assert res["done"][0] == "There is an exhibition in New竹 with a booth fee today"
+
+
+def test_romanize_titled_names():
+    # 11-21 W17／W20：「Team Lead蔡」每場 1–3 次；只轉職稱後面、原文裡有的中文人名
+    assert tt.postfix("負責人是蔡組長。", "The responsible person is Captain蔡.", "en") == "The responsible person is Team Lead Cai."
+    assert tt.postfix("請焦文軒經理負責", "Please have Manager焦文軒 handle it", "en") == "Please have Manager Jiao Wenxuan handle it"
+    assert tt.postfix("新竹展覽", "attend the new竹 exhibition", "en") == "attend the new竹 exhibition"   # 地名不轉
+    assert tt.postfix("吳副理", "Ms.王 said", "en") == "Ms.王 said"                                   # 原文沒有的字不轉
+    assert tt.postfix("蔡組長", "蔡組長", "zh") == "蔡組長"                                           # 翻中文不動
+    assert tt.postfix("負責人是蔡組長。", "The responsible person is Team Lead蔡 (Cai). Next", "en") == "The responsible person is Team Lead Cai. Next"

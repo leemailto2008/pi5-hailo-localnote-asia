@@ -270,9 +270,36 @@ def fix_titles(src: str, translation: Optional[str], target: str) -> Optional[st
     return _CAPTAIN_RE.sub("Team Lead", translation)
 
 
+# 英文職稱後面直接接中文人名 (11-21 W17／W20：「Team Lead蔡」每場 1–3 次，模型重翻也一樣) → 姓名轉拼音「Team Lead Cai」。
+# 只轉職稱後面 1–3 個中文字、而且原文裡有這幾個字的；地名、職稱等其他夾雜的中文不轉 (「新竹」轉成 Xin Zhu 不對)。
+_TITLED_NAME_RE = re.compile(r"\b(Team Lead|Manager|Engineer|Director|Supervisor|Specialist|Assistant|Mr\.|Ms\.|Mrs\.)\s*"
+                             r"([一-鿿]{1,3})(?![一-鿿])(?:\s*\(([A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)?)\))?")
+
+
+def romanize_titled_names(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or not _TITLED_NAME_RE.search(translation):
+        return translation
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError as e:
+        print(f"[translate] 沒有 pypinyin，人名不轉拼音：{e}")
+        return translation
+
+    def repl(m: "re.Match") -> str:
+        name = m.group(2)
+        if name not in src:
+            return m.group(0)
+        if m.group(3):   # 模型自己在括號寫了拼音「Team Lead蔡 (Cai)」：用它，拿掉括號
+            return f"{m.group(1)} {m.group(3)}"
+        syl = [p.capitalize() for p in lazy_pinyin(name)]
+        roman = syl[0] if len(syl) == 1 else syl[0] + " " + "".join(syl[1:]).capitalize()
+        return f"{m.group(1)} {roman}"
+    return _TITLED_NAME_RE.sub(repl, translation)
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
-    """模型輸出的固定修正：數字 (fix_numerals) 與職稱 (fix_titles)。"""
-    return fix_titles(src, fix_numerals(src, translation, target), target)
+    """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)。"""
+    return romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
