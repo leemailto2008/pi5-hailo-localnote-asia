@@ -352,3 +352,12 @@ def test_romanize_titled_names():
     assert tt.postfix("吳副理", "Ms.王 said", "en") == "Ms.王 said"                                   # 原文沒有的字不轉
     assert tt.postfix("蔡組長", "蔡組長", "zh") == "蔡組長"                                           # 翻中文不動
     assert tt.postfix("負責人是蔡組長。", "The responsible person is Team Lead蔡 (Cai). Next", "en") == "The responsible person is Team Lead Cai. Next"
+
+
+def test_fix_weekdays_in_english_output():
+    # 11-21 W20／W24：「on周二 last week」
+    assert tt.postfix("上週二倉庫", "an accident at the warehouse on周二 last week", "en") == "an accident at the warehouse on Tuesday last week"
+    assert tt.fix_weekdays("Reply by 週三.", "en") == "Reply by Wednesday."
+    assert tt.fix_weekdays("星期天meeting", "en") == "Sunday meeting"
+    assert tt.fix_weekdays("meet on Friday  ok", "en") == "meet on Friday  ok"        # 沒有中文星期不動
+    assert tt.fix_weekdays("週三前回覆", "zh") == "週三前回覆"                          # 翻中文不動

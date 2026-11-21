@@ -297,9 +297,24 @@ def romanize_titled_names(src: str, translation: Optional[str], target: str) -> 
     return _TITLED_NAME_RE.sub(repl, translation)
 
 
+# 英文譯文裡留下的中文星期 (11-21 W20／W24：「on周二 last week」)
+_ZH_WEEKDAY_RE = re.compile(r"\s*(?:週|周|星期|禮拜|礼拜)([一二三四五六日天])")
+_EN_WEEKDAY = {"一": "Monday", "二": "Tuesday", "三": "Wednesday", "四": "Thursday", "五": "Friday", "六": "Saturday",
+               "日": "Sunday", "天": "Sunday"}
+
+
+def fix_weekdays(translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or not _ZH_WEEKDAY_RE.search(translation):
+        return translation
+    out = _ZH_WEEKDAY_RE.sub(lambda m: " " + _EN_WEEKDAY[m.group(1)], translation).lstrip()
+    return re.sub(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?=[A-Za-z0-9])", r"\1 ", out)
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
-    """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)。"""
-    return romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
+    """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
+    中文星期 (fix_weekdays)。"""
+    out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
+    return fix_weekdays(out, target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
