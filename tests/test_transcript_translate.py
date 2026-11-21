@@ -315,3 +315,11 @@ def test_fix_mixed_tens():
     assert tt.fix_mixed_tens("二十5人") == "25人"
     assert tt.fix_mixed_tens("第十個議題、10月15日、三十") == "第十個議題、10月15日、三十"     # 正常寫法不動
     assert tt.numbers_ok(tt.prepare_source("已經加裝十0只警示燈", "en"), "10 warning lights have been installed")
+
+
+def test_en_k_m_suffix_numbers():
+    p = tt.prepare_source("預算抓8萬元，回來後在11月7日的週會上報告。", "en")
+    assert tt.numbers_ok(p, "The budget is 80K yuan; report at the November 7 weekly meeting.")
+    assert tt.numbers_ok(tt.prepare_source("預算200萬", "en"), "Budget 2M")
+    assert 1000.0 not in tt.number_values("the 2km road and B2K", words=True)     # 小寫 m／k 接字母不算
+    assert not tt.numbers_ok(p, "The budget is 8K yuan; report on November 7.")       # 數值錯仍要擋

@@ -143,7 +143,13 @@ def number_values(text: str, words: bool = False) -> List[float]:
         out.append(_scaled(m.group(1), m.group(2)))
     if words:
         out += [float(_EN_NUM_WORDS[w]) for w in re.findall(r"[a-z]+", text.lower()) if w in _EN_NUM_WORDS]
+        # 英文簡寫「80K」「2M」(11-21：「預算抓8萬元」譯成「80K yuan」被當成數值不符)
+        out += [float(m.group(1).replace(",", "")) * (1000 if m.group(2) in "Kk" else 10 ** 6)
+                for m in _EN_KM_RE.finditer(text)]
     return out
+
+
+_EN_KM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)([KkM])(?![A-Za-z])")
 
 
 _DOT_THOUSANDS_RE = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{3})+(?![\d.])")
