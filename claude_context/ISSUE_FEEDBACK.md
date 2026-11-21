@@ -36,6 +36,7 @@
   - `GET /api/feedback/<id>/zip`：單筆 zip
   - `GET /api/feedback/export.zip`：全部打包
 - PC 腳本：`powershell -File tools\pull_feedback.ps1 -Box 192.168.50.229`，會解壓到 `.cc_scratch\feedback\`。
+- Mac／Linux／Git Bash：`bash tools/pull_feedback.sh 192.168.50.229`，一樣解壓到 `.cc_scratch/feedback/`。
 - localnote agent 每輪喚醒會自動檢查 .229／.228 的新回報並拉回分析。盒子在熱點模式時連不到，等它回到家用 Wi-Fi 才會拉回。
 
 ## 已知限制
