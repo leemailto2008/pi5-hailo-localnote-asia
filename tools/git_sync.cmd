@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d F:\14_prj_raspi5_localnote_asia
+cd /d "%~dp0.."
 set OUT=%~dp0pi_probe_out
 del /q "%OUT%\DONE.flag" 2>nul
 (

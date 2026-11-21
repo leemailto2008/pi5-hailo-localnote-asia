@@ -1,7 +1,7 @@
 # 🤖 Pi 5 Local Note - Claude Code Instructions & Project Memory (CLAUDE.md)
 # 樹莓派 5 邊緣雙語口譯、語音筆記與藍牙網關專案記憶檔案
 
-> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（`F:\14_prj_raspi5_localnote_asia`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
+> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（repo 根目錄；Windows 為 `F:\14_prj_raspi5_localnote_asia`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
 > 📌 **跨 AI 接棒與完整上下文目錄 (`claude_context/`)：** 當接手 Antigravity 的工作或進行自主閉環工程時，請同步參閱 `claude_context/` 目錄下的 6 份核心文件（`CLAUDE.md`、`PROJECT_STATE.md`、`HARDWARE_OPERATION_GUIDE.md`、`API_AND_TEST_REFERENCE.md`、`ACTIVE_BACKLOG_AND_NEXT_STEPS.md`、`AI_HANDSHAKE_PROTOCOL.md`）。
 
 ---
@@ -47,7 +47,7 @@
 - **累積 3～5 個 commit 就自動 push（2026-10-30 使用者指定）：**
   - 本機累積 3～5 個已驗證的 commit 時，不必再問，自己找空檔推上 GitHub (origin) 與 GitLab (gitlab)。
   - 空檔：沒有在錄音、也沒有在跑會用到電腦的測試時。
-  - 2026-11-03 起用 Desktop Commander MCP 在 F:\14_prj_raspi5_localnote_asia 直接跑 `git push origin main`、`git push gitlab main`（先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
+  - 2026-11-03 起用 Desktop Commander MCP 在 repo 根目錄（Windows 為 F:\14_prj_raspi5_localnote_asia）直接跑 `git push origin main`、`git push gitlab main`（先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
   - 推完回報推了哪些 commit、兩邊是否都成功。
 - **No Placeholders:** 嚴禁留下 `// TODO` 或未完成區塊，程式碼產出必須完整且可執行 (Production-ready)。
 - **Error Handling:** 顯式錯誤處理 (Explicit Error Handling)，嚴禁使用 bare `try: ... except: pass`。
@@ -86,8 +86,9 @@
 - **SSH 遠端連線 (Paramiko / OpenSSH):**
   - 主機: `192.168.50.228` (或熱點時 `10.20.0.1`)
   - 帳號: `pi`
-  - 私鑰路徑: `C:\Users\Andrew\.ssh\id_rsa_pi5`
-  - 連線命令: `ssh -i C:\Users\Andrew\.ssh\id_rsa_pi5 pi@192.168.50.228`
+  - 私鑰路徑: `~/.ssh/id_rsa_pi5`（Windows 即 `C:\Users\Andrew\.ssh\id_rsa_pi5`；環境變數 `PI5_SSH_KEY` 可覆寫，tools 下 cmd／sh 都讀它）
+  - 連線命令: `ssh -i ~/.ssh/id_rsa_pi5 pi@192.168.50.228`
+  - 工具：Windows 用 `tools/pi_run.cmd` 等；Mac／Linux／Git Bash 用同名 `tools/pi_run.sh`、`pi_push.sh`、`pi_pull.sh`、`pi_probe.sh`、`net_probe.sh`、`pull_feedback.sh`（2026-11-21 搬到 Mac 的準備）
 - **遠端專案運行目錄:**
   - 主目錄: `/home/pi/code_dispatcher/`
   - 音訊快取 (RAM-Disk): `/dev/shm/audio_cache/`

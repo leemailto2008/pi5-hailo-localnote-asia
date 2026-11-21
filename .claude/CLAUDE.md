@@ -1,7 +1,7 @@
 # 🤖 Pi 5 Local Note - Claude Code Instructions & Project Memory (CLAUDE.md)
 # 樹莓派 5 邊緣雙語口譯、語音筆記與藍牙網關專案記憶檔案
 
-> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（`F:\14_prj_raspi5_localnote_asia`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
+> 本文件為 Claude Code / Claude Desktop 專案記憶與行為準則中樞。在此專案目錄（repo 根目錄；Windows 為 `F:\14_prj_raspi5_localnote_asia`）工作時，必須嚴格遵守下列所有工程規範、歷史經驗、避坑指引與部署設定。
 
 ---
 
@@ -54,8 +54,9 @@
 - **SSH 遠端連線 (Paramiko / OpenSSH):**
   - 主機: `192.168.50.228` (或熱點時 `10.20.0.1`)
   - 帳號: `pi`
-  - 私鑰路徑: `C:\Users\Andrew\.ssh\id_rsa_pi5`
-  - 連線命令: `ssh -i C:\Users\Andrew\.ssh\id_rsa_pi5 pi@192.168.50.228`
+  - 私鑰路徑: `~/.ssh/id_rsa_pi5`（Windows 即 `C:\Users\Andrew\.ssh\id_rsa_pi5`；環境變數 `PI5_SSH_KEY` 可覆寫，tools 下 cmd／sh 都讀它）
+  - 連線命令: `ssh -i ~/.ssh/id_rsa_pi5 pi@192.168.50.228`
+  - 工具：Windows 用 `tools/pi_run.cmd` 等；Mac／Linux／Git Bash 用同名 `tools/pi_run.sh`、`pi_push.sh`、`pi_pull.sh`、`pi_probe.sh`、`net_probe.sh`、`pull_feedback.sh`（2026-11-21 搬到 Mac 的準備）
 - **遠端專案運行目錄:**
   - 主目錄: `/home/pi/code_dispatcher/`
   - 音訊快取 (RAM-Disk): `/dev/shm/audio_cache/`
