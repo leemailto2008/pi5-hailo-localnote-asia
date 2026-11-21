@@ -25,6 +25,10 @@
   錄音中 RAM +37.5 MB/小時（60／120／240 分同速、線性）。
 - 即時翻譯品質：a37cdf4 送翻前套術語修正＋會議詞彙（W12：送翻原文「任體／黃專元／工業鍘」10 → 0、譯文 Yellow Yuan／clamp 0，cer／fact 不變）；
   c7fec32＋b7b08a7「組長」Captain → Team Lead（每場 4–5 次 → 0，W13 驗證中）。
+- W14（b7b08a7）數位：中文 60 分 cer_num 0.0189、fact 0.982、紀要 69 s、RAM 4,286、swap +35、翻譯 p50 21.5 s；en_long cer 0.0785、翻譯 32/32。
+- 即時翻譯「保留原文」減少：3954f4e＋41a3d3b（即時稿「十0」、譯文「80K」數值比對誤判）W15 30 分 5 → 2 段、cer／fact 不變；
+  914215b 擴大到「第1三個」「第一7二個」「一20臺」（W11／W12／W14／W15 原文 23 種混寫逐一核對都換對，W17 驗證中）。
+- 6b2abe3：紀要出來後馬上開下一場時，上一場剩下的譯文在背景翻完再存（W14 60 分 562/566 的原因）；單元測試驗證，W18 實機重現中。
 - 搬到 Mac 的前置（dr 11-21 指示）：tools/*.cmd 金鑰讀 PI5_SSH_KEY、新增 shell 版 6 支＋pi_common.sh（.228 實測輸出與 cmd 相同）、*.sh 固定 LF、
   CLAUDE.md 路徑一般化、check_feedback.sh 相對路徑、喚醒提示詞 .cc_scratch/loop/wake_prompt.md、tests/test_tools_shell.py。
 
