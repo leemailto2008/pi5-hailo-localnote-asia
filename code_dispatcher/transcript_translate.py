@@ -226,7 +226,7 @@ def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[
 
 # 中文職稱的英文：小模型把「組長」翻成 Captain（船長／隊長的意思），會議裡是 Team Lead
 # (11-21 抽查中文 30 分即時翻譯：每場 4–5 次「Captain Cai」)。原文沒有隊長／船長／機長時才換。
-_CAPTAIN_RE = re.compile(r"\bCaptain\b")
+_CAPTAIN_RE = re.compile(r"(?<![A-Za-z])Captain(?![A-Za-z])")   # 後面直接接中文字也要換 (W12「Captain蔡」：\b 在中文字前不算邊界)
 
 
 def fix_titles(src: str, translation: Optional[str], target: str) -> Optional[str]:

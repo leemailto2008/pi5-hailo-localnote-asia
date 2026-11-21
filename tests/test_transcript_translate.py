@@ -303,5 +303,7 @@ def test_fix_titles_team_lead():
     assert tt.fix_titles("負責人是蔡組長。", "The person in charge is Captain Cai.", "en") == "The person in charge is Team Lead Cai."
     assert tt.fix_titles("隊長和組長都在", "Captain and team lead", "en") == "Captain and team lead"   # 原文真的有隊長
     assert tt.fix_titles("船長說", "Captain said", "en") == "Captain said"
+    assert tt.fix_titles("負責人是蔡組長。", "The responsible person is Captain蔡.", "en") == "The responsible person is Team Lead蔡."
+    assert tt.fix_titles("蔡組長", "Captains and Captaincy", "en") == "Captains and Captaincy"
     assert tt.fix_titles("蔡組長", "蔡組長", "zh") == "蔡組長"
     assert tt.postfix("負責人是蔡組長，預算八十萬", "Captain Cai, budget 800,000", "en") == "Team Lead Cai, budget 800,000"
