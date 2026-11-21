@@ -1017,7 +1017,7 @@ class MeetingJobManager:
                                     live_segments.append(clean_t)
                                     live_seg_recs.append(live_rec)
                                     if self._live_tr is not None:
-                                        self._live_tr.add(clean_t)
+                                        self._live_tr.add(self._prep_for_translate(clean_t))
                                     # 智慧雙語拼接 (Bilingual live stream preview)
                                     if len(live_segments) == 1:
                                         curr_preview = clean_t
@@ -2017,6 +2017,19 @@ class MeetingJobManager:
         self._live_tr = tr
         self._live_tr_task = asyncio.create_task(tr.run())
         print(f"[MeetingMinutes] 即時翻譯：{mode}")
+
+    @staticmethod
+    def _prep_for_translate(segment: str) -> str:
+        """送即時翻譯前先修同音錯字：術語修正 (fix_meeting_terms) 與使用者填的會議詞彙，同紀要的做法。
+        11-21 抽查：「任體更新」譯成 clamp body／replacement、「黃專元」譯成 Yellow Yuan、「工業鍘到期」譯錯產品名。
+        修不了就照原文送 (翻譯照常)。"""
+        try:
+            text = fix_meeting_terms(segment)
+            text, _n = apply_meeting_glossary(text)
+            return text
+        except (OSError, ValueError, re.error) as e:
+            print(f"[MeetingMinutes] 即時翻譯前修正失敗，照原文翻：{e}")
+            return segment
 
     def _stop_live_translate(self) -> None:
         task = getattr(self, "_live_tr_task", None)

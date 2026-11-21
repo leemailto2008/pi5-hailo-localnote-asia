@@ -196,3 +196,15 @@ def test_premap_preference_default_and_independent_of_target(tmp_path, monkeypat
     assert lt.load_premap_with_translate() is False
     (tmp_path / "live_translate.json").write_text('{"target": "auto", "premap": "no"}', encoding="utf-8")
     assert lt.load_premap_with_translate() is True                  # 值不對時用預設
+
+
+def test_prep_for_translate_applies_term_fixes_and_glossary(monkeypatch):
+    import meeting_minutes as mm
+    monkeypatch.setattr(mm, "fix_meeting_terms", lambda t: t.replace("任體", "韌體"))
+    monkeypatch.setattr(mm, "apply_meeting_glossary", lambda t: (t.replace("黃專元", "黃專員"), 1))
+    assert mm.MeetingJobManager._prep_for_translate("黃專元說任體更新") == "黃專員說韌體更新"
+
+    def boom(t):
+        raise ValueError("bad glossary")
+    monkeypatch.setattr(mm, "apply_meeting_glossary", boom)
+    assert mm.MeetingJobManager._prep_for_translate("原文") == "原文"   # 修不了照原文
