@@ -214,13 +214,13 @@ def test_cpu_model_tried_when_hailo_fails_twice(monkeypatch):
         n = re.findall(r"^(\d+)\| ", prompt, re.M)
         if cpu_first:
             return "1| Complete full staff retraining"
-        return "\n".join(f"{k}| Complete全员 retraining" for k in n)
+        return "\n".join(f"{k}| Complete全组 retraining" for k in n)
     monkeypatch.setattr(tt, "_complete", complete)
     res = asyncio.run(tt.translate_minutes("【Action Items】\n• 完成全員複訓", "en", use_cpu=True))
     assert res["text"].splitlines()[1] == "• Complete full staff retraining" and calls[-1] is True
     calls.clear()
     res = asyncio.run(tt.translate_minutes("【Action Items】\n• 完成全員複訓", "en", use_cpu=False))
-    assert True not in calls and "Complete全员" in res["text"]     # 不能用 CPU 時不試
+    assert True not in calls and "Complete全组" in res["text"]     # 不能用 CPU 時不試
 
 
 def test_percent_words_and_dot_thousands():
@@ -337,7 +337,7 @@ def test_residual_chinese_picks_cleanest_usable(monkeypatch):
     async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
         rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
         if len(rows) > 1:
-            return "\n".join(f"{n}| There is an exhibition in New竹 with booth fee报价 today" for n, _t in rows)
+            return "\n".join(f"{n}| There is an exhibition in New竹 with booth fee价格 today" for n, _t in rows)
         return "1| There is an exhibition in New竹 with a booth fee today"
     monkeypatch.setattr(tt, "_complete", complete)
     res = asyncio.run(tt._translate_flat(["新竹有一場展覽，攤位費報價。", "今天開會。"], "en", None, lambda: False, False))
@@ -385,3 +385,11 @@ def test_fix_name_zh_titles():
     assert tt.fix_name_zh_titles("the经理 said", "en") == "the经理 said"          # 前面不是姓名不動
     assert tt.fix_name_zh_titles("王經理", "zh") == "王經理"
     assert tt.fix_name_zh_titles("Ask 组长 to confirm", "en") == "Ask 组长 to confirm"   # 中間有空白不是「姓名＋職稱」
+
+
+def test_fix_common_zh_words():
+    # 11-22：英文譯文留下的「报价」「全员」「出差」「培训」
+    assert tt.fix_common_zh_words("Complete全员培训 by the end", "en") == "Complete all staff training by the end"
+    assert tt.fix_common_zh_words("arrangement for出差. Mr. Xu", "en") == "arrangement for business trip. Mr. Xu"
+    assert tt.fix_common_zh_words("at the current报价 until", "en") == "at the current quotation until"
+    assert tt.fix_common_zh_words("全員培訓", "zh") == "全員培訓"

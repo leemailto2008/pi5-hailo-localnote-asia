@@ -331,11 +331,31 @@ def fix_name_zh_titles(translation: Optional[str], target: str) -> Optional[str]
     return _NAME_ZH_TITLE_RE.sub(lambda m: f"{_ZH_TITLE_EN[m.group(2)]} {m.group(1)}", translation)
 
 
+# 英文譯文裡最常留下的一般商用詞 (11-22 W11–W34 英文譯文：「报价」17、「全员」11、「出差」6；模型寫成簡體留在句中)。
+# 只收一般詞彙，不放人名、地名、產品名 (那些來自會議詞彙)。
+_ZH_COMMON_EN = {"報價": "quotation", "报价": "quotation", "全員": "all staff", "全员": "all staff",
+                 "出差": "business trip", "培訓": "training", "培训": "training"}
+_ZH_COMMON_RE = re.compile("|".join(_ZH_COMMON_EN))
+
+
+def fix_common_zh_words(translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or not _ZH_COMMON_RE.search(translation):
+        return translation
+
+    # 先在換上去的詞左右做記號，再看記號外側是不是英文字母／數字決定補不補空白 (「全员培训」→「all staff training」)
+    lm, rm = "\x01", "\x02"
+    out = _ZH_COMMON_RE.sub(lambda m: lm + _ZH_COMMON_EN[m.group(0)] + rm, translation)
+    out = re.sub(rm + r"\s*" + lm, " ", out)
+    out = re.sub(r"(?<=[A-Za-z0-9])" + lm, " ", out).replace(lm, "")
+    out = re.sub(rm + r"(?=[A-Za-z0-9])", " ", out).replace(rm, "")
+    return out
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
-    姓名後的中文職稱 (fix_name_zh_titles)、中文星期 (fix_weekdays)。"""
+    姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
-    return fix_weekdays(fix_name_zh_titles(out, target), target)
+    return fix_weekdays(fix_common_zh_words(fix_name_zh_titles(out, target), target), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
