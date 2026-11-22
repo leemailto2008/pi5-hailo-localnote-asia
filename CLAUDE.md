@@ -166,6 +166,13 @@
 - **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`；`tests/test_bt_link_stats.py` 要 fcntl，Windows 上加 `--ignore`。
 - **PC → Pi 傳大檔:** scp 原樣傳 7 MB tar 會卡住，加 `-C`（壓縮）約 1 分鐘傳完。
 
+### ⚠️ [重點十] 即時翻譯與譯文後處理 (2026-11-20～22 實測，細節見 `claude_context/BIG_CHANGE_STATUS.md` #59、#60)
+- **只用 Hailo**（錄音中不可用 CPU）；qwen3:1.7b 約 4.5 tok/s：中翻英一般語速追得上，快速 podcast、外語翻中文一定落後（硬體上限）。
+- **數值對不上就保留原文**（寧可不翻也不翻錯數字）。保留原文多半是寫法問題，不是模型錯：「十0」「第1三個」「5萬3135」「80K」都已處理（`transcript_translate.prepare_source`／`number_values`）。
+- **英文譯文的固定修正都在 `transcript_translate.postfix`**（數字、組長→Team Lead、職稱後人名轉拼音、姓名後中文職稱、常見商用詞、中文星期）；改完用 `.cc_scratch/ltr/residue_audit.py` 重放已存的 `*.live_tr.json` 看夾中文段數，並看有沒有改錯。
+- **紀要時間、會後翻譯時間會跳動**（同測資 podcast 紀要 36–50 s、en_long 65–133 s、英翻中 64–97 s）：多半是模型生成長度或對齊變動，先多跑一次再判斷是不是退步。
+- **.229 部署會被 Claude Code 權限檢查擋**：備好 `.cc_scratch/tmp/b1_run.sh <sha>`，請使用者用 `!` 執行。
+
 ---
 
 ## 5. 目錄與模組結構對照 (Module Directory Mapping)
