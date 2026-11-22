@@ -330,10 +330,39 @@ _ZH_TITLE_EN = {"總經理": "General Manager", "总经理": "General Manager", 
 _NAME_ZH_TITLE_RE = re.compile(r"\b([A-Z][a-z]+)(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")")
 
 
-def fix_name_zh_titles(translation: Optional[str], target: str) -> Optional[str]:
+
+
+# 常見單字姓 (繁簡)：判斷原文「X經理」的 X 是不是姓
+_COMMON_SURNAMES = set(
+    "王李張张劉刘陳陈楊杨黃黄趙赵吳吴周徐孫孙馬马朱胡郭何高林羅罗鄭郑梁謝谢宋唐許许韓韩馮冯鄧邓曹彭曾蕭萧肖田董袁潘"
+    "于蔣蒋蔡余杜葉叶程蘇苏魏呂吕丁任沈姚盧卢姜崔鍾钟譚谭陸陆汪范金石廖賈贾夏韋韦付方白鄒邹孟熊秦邱江尹薛閻阎段雷侯龍龙"
+    "史陶黎賀贺顧顾毛郝龔龚邵萬万錢钱嚴严覃武戴莫孔向湯汤柯洪游傅簡简翁")
+
+
+def fix_name_zh_titles(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    """只換原文真的有「X經理」而且 X 的拼音就是譯文那個名字的：「Project经理」(專案經理) 不會變成「Manager Project」。"""
     if not translation or target != "en" or not _NAME_ZH_TITLE_RE.search(translation):
         return translation
-    return _NAME_ZH_TITLE_RE.sub(lambda m: f"{_ZH_TITLE_EN[m.group(2)]} {m.group(1)}", translation)
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError as e:
+        print(f"[translate] 沒有 pypinyin，姓名後的中文職稱不換：{e}")
+        return translation
+    # 原文的「姓＋職稱」：職稱 (英文) → 這個職稱前面出現過的姓的拼音 (只收常見姓：「專案經理」的「案」不是姓)
+    by_title: Dict[str, set] = {}
+    for m in re.finditer(r"([一-鿿])(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + ")", src or ""):
+        if m.group(1) in _COMMON_SURNAMES:
+            by_title.setdefault(_ZH_TITLE_EN[m.group(2)], set()).add(lazy_pinyin(m.group(1))[0].capitalize())
+
+    def repl(m: "re.Match") -> str:
+        title = _ZH_TITLE_EN[m.group(2)]
+        names = by_title.get(title, set())
+        if m.group(1) in names:
+            return f"{title} {m.group(1)}"
+        if len(names) == 1:   # 模型把姓翻錯 (原文「許經理」、譯文「Xiang经理」)：用原文唯一的那個姓
+            return f"{title} {next(iter(names))}"
+        return m.group(0)
+    return _NAME_ZH_TITLE_RE.sub(repl, translation)
 
 
 # 姓和職稱都留中文 (11-22 重放：「蔡组长」4 處)：單字姓 (前面不是中文字，原文裡有) → 「Team Lead Cai」
@@ -385,7 +414,7 @@ def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
-    out = fix_cjk_name_titles(src, fix_name_zh_titles(out, target), target)
+    out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     return fix_weekdays(fix_common_zh_words(out, target), target)
 
 

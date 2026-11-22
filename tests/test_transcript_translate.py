@@ -381,10 +381,10 @@ def test_fix_name_zh_titles():
     # 11-22：「Wang经理」「Lin主任」「Cai组长」→ 職稱英文放姓名前
     assert tt.postfix("由向經理處理", "Agree that this matter shall be handled by Xiang经理 by Thursday.", "en") == \
         "Agree that this matter shall be handled by Manager Xiang by Thursday."
-    assert tt.fix_name_zh_titles("Ask Lin主任 and Cai组长", "en") == "Ask Director Lin and Team Lead Cai"
-    assert tt.fix_name_zh_titles("the经理 said", "en") == "the经理 said"          # 前面不是姓名不動
-    assert tt.fix_name_zh_titles("王經理", "zh") == "王經理"
-    assert tt.fix_name_zh_titles("Ask 组长 to confirm", "en") == "Ask 组长 to confirm"   # 中間有空白不是「姓名＋職稱」
+    assert tt.fix_name_zh_titles("請林主任和蔡組長", "Ask Lin主任 and Cai组长", "en") == "Ask Director Lin and Team Lead Cai"
+    assert tt.fix_name_zh_titles("王經理", "the经理 said", "en") == "the经理 said"          # 前面不是姓名不動
+    assert tt.fix_name_zh_titles("王經理", "王經理", "zh") == "王經理"
+    assert tt.fix_name_zh_titles("請組長確認", "Ask 组长 to confirm", "en") == "Ask 组长 to confirm"   # 中間有空白不是「姓名＋職稱」
 
 
 def test_fix_common_zh_words():
@@ -409,3 +409,13 @@ def test_ordinal_and_fraction_words_count_in_translation():
     assert tt.numbers_ok(p, "More than one-third of take-home pay goes to rent.")
     assert tt.numbers_ok("第3個議題", "The third topic")
     assert not tt.numbers_ok("第3個議題", "The fifth topic")
+
+
+def test_fix_name_zh_titles_needs_matching_surname():
+    # 「Project经理」(專案經理) 不是人名：原文沒有拼音是 project 的姓 → 不換
+    assert tt.fix_name_zh_titles("請專案經理確認", "Ask the Project经理 to confirm", "en") == "Ask the Project经理 to confirm"
+    assert tt.fix_name_zh_titles("請王經理調貨", "please request Wang经理 to dispatch", "en") == "please request Manager Wang to dispatch"
+    # 模型把姓翻錯（原文許經理、譯文 Xiang经理）：原文只有一位經理 → 用原文的姓
+    assert tt.fix_name_zh_titles("同意這件事由許經理負責", "handled by Xiang经理", "en") == "handled by Manager Xu"
+    # 原文兩位經理、譯文的名字都對不上 → 不猜
+    assert tt.fix_name_zh_titles("許經理和王經理", "handled by Xiang经理", "en") == "handled by Xiang经理"
