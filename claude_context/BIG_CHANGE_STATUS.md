@@ -43,7 +43,7 @@
   之後的 9803332 也補齊實機（W28 藍牙 30 封包 100%、cer_num 0.021、facts 0.969；GS3 30＝ef76a4e；數位 30／5／en_long）→ 建議 `b1_run.sh 9803332`。
 - aa31b01：姓名後中文職稱改看原文「常見姓＋職稱」（「Project经理」不再變 Manager Project；原文許經理、譯文 Xiang经理 → Manager Xu）；45 處核對全對，重放 15,337 句夾中文 206 → 48。
 - W39 數位 30（a55b860）PASS；W36 藍牙 30（a55b860）封包 100%、cer_num 0.0253、facts 0.960（在 B1 標準內，聲學變動）；GS3 30 cer_num 0.024、fact 0.960；
-  W38 podcast 紀要 40 s。W40（aa31b01）數位 30 PASS、藍牙 30 封包 100%、cer_num 0.0203、facts 0.962；W41 藍牙 60 進行中。
+  W38 podcast 紀要 40 s。W40（aa31b01）數位 30 PASS、藍牙 30 封包 100%、cer_num 0.0203、facts 0.962；W41 藍牙 60（aa31b01）封包 100%、cer_num 0.0203、facts 0.970、紀要 76 s；W42 podcast／GS3 30 進行中。
 - W37 數位 60（0291ce3）PASS：cer_num 0.0179、fact 0.982、翻譯 567/567 p50 17 s、保留原文 3、英文譯文夾中文 0／564。
 - 會後翻譯 full10（0291ce3）／full11（a55b860）：6 項同 full9；日文「3分の1」譯成 one-third 對不上 → a55b860 譯文認得序數／分數詞（third、quarter、half）。
   full11 那句仍保留原文：模型前兩次翻成 3/4（擋下正確）、第三次「a third」少了 1 → 不再放寬（會讓 3/4 通過）。
