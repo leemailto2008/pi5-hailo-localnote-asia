@@ -361,3 +361,11 @@ def test_fix_weekdays_in_english_output():
     assert tt.fix_weekdays("星期天meeting", "en") == "Sunday meeting"
     assert tt.fix_weekdays("meet on Friday  ok", "en") == "meet on Friday  ok"        # 沒有中文星期不動
     assert tt.fix_weekdays("週三前回覆", "zh") == "週三前回覆"                          # 翻中文不動
+
+
+def test_wan_composite_numbers():
+    # 11-22 full8 日文翻英：「5萬3135円」被換成「50,0003135」，數值對不上保留原文
+    assert tt.prepare_source("全國平均家賃は5萬3135円。", "en") == "全國平均家賃は53135円。"
+    assert tt.prepare_source("預算1萬5000元", "en") == "預算15000元"
+    assert tt.prepare_source("預算80萬元，3萬人", "en") == "預算800,000元，30,000人"   # 單純「N萬」照舊
+    assert tt.numbers_ok(tt.prepare_source("家賃は5萬3135円。", "en"), "The rent is 53,135 yen.")

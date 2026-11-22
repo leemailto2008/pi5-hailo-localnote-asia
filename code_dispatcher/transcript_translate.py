@@ -117,6 +117,8 @@ _SCALE_WORDS = "|".join(sorted(_EN_SCALE, key=len, reverse=True))
 _NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?!\d)|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|(?:" + _SCALE_WORDS + r")\b)?(?!\d)",
                      re.I)
 _CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
+# 「5萬3135円」「1萬5000元」= 53,135／15,000：萬後面直接接 1–4 位數字 (11-22 full8 日文翻英「5萬3135円」被換成「50,0003135」、數值對不上保留原文)
+_CN_WAN_COMPOSITE_RE = re.compile(r"(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,])")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
@@ -200,6 +202,7 @@ def prepare_source(text: str, target: str) -> str:
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
     text = fix_mixed_numbers(text)
     if target == "en":
+        text = _CN_WAN_COMPOSITE_RE.sub(lambda m: str(int(m.group(1)) * 10 ** 4 + int(m.group(3))), text)
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))
             return f"{int(v):,}" if v == int(v) else f"{v:,}"
