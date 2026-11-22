@@ -172,6 +172,8 @@
 - **英文譯文的固定修正都在 `transcript_translate.postfix`**（數字、組長→Team Lead、職稱後人名轉拼音、姓名後中文職稱、常見商用詞、中文星期）；改完用 `.cc_scratch/ltr/residue_audit.py` 重放已存的 `*.live_tr.json` 看夾中文段數，並看有沒有改錯。
 - **紀要時間、會後翻譯時間會跳動**（同測資 podcast 紀要 36–50 s、en_long 65–133 s、英翻中 64–97 s）：多半是模型生成長度或對齊變動，先多跑一次再判斷是不是退步。
 - **.229 部署會被 Claude Code 權限檢查擋**：備好 `.cc_scratch/tmp/b1_run.sh <sha>`，請使用者用 `!` 執行。
+- **Pi 上的測試排程腳本先 scp 再 `setsid nohup` 執行**，不要在 ssh 命令列裡用 heredoc 加 `&`：留下的 `bash -c` 外殼命令列含整份腳本文字，
+  會讓其他腳本的 `pgrep` 忙碌檢查與 `grep "Wxx DONE"` 誤判（11-22 W38／W40 實際發生）。完成訊號 grep 要錨定行首（`^Wxx DONE`）。
 
 ---
 
