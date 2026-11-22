@@ -331,6 +331,31 @@ def fix_name_zh_titles(translation: Optional[str], target: str) -> Optional[str]
     return _NAME_ZH_TITLE_RE.sub(lambda m: f"{_ZH_TITLE_EN[m.group(2)]} {m.group(1)}", translation)
 
 
+# 姓和職稱都留中文 (11-22 重放：「蔡组长」4 處)：單字姓 (前面不是中文字，原文裡有) → 「Team Lead Cai」
+_CJK_NAME_TITLE_RE = re.compile(r"(?<![一-鿿])([一-鿿])(" +
+                                "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")(?![一-鿿])")
+
+
+def fix_cjk_name_titles(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or not _CJK_NAME_TITLE_RE.search(translation):
+        return translation
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError as e:
+        print(f"[translate] 沒有 pypinyin，中文姓名不轉拼音：{e}")
+        return translation
+
+    def repl(m: "re.Match") -> str:
+        if m.group(1) not in src:
+            return m.group(0)
+        out = f"{_ZH_TITLE_EN[m.group(2)]} {lazy_pinyin(m.group(1))[0].capitalize()}"
+        s, e = m.start(), m.end()
+        left = " " if s > 0 and translation[s - 1].isascii() and translation[s - 1].isalnum() else ""
+        right = " " if e < len(translation) and translation[e].isascii() and translation[e].isalnum() else ""
+        return left + out + right
+    return _CJK_NAME_TITLE_RE.sub(repl, translation)
+
+
 # 英文譯文裡最常留下的一般商用詞 (11-22 W11–W34 英文譯文：「报价」17、「全员」11、「出差」6；模型寫成簡體留在句中)。
 # 只收一般詞彙，不放人名、地名、產品名 (那些來自會議詞彙)。
 _ZH_COMMON_EN = {"報價": "quotation", "报价": "quotation", "全員": "all staff", "全员": "all staff",
@@ -355,7 +380,8 @@ def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
-    return fix_weekdays(fix_common_zh_words(fix_name_zh_titles(out, target), target), target)
+    out = fix_cjk_name_titles(src, fix_name_zh_titles(out, target), target)
+    return fix_weekdays(fix_common_zh_words(out, target), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:

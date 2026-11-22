@@ -393,3 +393,11 @@ def test_fix_common_zh_words():
     assert tt.fix_common_zh_words("arrangement for出差. Mr. Xu", "en") == "arrangement for business trip. Mr. Xu"
     assert tt.fix_common_zh_words("at the current报价 until", "en") == "at the current quotation until"
     assert tt.fix_common_zh_words("全員培訓", "zh") == "全員培訓"
+
+
+def test_fix_cjk_name_titles():
+    # 11-22 重放：「arranged by the蔡组长」4 處 → 「Team Lead Cai」；原文沒有那個姓不轉
+    assert tt.postfix("測試由蔡組長安排", "The testing part will be arranged by the蔡组长, at least ten rounds.", "en") == \
+        "The testing part will be arranged by the Team Lead Cai, at least ten rounds."
+    assert tt.fix_cjk_name_titles("由王經理處理", "ask 蔡组长 now", "en") == "ask 蔡组长 now"
+    assert tt.fix_cjk_name_titles("蔡組長", "蔡组长", "zh") == "蔡组长"
