@@ -419,3 +419,11 @@ def test_fix_name_zh_titles_needs_matching_surname():
     assert tt.fix_name_zh_titles("同意這件事由許經理負責", "handled by Xiang经理", "en") == "handled by Manager Xu"
     # 原文兩位經理、譯文的名字都對不上 → 不猜
     assert tt.fix_name_zh_titles("許經理和王經理", "handled by Xiang经理", "en") == "handled by Xiang经理"
+
+
+def test_postfix_all_rules_together():
+    # 週末加的英文譯文修正同時出現在一句裡：互不干擾
+    src = "蔡組長請王經理週二前確認新報價，全員培訓第十0輪。"
+    out = "Captain蔡 asked Wang经理 to confirm the new报价 by周二, and全员培训 round 10."
+    assert tt.postfix(src, out, "en") == \
+        "Team Lead Cai asked Manager Wang to confirm the new quotation by Tuesday, and all staff training round 10."
