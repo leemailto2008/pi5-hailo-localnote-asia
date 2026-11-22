@@ -315,11 +315,27 @@ def fix_weekdays(translation: Optional[str], target: str) -> Optional[str]:
     return re.sub(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?=[A-Za-z0-9])", r"\1 ", out)
 
 
+# 英文姓名後面直接接 (沒有空白) 中文職稱 (11-22 W11–W34 英文譯文共 41 處：「Wang经理」15、「Lin主任」11、「Xu经理」7…) → 「Manager Wang」
+_ZH_TITLE_EN = {"總經理": "General Manager", "总经理": "General Manager", "經理": "Manager", "经理": "Manager",
+                "副理": "Deputy Manager", "協理": "Assistant Vice President", "协理": "Assistant Vice President",
+                "副總": "Vice President", "副总": "Vice President", "主任": "Director", "課長": "Section Chief",
+                "课长": "Section Chief", "組長": "Team Lead", "组长": "Team Lead", "部長": "Department Head",
+                "部长": "Department Head", "處長": "Division Director", "处长": "Division Director",
+                "工程師": "Engineer", "工程师": "Engineer", "專員": "Specialist", "专员": "Specialist"}
+_NAME_ZH_TITLE_RE = re.compile(r"\b([A-Z][a-z]+)(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")")
+
+
+def fix_name_zh_titles(translation: Optional[str], target: str) -> Optional[str]:
+    if not translation or target != "en" or not _NAME_ZH_TITLE_RE.search(translation):
+        return translation
+    return _NAME_ZH_TITLE_RE.sub(lambda m: f"{_ZH_TITLE_EN[m.group(2)]} {m.group(1)}", translation)
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
-    中文星期 (fix_weekdays)。"""
+    姓名後的中文職稱 (fix_name_zh_titles)、中文星期 (fix_weekdays)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
-    return fix_weekdays(out, target)
+    return fix_weekdays(fix_name_zh_titles(out, target), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:

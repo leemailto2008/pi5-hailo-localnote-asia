@@ -375,3 +375,13 @@ def test_mixed_numbers_need_classifier():
     # 日文「第3四半期」(第 3 季) 不是 34；後面接量詞／單位的才換
     assert tt.fix_mixed_numbers("第3四半期の売上") == "第3四半期の売上"
     assert tt.fix_mixed_numbers("第1三個議題、加裝十0只、在9月2五日") == "第13個議題、加裝10只、在9月25日"
+
+
+def test_fix_name_zh_titles():
+    # 11-22：「Wang经理」「Lin主任」「Cai组长」→ 職稱英文放姓名前
+    assert tt.postfix("由向經理處理", "Agree that this matter shall be handled by Xiang经理 by Thursday.", "en") == \
+        "Agree that this matter shall be handled by Manager Xiang by Thursday."
+    assert tt.fix_name_zh_titles("Ask Lin主任 and Cai组长", "en") == "Ask Director Lin and Team Lead Cai"
+    assert tt.fix_name_zh_titles("the经理 said", "en") == "the经理 said"          # 前面不是姓名不動
+    assert tt.fix_name_zh_titles("王經理", "zh") == "王經理"
+    assert tt.fix_name_zh_titles("Ask 组长 to confirm", "en") == "Ask 组长 to confirm"   # 中間有空白不是「姓名＋職稱」
