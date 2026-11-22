@@ -329,7 +329,7 @@ def test_fix_mixed_numbers_digit_concat_and_hundreds():
     assert tt.fix_mixed_numbers("第1三個議題是教育訓練") == "第13個議題是教育訓練"
     assert tt.fix_mixed_numbers("第一7二個議題") == "第172個議題"
     assert tt.fix_mixed_numbers("第1八十四個議題") == "第184個議題"
-    assert tt.fix_mixed_numbers("第一個、二十個、一百二十三、2025年、三十5") == "第一個、二十個、一百二十三、2025年、35"
+    assert tt.fix_mixed_numbers("第一個、二十個、一百二十三、2025年、三十5人") == "第一個、二十個、一百二十三、2025年、35人"
 
 
 def test_residual_chinese_picks_cleanest_usable(monkeypatch):
@@ -369,3 +369,9 @@ def test_wan_composite_numbers():
     assert tt.prepare_source("預算1萬5000元", "en") == "預算15000元"
     assert tt.prepare_source("預算80萬元，3萬人", "en") == "預算800,000元，30,000人"   # 單純「N萬」照舊
     assert tt.numbers_ok(tt.prepare_source("家賃は5萬3135円。", "en"), "The rent is 53,135 yen.")
+
+
+def test_mixed_numbers_need_classifier():
+    # 日文「第3四半期」(第 3 季) 不是 34；後面接量詞／單位的才換
+    assert tt.fix_mixed_numbers("第3四半期の売上") == "第3四半期の売上"
+    assert tt.fix_mixed_numbers("第1三個議題、加裝十0只、在9月2五日") == "第13個議題、加裝10只、在9月25日"
