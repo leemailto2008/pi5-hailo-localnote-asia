@@ -401,3 +401,11 @@ def test_fix_cjk_name_titles():
         "The testing part will be arranged by the Team Lead Cai, at least ten rounds."
     assert tt.fix_cjk_name_titles("由王經理處理", "ask 蔡组长 now", "en") == "ask 蔡组长 now"
     assert tt.fix_cjk_name_titles("蔡組長", "蔡组长", "zh") == "蔡组长"
+
+
+def test_ordinal_and_fraction_words_count_in_translation():
+    # 11-22 full10 日文翻英：「手取りの3分の1以上」→「more than one-third of take-home pay」被當成 3 對不上
+    p = tt.prepare_source("手取りの3分の1以上が家賃。", "en")
+    assert tt.numbers_ok(p, "More than one-third of take-home pay goes to rent.")
+    assert tt.numbers_ok("第3個議題", "The third topic")
+    assert not tt.numbers_ok("第3個議題", "The fifth topic")

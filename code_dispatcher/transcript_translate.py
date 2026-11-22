@@ -131,6 +131,11 @@ def _scaled(num: str, unit: Optional[str]) -> float:
 _EN_NUM_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
                                             "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
 _EN_NUM_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90})
+# 序數與分數詞 (譯文那邊)：11-22 full10 日文「手取りの3分の1」→「one-third」，3 對不上保留原文；「第3個」→「the third」也一樣
+_EN_NUM_WORDS.update({w: i + 1 for i, w in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth "
+    "sixteenth seventeenth eighteenth nineteenth twentieth".split())})
+_EN_NUM_WORDS.update({"half": 2, "halves": 2, "thirds": 3, "quarter": 4, "quarters": 4, "fifths": 5})
 
 
 def number_values(text: str, words: bool = False) -> List[float]:
