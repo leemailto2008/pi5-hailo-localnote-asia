@@ -427,3 +427,9 @@ def test_postfix_all_rules_together():
     out = "Captain蔡 asked Wang经理 to confirm the new报价 by周二, and全员培训 round 10."
     assert tt.postfix(src, out, "en") == \
         "Team Lead Cai asked Manager Wang to confirm the new quotation by Tuesday, and all staff training round 10."
+
+
+def test_courtesy_titles():
+    # 「李先生」→「Mr. Li」（重放剩下的夾中文之一）
+    assert tt.postfix("李先生下個月去曼谷", "Next month 李先生 will visit Bangkok.", "en") == "Next month Mr. Li will visit Bangkok."
+    assert tt.postfix("請林小姐確認", "Ask Lin小姐 to confirm", "en") == "Ask Ms. Lin to confirm"

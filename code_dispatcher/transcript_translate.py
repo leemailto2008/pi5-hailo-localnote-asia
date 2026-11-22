@@ -326,7 +326,8 @@ _ZH_TITLE_EN = {"總經理": "General Manager", "总经理": "General Manager", 
                 "副總": "Vice President", "副总": "Vice President", "主任": "Director", "課長": "Section Chief",
                 "课长": "Section Chief", "組長": "Team Lead", "组长": "Team Lead", "部長": "Department Head",
                 "部长": "Department Head", "處長": "Division Director", "处长": "Division Director",
-                "工程師": "Engineer", "工程师": "Engineer", "專員": "Specialist", "专员": "Specialist"}
+                "工程師": "Engineer", "工程师": "Engineer", "專員": "Specialist", "专员": "Specialist",
+                "先生": "Mr.", "小姐": "Ms.", "女士": "Ms."}
 _NAME_ZH_TITLE_RE = re.compile(r"\b([A-Z][a-z]+)(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")")
 
 
