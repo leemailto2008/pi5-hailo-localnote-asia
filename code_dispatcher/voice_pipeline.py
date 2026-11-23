@@ -1295,6 +1295,19 @@ async def record_audio_from_mic(
         _stop(enc, kill=True)
 
 
+_hailo_chunk_errors_seen: set = set()
+
+
+def _report_hailo_chunk_error(err: Exception) -> None:
+    """transcribe_pcm_chunk 每個切片都會呼叫：同一種 Hailo 錯誤只印第一次，之後記 debug (不洗版 journal)。"""
+    key = f"{type(err).__name__}: {err}"[:200]
+    if key in _hailo_chunk_errors_seen:
+        _log.debug("[VoicePipeline] Hailo Whisper 轉錄失敗 (重複)：%s", key)
+        return
+    _hailo_chunk_errors_seen.add(key)
+    print(f"[VoicePipeline] Hailo Whisper 轉錄失敗，改用 CPU faster-whisper：{err}（同一錯誤之後不再印）")
+
+
 def transcribe_pcm_chunk(pcm_bytes: bytes) -> Optional[str]:
     """
     Transcribe a 16kHz 16-bit mono PCM chunk using Hailo-8 AI NPU or faster-whisper.
@@ -1323,7 +1336,7 @@ def transcribe_pcm_chunk(pcm_bytes: bytes) -> Optional[str]:
                 if res and res.get("text"):
                     return to_taiwan_traditional(res["text"]).strip()
         except Exception as hailo_err:
-            print(f"[VoicePipeline] Hailo Whisper 轉錄失敗，改用 CPU faster-whisper：{hailo_err}")
+            _report_hailo_chunk_error(hailo_err)
 
         # 回退至 CPU faster-whisper (單執行緒/2執行緒避免爭搶)
         with _whisper_lock:

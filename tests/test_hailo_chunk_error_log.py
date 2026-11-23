@@ -1,0 +1,17 @@
+"""voice_pipeline.transcribe_pcm_chunk 的 Hailo 失敗訊息：同一種錯誤只印第一次（每個切片都會呼叫，避免洗版 journal）。"""
+import sys
+import types
+
+sys.modules.setdefault("config", types.SimpleNamespace(WHISPER_MODEL_SIZE="small", WHISPER_DEVICE="cpu", WHISPER_COMPUTE_TYPE="int8",
+                                                       DEFAULT_TTS_VOICE="zh-TW-HsiaoChenNeural", DATA_DIR="/tmp"))
+import voice_pipeline as vp  # noqa: E402
+
+
+def test_same_error_printed_once(monkeypatch, capsys):
+    monkeypatch.setattr(vp, "_hailo_chunk_errors_seen", set())
+    for _ in range(5):
+        vp._report_hailo_chunk_error(ModuleNotFoundError("No module named 'hailo_engine'"))
+    vp._report_hailo_chunk_error(RuntimeError("NPU busy"))
+    out = capsys.readouterr().out
+    assert out.count("hailo_engine") == 1
+    assert out.count("NPU busy") == 1
