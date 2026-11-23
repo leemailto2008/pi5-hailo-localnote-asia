@@ -728,7 +728,8 @@ def _fix_table_separators(lines: List[str]) -> List[str]:
 # 即時逐字稿是以「，」串接的單一長段，沒有換行，舊版按 \n\n 切段 → 4328 / 5995 字都只切成 1 段。
 # 改為先依句末標點、再依逗號切句，貪婪打包成 <= max_chars 的區塊；單句過長則硬切。
 _SENT_END_RE = re.compile(r"(?<=[。！？!?；;\n])")
-_CLAUSE_RE = re.compile(r"(?<=[，,、：:])")
+# 半形「,」「:」夾在兩個數字中間 (6,280、10:30) 不是子句邊界 (2026-11-23：段落邊界切成「…6,」｜「280萬…」，模型兩段各看到半個數字)
+_CLAUSE_RE = re.compile(r"(?<=[，、：])|(?<=(?<!\d)[,:])|(?<=[,:])(?!\d)")
 
 
 def _pieces(text: str, max_chars: int) -> List[str]:
@@ -741,8 +742,9 @@ def _pieces(text: str, max_chars: int) -> List[str]:
             continue
         for clause in _CLAUSE_RE.split(sent):
             while len(clause) > max_chars:
-                out.append(clause[:max_chars])
-                clause = clause[max_chars:]
+                cut = len(_cut_keep_number(clause, max_chars))   # 硬切不切斷數字
+                out.append(clause[:cut])
+                clause = clause[cut:]
             if clause.strip():
                 out.append(clause)
     return out
@@ -854,9 +856,11 @@ def take_stable_chunk(text: str, start: int, max_chars: int = 1000, lag: int = 1
     if len(text) - start < max_chars + lag:
         return None
     window = text[start:start + max_chars]
-    cut = max(window.rfind(c) for c in _STABLE_CUT_CHARS)
-    end = start + (cut + 1 if cut >= int(max_chars * 0.6) else max_chars)
-    return end
+    # 千分位／時間的「,」「:」不是切點；硬切不切斷數字 (2026-11-23)
+    cut = max((i for i, c in enumerate(window) if c in _STABLE_CUT_CHARS and not _inside_number(text, start + i)), default=-1)
+    if cut >= int(max_chars * 0.6):
+        return start + cut + 1
+    return start + len(_cut_keep_number(text[start:], max_chars))
 
 
 _RECAP_RE = re.compile(r"(最後總結|總結一下|做個總結|做一下總結|總結來說|最後來總結|以下總結"
@@ -1024,8 +1028,8 @@ _ZH_RECAP_SPLIT_RE = re.compile(r"[，。；;！!？?\n]|(?<!\d),|,(?!\d)")
 
 
 def _inside_number(t: str, i: int) -> bool:
-    """t[i] 是夾在兩個數字中間的「,」或「.」（千分位、小數點）。"""
-    return t[i] in ",." and 0 < i < len(t) - 1 and t[i - 1].isdigit() and t[i + 1].isdigit()
+    """t[i] 是夾在兩個數字中間的「,」「.」「:」（千分位、小數點、時間 10:30）。"""
+    return t[i] in ",.:" and 0 < i < len(t) - 1 and t[i - 1].isdigit() and t[i + 1].isdigit()
 
 
 def _cut_keep_number(t: str, n: int) -> str:
@@ -1037,7 +1041,7 @@ def _cut_keep_number(t: str, n: int) -> str:
     right_in = t[n].isdigit() or _inside_number(t, n)
     if not (left_in and right_in):
         return t[:n]
-    return re.sub(r"\d[\d,.]*$", "", t[:n]) or t[:n]
+    return re.sub(r"\d[\d,.:]*$", "", t[:n]) or t[:n]
 
 
 def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcript: bool = False) -> str:
