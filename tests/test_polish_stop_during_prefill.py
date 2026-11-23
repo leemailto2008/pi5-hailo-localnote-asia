@@ -47,3 +47,21 @@ def test_no_stop_returns_full_output(monkeypatch):
 def test_stop_during_generation_still_returns_none(monkeypatch):
     out, _elapsed, _state = _run(monkeypatch, stop_at=PREFILL_S - 0.05)
     assert out is None
+
+
+def test_outer_cancel_also_closes_stream(monkeypatch):
+    """潤稿工作被取消（外層 task.cancel）時，內層串流也要關掉，不能留下孤兒 CPU 推論。"""
+    state = {"closed": False}
+    monkeypatch.setattr(tp, "aiter_chat_stream", _fake_stream(state))
+
+    async def main():
+        outer = asyncio.ensure_future(tp._complete("fix", "p", "s", 0.0, 128, {}, lambda: False))
+        await asyncio.sleep(0.2)
+        outer.cancel()
+        try:
+            await outer
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.1)          # 讓內層 task 跑完 finally
+        return state["closed"]
+    assert asyncio.run(main())

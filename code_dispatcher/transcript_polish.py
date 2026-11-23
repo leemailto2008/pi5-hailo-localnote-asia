@@ -415,13 +415,17 @@ async def _complete(mode: str, prompt: str, system: str, temperature: float, num
         return "".join(parts)
 
     task = asyncio.ensure_future(consume())
-    while not task.done():
-        await asyncio.wait({task}, timeout=POLL_SEC)
-        if not task.done() and should_stop is not None and should_stop():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            return None
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=POLL_SEC)
+            if not task.done() and should_stop is not None and should_stop():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return None
+    except asyncio.CancelledError:
+        task.cancel()   # 外層被取消 (潤稿工作中止)：asyncio.wait 不會連帶取消 task，不收掉 CPU 推論會變孤兒繼續跑
+        raise
     return task.result()
 
 
