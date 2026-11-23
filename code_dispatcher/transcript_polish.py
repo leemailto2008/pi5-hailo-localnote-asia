@@ -599,14 +599,16 @@ async def _polish_transcript(
                 counts[seg[0]] += 1
 
     corrector = None
-    if fix_engine == "csc":
+    # 一開始就該停（已經在錄音）：不載入 MacBERT（CPU 約 4 s、RSS 約 814 MB），下面第一段就會停下 (S16)
+    stopping = should_stop is not None and should_stop()
+    if fix_engine == "csc" and not stopping:
         try:
             from csc_corrector import CscCorrector
             # 載入約 4 s；這次潤稿用完就釋放。csc_threads：onnxruntime 執行緒數（省略 = csc_corrector.THREADS）
             corrector = await asyncio.to_thread(CscCorrector, **({"threads": csc_threads} if csc_threads else {}))
         except ImportError as e:
             raise RuntimeError("中文糾錯引擎缺少套件（onnxruntime、tokenizers、opencc）：" + str(e)) from e
-    pre_corrector = await _load_pre_csc() if corrector is None else None     # LLM 潤稿（fix＋llm、rewrite）才先跑 MacBERT
+    pre_corrector = await _load_pre_csc() if corrector is None and fix_engine != "csc" and not stopping else None   # LLM 潤稿（fix＋llm、rewrite）才先跑 MacBERT
     pre_stats: Dict[str, Any] = {"backend": None, "accepted_edits": 0, "rejected_edits": 0}
 
     terms = list(glossary or [])
