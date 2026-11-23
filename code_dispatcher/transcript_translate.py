@@ -286,6 +286,18 @@ _TITLED_NAME_RE = re.compile(r"\b(Team Lead|Manager|Engineer|Director|Supervisor
                              r"([一-鿿]{1,3})(?![一-鿿])(?:\s*\(([A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)?)\))?")
 
 
+# 當姓時讀音和常用讀音不同的字 (lazy_pinyin 取常用讀音：曾 ceng、覃 tan)。只列 _COMMON_SURNAMES 裡有的 (2026-11-23)
+_SURNAME_READING = {"曾": "Zeng", "覃": "Qin"}
+
+
+def _surname_pinyin(ch: str) -> str:
+    """單字姓的拼音 (首字大寫)：先查姓氏讀音，沒有才用 lazy_pinyin。"""
+    if ch in _SURNAME_READING:
+        return _SURNAME_READING[ch]
+    from pypinyin import lazy_pinyin
+    return lazy_pinyin(ch)[0].capitalize()
+
+
 def romanize_titled_names(src: str, translation: Optional[str], target: str) -> Optional[str]:
     if not translation or target != "en" or not _TITLED_NAME_RE.search(translation):
         return translation
@@ -302,6 +314,7 @@ def romanize_titled_names(src: str, translation: Optional[str], target: str) -> 
         if m.group(3):   # 模型自己在括號寫了拼音「Team Lead蔡 (Cai)」：用它，拿掉括號
             return f"{m.group(1)} {m.group(3)}"
         syl = [p.capitalize() for p in lazy_pinyin(name)]
+        syl[0] = _surname_pinyin(name[0])   # 第一個字是姓：用姓氏讀音 (曾 Zeng 不是 Ceng)
         roman = syl[0] if len(syl) == 1 else syl[0] + " " + "".join(syl[1:]).capitalize()
         return f"{m.group(1)} {roman}"
     return _TITLED_NAME_RE.sub(repl, translation)
@@ -345,7 +358,7 @@ def fix_name_zh_titles(src: str, translation: Optional[str], target: str) -> Opt
     if not translation or target != "en" or not _NAME_ZH_TITLE_RE.search(translation):
         return translation
     try:
-        from pypinyin import lazy_pinyin
+        from pypinyin import lazy_pinyin  # noqa: F401  只檢查有沒有裝 (拼音由 _surname_pinyin 取)
     except ImportError as e:
         print(f"[translate] 沒有 pypinyin，姓名後的中文職稱不換：{e}")
         return translation
@@ -353,7 +366,7 @@ def fix_name_zh_titles(src: str, translation: Optional[str], target: str) -> Opt
     by_title: Dict[str, set] = {}
     for m in re.finditer(r"([一-鿿])(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + ")", src or ""):
         if m.group(1) in _COMMON_SURNAMES:
-            by_title.setdefault(_ZH_TITLE_EN[m.group(2)], set()).add(lazy_pinyin(m.group(1))[0].capitalize())
+            by_title.setdefault(_ZH_TITLE_EN[m.group(2)], set()).add(_surname_pinyin(m.group(1)))
 
     def repl(m: "re.Match") -> str:
         title = _ZH_TITLE_EN[m.group(2)]
@@ -375,7 +388,7 @@ def fix_cjk_name_titles(src: str, translation: Optional[str], target: str) -> Op
     if not translation or target != "en" or not _CJK_NAME_TITLE_RE.search(translation):
         return translation
     try:
-        from pypinyin import lazy_pinyin
+        from pypinyin import lazy_pinyin  # noqa: F401  只檢查有沒有裝 (拼音由 _surname_pinyin 取)
     except ImportError as e:
         print(f"[translate] 沒有 pypinyin，中文姓名不轉拼音：{e}")
         return translation
@@ -383,7 +396,7 @@ def fix_cjk_name_titles(src: str, translation: Optional[str], target: str) -> Op
     def repl(m: "re.Match") -> str:
         if m.group(1) not in src:
             return m.group(0)
-        out = f"{_ZH_TITLE_EN[m.group(2)]} {lazy_pinyin(m.group(1))[0].capitalize()}"
+        out = f"{_ZH_TITLE_EN[m.group(2)]} {_surname_pinyin(m.group(1))}"
         s, e = m.start(), m.end()
         left = " " if s > 0 and translation[s - 1].isascii() and translation[s - 1].isalnum() else ""
         right = " " if e < len(translation) and translation[e].isascii() and translation[e].isalnum() else ""
