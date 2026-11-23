@@ -19,7 +19,8 @@ PARTIAL = {"engine": "x", "phase": "diarize", "transcript": "好", "speakers": 0
 def _child(tmp_path, lines, linger_s):
     script = tmp_path / "fake_child.py"
     body = "".join(f"print({json.dumps(json.dumps(obj, ensure_ascii=False))}, flush=True)\n" for obj in lines)
-    script.write_text("import time\n" + body + f"time.sleep({linger_s})\n", encoding="utf-8")
+    # 子行程一律用 UTF-8 輸出（Pi 預設就是；Windows 預設 cp950，主行程用 UTF-8 讀會讀不到中文）
+    script.write_text("import sys, time\nsys.stdout.reconfigure(encoding='utf-8')\n" + body + f"time.sleep({linger_s})\n", encoding="utf-8")
     return [sys.executable, str(script)]
 
 
