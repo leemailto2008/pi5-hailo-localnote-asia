@@ -486,3 +486,10 @@
 - `.agents/`（Antigravity 規則）已複製到新資料夾，位於 `.gitignore` 內，不進版控。
 - 每小時定時循環 `trig_01XfezGs1zV3uroLZy1NZm4D` 的提示詞已改指向新資料夾。
 - 待辦：刪除 `F:\_failed_tar_copy_v2_delete_me` 與 `F:\_old_clone_git_v2_delete_me`（需使用者授權）。
+
+## 本輪更新（2026-11-23 11:00 localnote，台北時間）
+
+- 11-19 起實際待辦與進度記在 `todo_tasks.md`「〇、目前優先事項」與 `claude_context/BIG_CHANGE_STATUS.md` #58–#60（#60 開頭有週末定稿摘要）；本檔 §4 停在 11-10，以前兩者為準。
+- 週末在 .228 跑 W1–W50 都 PASS；.228 目前 `2438d16`。
+- 等使用者決定：B1 更新 .229 到 aa31b01（實機全過；週末熱點模式連不到，11-21 自動執行被 Claude Code 權限檢查擋下），指令 `! bash .cc_scratch/tmp/b1_run.sh aa31b01`；其餘待決見 #60 摘要。
+- 工作鎖：已停用（11-20 dr 停掉雲端每小時排程）。
