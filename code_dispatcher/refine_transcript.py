@@ -1318,6 +1318,10 @@ async def run_in_subprocess(path: str, should_stop: StopFn = None,
             await proc.wait()
         await asyncio.gather(stop_task, err_task, return_exceptions=True)
 
+    if stopped and result is not None and not error:
+        # 子行程已交出完整結果、還在結束 (釋放模型) 時才開始錄音：推論已做完，交出結果，不要丟掉重跑
+        # (S16：原本一律回傳 partial，4 小時會議要重跑約 20 分鐘)；returncode 是被 terminate 的，不看
+        return result
     if stopped:
         out = dict(partial) if partial else {"engine": ENGINE_LABEL, **pipeline_labels(), "phase": "asr", "transcript": "",
                                               "speakers": 0, "sentences": []}
