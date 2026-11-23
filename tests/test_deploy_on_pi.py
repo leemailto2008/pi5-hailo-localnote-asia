@@ -173,3 +173,11 @@ def test_syntax_error_stops_before_install(env):
     r = _deploy(env)
     assert r.returncode != 0 and not _restarted(env)
     assert (env["dst"] / "app.py").read_text(encoding="utf-8") == "X = 1\n"
+
+
+def test_human_job_exactly_15_minutes_old_does_not_block(env):
+    """S19 突變測試：15 分鐘閘門的邊界（900 s → 901 s 的突變原本沒被抓到）。剛好 900 s 前開始的 job 不擋
+    （腳本裡是 < 900）；秒數在腳本執行時剛好跳到 901 也一樣不擋，所以這個測試不會因為時間誤判而失敗。"""
+    _api(env, "/api/status", {"state": "done", "job": f"m_{int(time.time()) - 900}"})
+    r = _deploy(env)
+    assert r.returncode == 0 and _restarted(env), r.stdout
