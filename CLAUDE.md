@@ -163,7 +163,9 @@
 - **會議詞彙也用在紀要（2026-11-13，33c673c）:** `meeting_glossary.apply_to_text` 在紀要前套到即時稿（錄音中預先整理只套當段，整份 60 分要 0.3 s，錄音中不可每 10 秒整份重算）。
 - **即時稿可選 SenseVoice（2026-11-13，4a462bc；15:14 使用者決定預設 SenseVoice）:** 網頁開關＋`/api/config/live_asr`（沒存過設定＝SenseVoice；這台沒裝 sherpa-onnx／模型就自動用 Whisper）；`sv_worker` 子行程綁 CPU 2、3。藍牙收音也可用（11-13 GS3 喇叭→耳麥 10 分：封包到達 100.0／99.9%、補靜音 0.0／0.1%，沒變差；`PI5_LIVE_SV_ON_BT=0` 讓藍牙改回 Whisper）。GS3 實測 cer_num 0.12–0.16 → 0.016–0.031。e2e 用 `stt_sv_ratio` 取代 `stt_npu_ratio`。
 - **高精度稿辨識切段（2026-11-13，e19a919）:** 辨識在停頓處切 4–9.5 s 整段做（與即時稿相同），字依時間分回 VAD 句子給分說話人；VAD 句子（約 3 s）上下文太短，cer_num 0.05 → 0.03–0.04。`PI5_REFINE_ASR_SEGMENT=vad` 切回。
-- **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`；`tests/test_bt_link_stats.py` 要 fcntl，Windows 上加 `--ignore`。
+- **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`（11-23 起 tests/ 在 Windows 可完整收集，不用 `--ignore`）。
+  **PC 記憶體排班（11-23 dr）：** 這台 PC 同時跑讀卡器 co-sim 等 agent，可用 RAM 掉到約 2.1 GB 時 Claude Code 會停掉工作；PC 上跑 pytest／重放前一律用
+  `bash .cc_scratch/tmp/with_l1_lock.sh "<做什麼>" <分鐘> <指令…>`（呼叫共用的 l1lock.py 原子拿 `R:\Temp\l1_exclusive.lock`、檢查 RAM ≥ 2.3 GB，拿不到就不跑），不要手寫判斷鎖的指令（11-24 手寫沒加引號、跑進 co-sim 的時段）。
 - **PC → Pi 傳大檔:** scp 原樣傳 7 MB tar 會卡住，加 `-C`（壓縮）約 1 分鐘傳完。
 
 ### ⚠️ [重點十] 即時翻譯與譯文後處理 (2026-11-20～22 實測，細節見 `claude_context/BIG_CHANGE_STATUS.md` #59、#60)
