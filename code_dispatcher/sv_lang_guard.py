@@ -44,6 +44,7 @@ OVERLAP_OK, OVERLAP_FOREIGN = 0.5, 0.3
 
 _LETTER_RE = re.compile(r"[^\W\d_]")
 _THAI_RE = re.compile(r"[฀-๿]")
+_CJK_SCRIPT_RE = re.compile(r"[぀-ヿㇰ-ㇿ㐀-䶿一-鿿豈-﫿ᄀ-ᇿ가-힯]")   # 中、日假名、韓
 _LATIN_RE = re.compile(r"[A-Za-zÀ-ɏḀ-ỿ]")
 _LATIN_WORD_RE = re.compile(r"[A-Za-zÀ-ɏḀ-ỿ']+")
 _ASCII_WORD_RE = re.compile(r"[a-z']+")
@@ -55,9 +56,14 @@ def whisper_verdict(sv_lang: str, sv_text: str, whisper_text: str) -> Optional[s
     letters = _LETTER_RE.findall(w)
     if len(letters) < 4:
         return None
-    if len(_THAI_RE.findall(w)) >= 0.5 * len(letters):
+    n_thai, n_latin = len(_THAI_RE.findall(w)), len(_LATIN_RE.findall(w))
+    if n_thai >= 0.5 * len(letters):
         return "foreign"
-    if len(_LATIN_RE.findall(w)) < 0.8 * len(letters):
+    # 其他文字 (西里爾、阿拉伯、天城、希伯來、希臘…) 過半也是 SenseVoice 不支援的語言 (2026-11-23：原本「不是拉丁字母就 ok」，
+    # 俄文、阿拉伯文會議永遠不改用 Whisper)。中日韓照舊 ok；中英夾雜不受影響 (拉丁字母＋中文不算「其他」)
+    if len(letters) - n_thai - n_latin - len(_CJK_SCRIPT_RE.findall(w)) >= 0.5 * len(letters):
+        return "foreign"
+    if n_latin < 0.8 * len(letters):
         return "ok"   # 中文／日文／韓文
     if len(_LATIN_WORD_RE.findall(w)) < 3:
         return None
@@ -166,7 +172,10 @@ def pseudo_tokens(text: str, start: float, end: float):
         toks = list(t)
     if not toks:
         return [], []
-    if _LATIN_RE.match(toks[0]):
-        toks[0] = " " + toks[0]   # 拉丁字母的片接在前一片後面要有空白（字接起來 strip 後仍等於 text）
+    first = toks[0][:1]
+    if _LETTER_RE.match(first) and not _CJK_SCRIPT_RE.match(first) and not _THAI_RE.match(first):
+        # 用空白分詞的文字 (拉丁、西里爾、阿拉伯、天城…) 接在前一片後面要有空白（字接起來 strip 後仍等於 text）；
+        # 2026-11-23：原本只看拉丁字母，俄文、阿拉伯文的片跟前一片黏在一起
+        toks[0] = " " + toks[0]
     step = max(0.0, end - start) / len(toks)
     return toks, [start + i * step for i in range(len(toks))]
