@@ -455,9 +455,12 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
     if not text or not text.strip():
         return False
     if output_ogg_path is None:
+        import tempfile
         import uuid
-        from voice_memory import get_in_memory_cache_dir   # RAM 磁碟 (零磁碟寫入)；原本的 TEMP_AUDIO_DIR 沒有定義
-        output_ogg_path = os.path.join(get_in_memory_cache_dir(), f"tts_{uuid.uuid4().hex[:8]}.ogg")
+        # RAM 磁碟 (零磁碟寫入)；沒有 /dev/shm (Mac／Windows) 用系統暫存。telegram_agent 獨立執行，不能 import code_dispatcher 的 voice_memory
+        tts_dir = "/dev/shm/audio_cache" if os.path.isdir("/dev/shm") else tempfile.gettempdir()
+        os.makedirs(tts_dir, exist_ok=True)
+        output_ogg_path = os.path.join(tts_dir, f"tts_{uuid.uuid4().hex[:8]}.ogg")
 
     clean_text = text.strip()
 
