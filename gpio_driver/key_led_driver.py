@@ -21,6 +21,7 @@ import sys
 import time
 import signal
 import argparse
+import re
 import logging
 import threading
 import subprocess
@@ -79,6 +80,9 @@ PIN_MAPPING: List[Dict[str, Any]] = [
 ]
 
 
+_AP_TOKEN_RE = re.compile(r"(?<![a-z0-9])ap(?![a-z0-9])")   # 獨立的 ap 字詞：Pi5_AP、AP-5G
+
+
 def check_is_hotspot_active() -> bool:
     """Check if the active connection on wlan0 is an Access Point / Hotspot."""
     try:
@@ -89,10 +93,12 @@ def check_is_hotspot_active() -> bool:
             timeout=3
         )
         for line in res.stdout.splitlines():
-            parts = line.strip().split(":")
+            # nmcli -t 把名稱裡的 ":" 輸出成 "\:"：只在沒跳脫的冒號切開
+            parts = re.split(r"(?<!\\):", line.strip())
             if len(parts) >= 4 and parts[0] == "wlan0":
-                conn = parts[3]
-                if "Hotspot" in conn or "ap" in conn.lower() or "raspi543" in conn.lower():
+                conn = parts[3].replace("\\:", ":").lower()
+                # 2026-11-23 修正：原本 "ap" in conn，Happy_Home、Laptop 這類家用 Wi-Fi 也被當成熱點
+                if "hotspot" in conn or _AP_TOKEN_RE.search(conn) or "raspi543" in conn:
                     return True
                 return False
     except Exception as e:
