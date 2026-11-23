@@ -133,10 +133,12 @@ _CN_WAN_COMPOSITE_RE = re.compile(r"(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,])")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
-    v = float(re.sub(r"[,\u00a0\u202f ]", "", num))
+    # Decimal 從原字串精確計算再轉 float (S18 fuzz：float 乘法「80.9億」= 8090000000.000001，
+    # 中翻英送模型的原文變成「8,090,000,000.000001」，翻對的「8.09 billion」反而對不上)
+    v = Decimal(re.sub(r"[,\u00a0\u202f ]", "", num))
     if unit:
         v *= _CN_SCALE.get(unit, _EN_SCALE.get(unit.lower(), 1))
-    return round(v, 6)
+    return round(float(v), 6)
 
 
 _EN_NUM_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "

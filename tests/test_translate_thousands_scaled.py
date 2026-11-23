@@ -43,3 +43,20 @@ def test_number_values_thousands_decimal(text, vals):
 def test_prepare_en_decimal_thousands_roundtrip():
     """hypothesis 最小化的輸入：「1.0001千」換成「1,000.1」，數值要讀回 1000.1。"""
     assert tt.number_values(tt.prepare_source("預算1.0001千元", "en")) == [1000.1]
+
+
+# _scaled 用 float 乘法的誤差（S18 慢速 fuzz：i=809, nd=1, unit=億；k=14789 million）
+def test_prepare_en_no_float_noise():
+    assert tt.prepare_source("預算80.9億元", "en") == "預算8,090,000,000元"     # 原本 8,090,000,000.000001
+
+
+def test_correct_english_translation_accepted():
+    prepared = tt.prepare_source("預算80.9億元", "en")
+    assert tt.numbers_ok(prepared, "a budget of 8.09 billion yuan")
+    assert tt.numbers_ok(prepared, "a budget of 8,090,000,000 yuan")
+
+
+@pytest.mark.parametrize("text,val", [("147.89億", 14789000000.0), ("80.9億", 8090000000.0), ("0.3萬", 3000.0),
+                                      ("1.1萬", 11000.0), ("14,789 million", 14789000000.0)])
+def test_scaled_values_exact(text, val):
+    assert tt.number_values(text) == [val]
