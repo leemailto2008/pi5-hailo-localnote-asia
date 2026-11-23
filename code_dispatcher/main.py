@@ -161,20 +161,20 @@ async def startup_event():
                                     break
                                 w.write(data)
                                 await w.drain()
-                        except Exception:
-                            pass
+                        except Exception as _exc:
+                            _log.debug("main.py:164 略過：%s", _exc)
                         finally:
                             try:
                                 w.close()
                                 await w.wait_closed()
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                _log.debug("main.py:170 略過：%s", _exc)
                     await asyncio.gather(forward(reader, remote_writer), forward(remote_reader, writer))
                 except Exception:
                     try:
                         writer.close()
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _log.debug("main.py:176 略過：%s", _exc)
 
             try:
                 server = await asyncio.start_server(handle_client, "0.0.0.0", 8000)
@@ -355,8 +355,8 @@ def get_system_health() -> Dict[str, Any]:
     redis_ok = False
     try:
         redis_ok = redis_conn.ping()
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:358 略過：%s", _exc)
 
     ollama_ok = False
     active_models: List[str] = []
@@ -365,15 +365,15 @@ def get_system_health() -> Dict[str, Any]:
         if resp.status_code == 200:
             ollama_ok = True
             active_models = [m.get("name") for m in resp.json().get("models", [])]
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:368 略過：%s", _exc)
 
     temp_c = 0.0
     try:
         res = subprocess.run(["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=2)
         temp_c = float(res.stdout.strip().replace("temp=", "").replace("'C", ""))
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:375 略過：%s", _exc)
 
     free_ram_mb = 0
     total_ram_mb = 0
@@ -384,8 +384,8 @@ def get_system_health() -> Dict[str, Any]:
                 parts = line.split()
                 total_ram_mb = int(parts[1])
                 free_ram_mb = int(parts[6])  # available RAM
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:387 略過：%s", _exc)
 
     llm_backend_label = "n/a"
     try:
@@ -512,7 +512,7 @@ def get_network_status() -> Dict[str, Any]:
                     mode = "sta"
                 break
     except Exception as e:
-        pass
+        _log.debug("main.py:514 略過：%s", e)
 
     try:
         # Query IP on wlan0
@@ -522,8 +522,8 @@ def get_network_status() -> Dict[str, Any]:
             if line.startswith("inet "):
                 current_ip = line.split()[1].split("/")[0]
                 break
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:525 略過：%s", _exc)
 
     return {
         "mode": mode,
@@ -736,8 +736,8 @@ def get_bt_status() -> Dict[str, Any]:
                         # NOTE: for BR/EDR links HCI Read_RSSI is NOT dBm. It is the offset from the
                         # Golden Receive Power Range: 0 = inside the range (ideal), negative = dB below it.
                         rssi_kind = "golden_delta"
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("main.py:739 略過：%s", _exc)
 
             # 計算訊號百分比：dBm 依 -100 ~ -40 轉換；golden_delta 以 0 為滿分、每低 1 dB 扣 3%
             if rssi is not None and rssi_kind == "dbm":
@@ -1692,14 +1692,14 @@ def _npu_pause_reason() -> Optional[str]:
         import npu_share
         if npu_share.is_resetting():
             return "npu_reset"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:1695 略過：%s", _exc)
     try:
         from voice_streaming import is_any_recording_active
         if is_any_recording_active():
             return "recording"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:1701 略過：%s", _exc)
     try:
         from meeting_minutes import minutes_manager
         st = minutes_manager.status
@@ -1707,14 +1707,14 @@ def _npu_pause_reason() -> Optional[str]:
             return "recording"
         if st.state == "processing":
             return "summary" if st.phase == "summarize" else "stt"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:1710 略過：%s", _exc)
     try:
         from stt_worker import stt_worker
         if stt_worker.is_busy():
             return "stt"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:1716 略過：%s", _exc)
     return None
 
 
@@ -1752,8 +1752,8 @@ def _hailo_telemetry_loop():
                 }
                 _hailo_cache["time"] = time.time()
                 _maybe_reset_npu_group(parts[5])
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("main.py:1755 略過：%s", _exc)
         time.sleep(3.0)
 
 
@@ -1783,8 +1783,8 @@ def get_hailo10_stats() -> Dict[str, Any]:
         import npu_share
         out["shared_group"] = npu_share.shared_group()
         out["last_group_reset"] = npu_share.reset_status()
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("main.py:1786 略過：%s", _exc)
     return out
 
 
@@ -1831,8 +1831,8 @@ def get_system_telemetry_payload() -> Dict[str, Any]:
                     "tops": 26,
                     "detail": "AI NPU"
                 }
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("main.py:1834 略過：%s", _exc)
 
     return {
         "offline": minutes_manager.offline_detector.is_offline,
@@ -1935,8 +1935,8 @@ def get_latest_audio() -> Dict[str, Any]:
             if ogg_files:
                 ogg_files.sort(key=lambda x: os.path.getmtime(os.path.join(AUDIO_CACHE_DIR, x)), reverse=True)
                 target_ogg = ogg_files[0]
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("main.py:1938 略過：%s", _exc)
 
     if target_ogg:
         global _peaks_cache
@@ -2055,6 +2055,7 @@ _JOB_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,64}")
 # 會議詞彙（2026-11-13）：網頁「錄一段會議」卡片填，存在盒子上（meeting_glossary，RAM 磁碟）；
 # 紀要、會後自動快修、潤稿都讀這一份。
 import meeting_glossary  # noqa: E402
+_log = logging.getLogger(__name__)
 
 
 class GlossaryRequest(BaseModel):
@@ -2409,8 +2410,8 @@ async def websocket_status_endpoint(websocket: WebSocket):
                     })
                 elif act == "subscribe_bt_hub":
                     ws_manager.subscribe(websocket, "bt_hub", enable=bool(cmd.get("enable", True)))
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("main.py:2412 略過：%s", _exc)
 
     except WebSocketDisconnect:
         await ws_manager.disconnect(websocket)
