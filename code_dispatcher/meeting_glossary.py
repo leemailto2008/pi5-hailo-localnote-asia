@@ -36,10 +36,8 @@ def read_text() -> str:
 
 def write_text(text: str) -> None:
     os.makedirs(os.path.dirname(GLOSSARY_PATH), exist_ok=True)
-    tmp = GLOSSARY_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, GLOSSARY_PATH)   # 寫完才換上，讀的人不會看到半個檔
+    from atomic_file import write_atomic
+    write_atomic(GLOSSARY_PATH, lambda f: f.write(text))   # 寫完才換上，讀的人不會看到半個檔；失敗不留 .tmp
 
 
 def terms() -> List[str]:

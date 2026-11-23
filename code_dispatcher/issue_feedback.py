@@ -82,22 +82,27 @@ def save(report: Dict[str, Any], log_text: str, transcript: Optional[str] = None
     rid = new_id()
     folder = os.path.join(FEEDBACK_DIR, rid)
     os.makedirs(folder, exist_ok=True)
-    attachments: Dict[str, Any] = {}
-    with open(os.path.join(folder, "service.log"), "w", encoding="utf-8") as f:
-        f.write(log_text or "")
-    if transcript is not None:
-        with open(os.path.join(folder, "transcript.txt"), "w", encoding="utf-8") as f:
-            f.write(transcript)
-        attachments["transcript"] = "transcript.txt"
-    if audio_src is not None:
-        err = cut_audio(audio_src, os.path.join(folder, "audio.ogg"), audio_minutes)
-        job = os.path.splitext(os.path.basename(audio_src))[0]
-        attachments["audio"] = err or f"audio.ogg（{job} 最後 {max(1, min(AUDIO_MAX_MIN, int(audio_minutes)))} 分鐘）"
-    report = {**report, "id": rid, "attachments": attachments}
-    tmp = os.path.join(folder, "feedback.json.part")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=1, default=str)
-    os.replace(tmp, os.path.join(folder, "feedback.json"))
+    try:
+        attachments: Dict[str, Any] = {}
+        with open(os.path.join(folder, "service.log"), "w", encoding="utf-8") as f:
+            f.write(log_text or "")
+        if transcript is not None:
+            with open(os.path.join(folder, "transcript.txt"), "w", encoding="utf-8") as f:
+                f.write(transcript)
+            attachments["transcript"] = "transcript.txt"
+        if audio_src is not None:
+            err = cut_audio(audio_src, os.path.join(folder, "audio.ogg"), audio_minutes)
+            job = os.path.splitext(os.path.basename(audio_src))[0]
+            attachments["audio"] = err or f"audio.ogg（{job} 最後 {max(1, min(AUDIO_MAX_MIN, int(audio_minutes)))} 分鐘）"
+        report = {**report, "id": rid, "attachments": attachments}
+        tmp = os.path.join(folder, "feedback.json.part")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=1, default=str)
+        os.replace(tmp, os.path.join(folder, "feedback.json"))
+    except BaseException:
+        # 寫到一半失敗 (磁碟滿…)：整個資料夾拿掉，不留沒有 feedback.json 的半成品 (list_reports 會一直列成「讀不到」) (2026-11-23)
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     try:
         prune()
     except OSError as e:

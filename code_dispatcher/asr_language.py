@@ -43,10 +43,8 @@ def save_asr_language(lang: str) -> str:
     if lang not in ASR_LANG_CHOICES:
         raise ValueError(f"language 必須是 {'/'.join(ASR_LANG_CHOICES)}")
     os.makedirs(os.path.dirname(ASR_LANG_PATH), exist_ok=True)
-    tmp = ASR_LANG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"language": lang}, f)
-    os.replace(tmp, ASR_LANG_PATH)
+    from atomic_file import write_atomic   # 寫到一半失敗不留 .tmp (2026-11-23)
+    write_atomic(ASR_LANG_PATH, lambda f: json.dump({"language": lang}, f))
     return lang
 
 

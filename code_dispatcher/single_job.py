@@ -65,12 +65,10 @@ class SingleJob:
         return state
 
     def _save(self, state: Dict[str, Any]) -> None:
-        tmp = self.persist_path + ".tmp"
+        from atomic_file import write_atomic   # 寫到一半失敗不留 .tmp (2026-11-23)
         try:
             os.makedirs(os.path.dirname(self.persist_path) or ".", exist_ok=True)
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False)
-            os.replace(tmp, self.persist_path)        # 寫完才換上，讀的人不會看到半個檔
+            write_atomic(self.persist_path, lambda f: json.dump(state, f, ensure_ascii=False))   # 寫完才換上
         except (OSError, TypeError, ValueError) as e:  # 存不了只影響重啟後看不到，工作本身已完成
             logger.warning("[%s] could not save result to %s: %s", self.name, self.persist_path, e)
 

@@ -59,10 +59,8 @@ def _read_pref() -> Dict[str, Any]:
 
 def _write_pref(data: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(LIVE_TR_PATH), exist_ok=True)
-    tmp = LIVE_TR_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.replace(tmp, LIVE_TR_PATH)
+    from atomic_file import write_atomic   # 寫到一半失敗不留 .tmp (2026-11-23)
+    write_atomic(LIVE_TR_PATH, lambda f: json.dump(data, f))
 
 
 def load_live_translate_preference() -> str:

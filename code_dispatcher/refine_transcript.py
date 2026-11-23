@@ -258,10 +258,10 @@ def save_live_asr(audio_path: str, slices: Sequence[Dict[str, Any]], total_sampl
     path = live_asr_path(audio_path, suffix)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path + ".part", "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "sample_rate": SAMPLE_RATE, "total_samples": int(total_samples), "language": language,
-                       "slices": list(slices)}, f, ensure_ascii=False)
-        os.replace(path + ".part", path)
+        from atomic_file import write_atomic   # 寫到一半失敗不留 .part (2026-11-23；一場 4 小時會議可達數 MB，在 RAM 磁碟)
+        write_atomic(path, lambda f: json.dump({"version": 1, "sample_rate": SAMPLE_RATE, "total_samples": int(total_samples),
+                                                "language": language, "slices": list(slices)}, f, ensure_ascii=False),
+                     suffix=".part")
         old = sorted((p for p in (os.path.join(os.path.dirname(path), n) for n in os.listdir(os.path.dirname(path)))
                       if p.endswith(suffix)), key=os.path.getmtime)
         for p in old[:-LIVE_ASR_KEEP]:

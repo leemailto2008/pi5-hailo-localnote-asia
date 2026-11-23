@@ -23,12 +23,10 @@ def save_last_meeting(result: Dict[str, Any], status: Dict[str, Any], path: Opti
     """整份覆蓋寫入；失敗只印警告並回傳 False，不影響會議流程。"""
     path = path or last_meeting_path()
     payload = {"saved_at": datetime.now().isoformat(timespec="seconds"), "result": result, "status": status}
-    tmp = path + ".tmp"
+    from atomic_file import write_atomic   # 寫到一半失敗不留 .tmp (2026-11-23)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, default=str)
-        os.replace(tmp, path)
+        write_atomic(path, lambda f: json.dump(payload, f, ensure_ascii=False, default=str))
         return True
     except (OSError, TypeError, ValueError) as e:
         print(f"[LastMeeting] 無法保存最後一場會議: {e}")
