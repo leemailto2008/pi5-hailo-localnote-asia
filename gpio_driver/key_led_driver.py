@@ -90,6 +90,8 @@ def check_is_hotspot_active() -> bool:
             ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"],
             capture_output=True,
             text=True,
+            encoding="utf-8",       # 連線名稱可能是中文；不依賴 locale
+            errors="replace",
             timeout=3
         )
         for line in res.stdout.splitlines():
