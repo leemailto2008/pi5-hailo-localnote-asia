@@ -1977,15 +1977,19 @@ def drop_duplicate_bullets(md: str) -> str:
         lines = m.group(2).split("\n")
         items = [l for l in lines if l.strip().startswith("- ")]
         key = lambda l: re.sub(r"[\s，,。.、：:；;]", "", l.strip()[2:]).lower()
-        dup = [l for i, l in enumerate(items) if key(l) in seen or key(l) in {key(x) for x in items[:i]}]
-        seen |= {key(l) for l in items}
-        if dup and len(dup) < len(items):
-            kept, removed = [], set()
-            for l in lines:
-                if l in dup and l not in removed and l.strip()[2:].strip() not in ("無", SECTION_MISSING_NOTE):
-                    removed.add(l)
-                    continue
-                kept.append(l)
+        # 依位置判斷：同一個 key 第一次出現的留下，後面的 (含前面段落已經寫過的) 拿掉。
+        # S18 fuzz：原本記「已刪過的行文字」，同一條重複 3 次只刪 1 次，而且刪的是第一條
+        drop, local = set(), set()
+        for i, l in enumerate(lines):
+            if not l.strip().startswith("- "):
+                continue
+            k = key(l)
+            if (k in seen or k in local) and l.strip()[2:].strip() not in ("無", SECTION_MISSING_NOTE):
+                drop.add(i)
+            local.add(k)
+        seen |= local
+        if drop and len(drop) < len(items):
+            kept = [l for i, l in enumerate(lines) if i not in drop]
             out_md = out_md[:m.start(2)] + "\n".join(kept) + out_md[m.end(2):]
     return out_md
 
