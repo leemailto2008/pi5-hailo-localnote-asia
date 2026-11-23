@@ -11,6 +11,12 @@
   97bf10a／ba0f3c4 兩處 except: pass 改成印原因。下午（dr 指示）全 repo except-pass 清完：c532f0e、207a07d、ebd02a4、2a34e05、cd5e8e6（共約 100 處 → _log.debug，行為不變；
   telegram_agent 的 TTS 也有同樣 TEMP_AUDIO_DIR bug 已修）；未用 import 清理（e1eb556、2438d16、fdee7e1、d7bc9dd）；requirements-dev 補 fastapi／httpx／pydantic／requests／pypinyin（435bef5，乾淨 venv 驗證）；
   test_api_endpoints 離線化（26d7859，mock Hailo／BT，Mac 6 passed、tests/ 833 passed）。W52–W54 在 .228 過；16:2x 起 .228 連不上，ebd02a4 之後的 commit 只在 gitlab 分支 wip/offline-api-20261123。W47–W51（數位 5／30／60）、Issue 回報 API 冒煙、W52 GS3 30（ba0f3c4：cer_num 0.0235、fact 0.965）都過。舊程式還有 99 處 except: pass，要不要整理待決定。
+- 11-23 晚（.228 仍連不上，只做離線；本機 main 3a66726，還沒推 main，wip/offline-api-20261123 同步）：Windows 上 tests 完整收集（bt_link_stats 匯入不需 fcntl、stt_worker／sv_worker 的 pipe 測試在 Windows skip）；
+  pyflakes 全 repo 收尾（刪掉重複的 /manifest.json 等）；Task 28 第一、二步 /api/metrics（API 路由與每次 LLM 呼叫的 P50／P95／P99、慢請求 JSON log）；
+  收 Mac 分身 S1–S7：約 300 項離線測試、bt_hub 只送訂閱的分頁、tools/*.sh 支援 macOS、姓氏讀音 曾 Zeng／覃 Qin、故障降級 4 項（暫存檔、LLM 串流錯誤、壞切片檔、壞回報）；
+  S6 審查找到的 metrics method、telegram TTS 路徑、Hailo 切片錯誤洗版已修。Windows 1071 passed。
+  要 Pi 才收：8369672 hailo_engine 偵測、114f509＋1e8b550＋c29e1e4 熱點名稱含「ap」、2a1acb6 Whisper 數字範圍／重複數字／非 16k WAV → 本機 verify/mac-held，
+  .228 回來先 recover_regress.sh 3a66726、過了推 main，再 verify_mac_held.sh 3a66726 849b90c（A/B）。
 - 待 Andrew 決定：翻譯時錄音中先整理紀要（預設勾）、外語即時翻譯上限、.229 版本、地名英文譯名。同事 Issue 回報：.229 連不到，未拉回（.228 只有自測）。
 
 - W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
