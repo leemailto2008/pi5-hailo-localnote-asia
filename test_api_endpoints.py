@@ -5,20 +5,38 @@ End-to-End API endpoint integration test for LocalNote Demo UI.
 
 import os
 import unittest
+from unittest import mock
+
 from fastapi.testclient import TestClient
 
 # Ensure environment variables
 os.environ.setdefault("XDG_RUNTIME_DIR", "/run/user/1000")
 os.environ.setdefault("PULSE_SERVER", "unix:/run/user/1000/pulse/native")
 
-from code_dispatcher.main import app
+import code_dispatcher.main as main_mod  # noqa: E402
+from code_dispatcher.main import app  # noqa: E402
+
+# 離線跑 (Mac／CI／沒有 Hailo、藍牙的 PC)：碰硬體的兩個取樣函式換成固定值
+# get_hailo10_stats 第一次被呼叫會開執行緒跑 hailortcli monitor (macOS 的 script 不支援 -c)；get_bt_status 會呼叫 bluetoothctl。
+_FAKE_HAILO = {"detected": False}
+_FAKE_BT = {"connected": False, "connected_name": ""}
 
 
 class TestDemoUIEndpoints(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._patches = [mock.patch.object(main_mod, "get_hailo10_stats", return_value=dict(_FAKE_HAILO)),
+                        mock.patch.object(main_mod, "get_bt_status", return_value=dict(_FAKE_BT))]
+        for p in cls._patches:
+            p.start()
+        # 不用 `with TestClient(app)`：不觸發 startup 的模型預熱 (whisper／LLM)，只測路由
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls._patches:
+            p.stop()
 
     def test_web_ui_root(self):
         resp = self.client.get("/")
@@ -36,7 +54,7 @@ class TestDemoUIEndpoints(unittest.TestCase):
 
         resp_dbg02 = self.client.get("/dbg02")
         self.assertEqual(resp_dbg02.status_code, 200)
-        self.assertIn("Bluetooth Voice Gateway", resp_dbg02.text)
+        self.assertIn("LocalNote", resp_dbg02.text)   # /dbg02 現在直接回 ui.html (舊斷言「Bluetooth Voice Gateway」已不在頁面裡)
 
         resp_dgb02 = self.client.get("/dgb02")
         self.assertEqual(resp_dgb02.status_code, 200)
