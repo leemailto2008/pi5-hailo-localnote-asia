@@ -44,10 +44,13 @@ FAKE_CHILD = textwrap.dedent("""
 """).format(code_dir=CODE_DIR)
 
 
+_POSIX_PIPES = pytest.mark.skipif(sys.platform == "win32", reason="sv_worker 用 select.select 等子行程 pipe，Windows 的 select 只支援 socket（Pi／Mac／CI 會跑）")
+
+
 @pytest.fixture
 def fake_child(monkeypatch, tmp_path):
     script = tmp_path / "fake_sv_child.py"
-    script.write_text(FAKE_CHILD)
+    script.write_text(FAKE_CHILD, encoding="utf-8")
     spawned = []
     real_popen = subprocess.Popen
 
@@ -66,6 +69,7 @@ def fake_child(monkeypatch, tmp_path):
             p.wait()
 
 
+@_POSIX_PIPES
 def test_transcribe_and_language_payload(fake_child):
     w, spawned = fake_child
     audio = np.zeros(16000, dtype=np.float32)
@@ -74,6 +78,7 @@ def test_transcribe_and_language_payload(fake_child):
     assert len(spawned) == 1                          # 同一個子行程常駐
 
 
+@_POSIX_PIPES
 def test_warm_up_and_shutdown(fake_child, capsys):
     w, spawned = fake_child
     w.warm_up("zh")
@@ -83,6 +88,7 @@ def test_warm_up_and_shutdown(fake_child, capsys):
     w.shutdown()                                      # 沒有子行程時再呼叫也沒事
 
 
+@_POSIX_PIPES
 def test_restarts_once_when_child_exited(fake_child, monkeypatch):
     monkeypatch.setenv("FAKE_SV_MODE", "die_after_one")
     w, spawned = fake_child
@@ -92,6 +98,7 @@ def test_restarts_once_when_child_exited(fake_child, monkeypatch):
     assert len(spawned) == 2
 
 
+@_POSIX_PIPES
 def test_child_error_is_raised(fake_child):
     w, _ = fake_child
     with pytest.raises(RuntimeError, match="unknown command 'bogus'"):
