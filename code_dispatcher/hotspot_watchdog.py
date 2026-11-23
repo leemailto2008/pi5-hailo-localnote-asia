@@ -7,6 +7,7 @@ If no client connects within TIMEOUT seconds, it automatically reverts to home W
 """
 
 import os
+import re
 import time
 import subprocess
 import argparse
@@ -50,19 +51,36 @@ def touch_keepalive():
     with open(WATCHDOG_FLAG_FILE, "w") as f:
         f.write(str(time.time()))
 
+_AP_TOKEN_RE = re.compile(r"(?<![a-z0-9])ap(?![a-z0-9])")
+
+
+def is_ap_profile_name(name: str) -> bool:
+    """熱點 (AP) 設定檔：名稱含 hotspot，或有獨立的 ap 字詞 (Pi5_AP、AP-5G)。
+    2026-11-23 修正：原本是 "ap" in name，Happy_Home、Taipei-5G、Laptop 這類家用 Wi-Fi 也被排除。"""
+    n = name.lower()
+    return "hotspot" in n or bool(_AP_TOKEN_RE.search(n))
+
+
+def parse_sta_profiles(nmcli_terse: str) -> list:
+    """解析 `nmcli -t -f NAME,TYPE connection show`，回傳 Wi-Fi 用戶端 (非熱點) 設定檔名稱。
+    -t 輸出會把名稱裡的 ":" 跳脫成 "\\:"、"\\" 跳脫成 "\\\\"。"""
+    profiles = []
+    for line in nmcli_terse.strip().splitlines():
+        parts = re.split(r"(?<!\\):", line)
+        if len(parts) < 2:
+            continue
+        name = parts[0].replace("\\:", ":").replace("\\\\", "\\")
+        if "wireless" in parts[1] and not is_ap_profile_name(name):
+            profiles.append(name)
+    return profiles
+
+
 def get_sta_profiles() -> list:
     """Dynamically get all configured Wi-Fi client connections from nmcli."""
     profiles = []
     try:
         res = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=5)
-        for line in res.stdout.strip().splitlines():
-            if not line:
-                continue
-            parts = line.split(":")
-            if len(parts) >= 2:
-                name, ctype = parts[0], parts[1]
-                if "wireless" in ctype and "hotspot" not in name.lower() and "ap" not in name.lower():
-                    profiles.append(name)
+        profiles = parse_sta_profiles(res.stdout)
     except Exception as _exc:
         _log.debug("hotspot_watchdog.py:65 略過：%s", _exc)
     

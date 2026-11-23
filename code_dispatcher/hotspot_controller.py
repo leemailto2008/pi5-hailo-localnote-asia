@@ -20,15 +20,11 @@ NFT_GUARD_FILE = "/etc/nftables.hotspot_guard.nft"
 def find_sta_profile() -> str:
     """Find the best matching STA Wi-Fi connection profile."""
     try:
+        from hotspot_watchdog import parse_sta_profiles   # 與 watchdog 同一套規則 (2026-11-23："ap" 子字串誤判)
         res = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=5)
-        for line in res.stdout.strip().splitlines():
-            if not line:
-                continue
-            parts = line.split(":")
-            if len(parts) >= 2:
-                name, ctype = parts[0], parts[1]
-                if "wireless" in ctype and "hotspot" not in name.lower() and "ap" not in name.lower():
-                    return name
+        profiles = parse_sta_profiles(res.stdout)
+        if profiles:
+            return profiles[0]
     except Exception as _exc:
         _log.debug("hotspot_controller.py:31 略過：%s", _exc)
     return "netplan-wlan0-My_5G_Guest1"
