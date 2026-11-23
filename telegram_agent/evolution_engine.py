@@ -414,7 +414,7 @@ class EvolutionEngine:
                 elif stage_cur == 3:
                     proto_path = os.path.join(BASE_DIR, "skills", "proto_thermal_audit.py")
                     with open(proto_path, "r", encoding="utf-8") as f:
-                        tree = ast.parse(f.read())
+                        ast.parse(f.read())   # 語法檢查：有錯會拋 SyntaxError
                     return "沙盒 AST 安全稽核通過：無未授權系統調用或代碼注入風險，編譯校驗合格。", True
                 else:
                     return "技能原型沙盒單元測試通過，已註冊至動態擴展候選清單 (SkillRegistry Candidate)。", True

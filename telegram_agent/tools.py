@@ -114,7 +114,7 @@ def get_pi5_hardware_status(param: str = "") -> str:
         lines = res.stdout.strip().splitlines()
         if len(lines) >= 2:
             parts = lines[1].split()
-            total, used, free, avail = parts[1], parts[2], parts[3], parts[6] if len(parts) > 6 else parts[3]
+            total, used, avail = parts[1], parts[2], parts[6] if len(parts) > 6 else parts[3]
             results.append(f"• 記憶體狀態 (RAM): 已用 {used} / 總量 {total} (可用約 {avail})")
     except Exception as _exc:
         _log.debug("tools.py:119 略過：%s", _exc)

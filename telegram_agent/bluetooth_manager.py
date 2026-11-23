@@ -518,7 +518,7 @@ def auto_reconnect_tick() -> Optional[str]:
     Monitors Bluetooth connection transitions (Connect / Disconnect).
     Returns a formatted notification string whenever state changes.
     """
-    global _is_pairing_lock, _last_connection_state
+    global _last_connection_state
 
     if _is_pairing_lock:
         return None

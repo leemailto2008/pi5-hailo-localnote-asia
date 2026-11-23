@@ -26,7 +26,6 @@ def fetch_taiwan_stock(query_text: str = "") -> str:
     Query real-time or closing stock quotes from Taiwan Stock Exchange (TWSE) MIS API.
     """
     targets = []
-    text_lower = query_text.lower()
 
     # Detect stock codes like 2330
     code_matches = re.findall(r"\b(\d{4})\b", query_text)
