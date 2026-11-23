@@ -66,10 +66,13 @@ def log_mel_spectrogram(audio: np.ndarray, n_mels: int = N_MELS) -> np.ndarray:
     產出維度: (n_mels, 3000)
     """
     audio = pad_or_trim(audio)
-    
+    # 同 Whisper 的 STFT(center=True)：前後各補 N_FFT // 2，才會有 N_FRAMES (3000) 個 frame
+    # (2026-11-23 修正：原本不補，只有 2998 個 frame，跟註明的 (1, n_mels, 3000) 不符)
+    audio = np.ascontiguousarray(np.pad(audio, (N_FFT // 2, N_FFT // 2), mode="reflect"), dtype=np.float32)
+
     # 漢明窗 (Hanning window)
     window = np.hanning(N_FFT)
-    
+
     # 短時傅立葉變換 (STFT)
     num_frames = 1 + (len(audio) - N_FFT) // HOP_LENGTH
     shape = (num_frames, N_FFT)

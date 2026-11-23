@@ -28,21 +28,25 @@ class HailoDeviceManager:
         self._is_available = False
         self._device_info = {
             "device_type": "None",
+            "arch": "",
             "pcie_detected": False,
             "driver_loaded": False,
             "device_id": None
         }
 
-        # 1. 檢查 PCIe 設備節點
+        # 1. 檢查 PCIe 設備節點（lspci 預設輸出不含 vendor id「1e60:」，名稱比對要不分大小寫；
+        #    2026-11-23 修正：原本用 line.capitalize() 會把整行變小寫而永遠比不到、Hailo-10 寫錯鍵、沒設 arch）
         try:
             res = subprocess.run(["lspci"], capture_output=True, text=True, timeout=3)
             for line in res.stdout.splitlines():
-                if "1e60:" in line or "Hailo" in line.capitalize():
+                if "1e60:" in line or "hailo" in line.lower():
                     self._device_info["pcie_detected"] = True
                     if "Hailo-8" in line:
                         self._device_info["device_type"] = "Hailo-8"
+                        self._device_info["arch"] = "HAILO8"
                     elif "Hailo-10" in line:
-                        self._device_info["device_info"] = "Hailo-10H"
+                        self._device_info["device_type"] = "Hailo-10H"
+                        self._device_info["arch"] = "HAILO10H"   # voice_pipeline 以此判斷不載入 Hailo-8 Whisper HEF
                     else:
                         self._device_info["device_type"] = "Hailo-PCIe"
                     break
