@@ -953,7 +953,7 @@ def recap_notes(recap: str, max_lines: int = 6, max_len: int = 50) -> str:
     """
     if detect_language(recap) == "en":
         return _recap_notes_en(recap, max_lines)
-    clauses = [c.strip() for c in re.split(r"[，,。；;！!？?\n]", recap or "") if c.strip()]
+    clauses = [c.strip() for c in _ZH_RECAP_SPLIT_RE.split(recap or "") if c.strip()]
     if clauses:   # 「最後總結一下任體方面」：去掉黏在第一個子句前面的總結用語
         clauses[0] = re.sub(r"^.*?(?:最後總結一下|總結一下|最後總結|做個總結|做一下總結)", "", clauses[0]).strip() or clauses[0]
     clauses = [_RECAP_FILLER_SUB.sub("", c).strip() for c in clauses]
@@ -981,7 +981,7 @@ def recap_notes(recap: str, max_lines: int = 6, max_len: int = 50) -> str:
                 cur = f"{cur}，{c}" if cur else c
         if cur:
             lines.append(cur)
-    return "\n".join("- " + l[:max_len] for l in lines[:max_lines])
+    return "\n".join("- " + _cut_keep_number(l, max_len) for l in lines[:max_lines])
 
 
 _BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[\.、)])\s*")
@@ -1017,6 +1017,29 @@ def _drop_echoed_topic(t: str) -> str:
     return t
 
 
+# 子句分隔：「,」「.」「:」夾在兩個數字中間 (3,500、1.5、10:30) 是數字的一部分，不切 (2026-11-23：「order 3,500 units」→「order 3」)
+_EN_CLAUSE_SPLIT_RE = re.compile(r";|(?<!\d)[,.]|[,.](?!\d)")
+_EN_CLAUSE_SPLIT_COLON_RE = re.compile(r";|(?<!\d)[:,.]|[:,.](?!\d)")
+_ZH_RECAP_SPLIT_RE = re.compile(r"[，。；;！!？?\n]|(?<!\d),|,(?!\d)")
+
+
+def _inside_number(t: str, i: int) -> bool:
+    """t[i] 是夾在兩個數字中間的「,」或「.」（千分位、小數點）。"""
+    return t[i] in ",." and 0 < i < len(t) - 1 and t[i - 1].isdigit() and t[i + 1].isdigit()
+
+
+def _cut_keep_number(t: str, n: int) -> str:
+    """截到 n 字，但不切斷數字 (含小數點、千分位)：截點在數字中間就退到那串數字之前；整條都是數字時照舊硬切。
+    同 _cut_item 的做法 (待辦事項「…拿到5」)。"""
+    if len(t) <= n:
+        return t
+    left_in = t[n - 1].isdigit() or _inside_number(t, n - 1)
+    right_in = t[n].isdigit() or _inside_number(t, n)
+    if not (left_in and right_in):
+        return t[:n]
+    return re.sub(r"\d[\d,.]*$", "", t[:n]) or t[:n]
+
+
 def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcript: bool = False) -> str:
     """map 階段輸出的確定性收斂：小模型常不守行數/字數規則，且 num_predict 用盡時會留下半句。
     保留前 max_lines 條、每條 <= max_len 字 (盡量切在標點)，去掉亂碼殘句與重複，統一為「- 」條列。
@@ -1030,8 +1053,9 @@ def compact_notes(text: str, max_lines: int = 4, max_len: int = 40, keep_transcr
             continue
         t = _drop_echoed_topic(t)
         if len(t) > max_len:
-            cut = max((t.rfind(c, 0, max_len) for c in _CUT_AT), default=-1)
-            t = t[:cut] if cut >= max_len // 2 else t[:max_len]
+            # 千分位「3,500」的逗號不是切點；硬切不切斷數字 (2026-11-23：「…1500萬元」截成「…15」、「3,500台」截成「3」)
+            cut = max((i for i in range(min(max_len, len(t))) if t[i] in _CUT_AT and not _inside_number(t, i)), default=-1)
+            t = t[:cut] if cut >= max_len // 2 else _cut_keep_number(t, max_len)
             t = t.rstrip("，、,;； ")
         if t in seen:
             continue
@@ -1342,12 +1366,12 @@ def _todo_parts_en(line: str):
             or owner.split()[0].lower() in _EN_NOT_NAMES:
         return None
     action = (mo.group(2) or mo.group(3) or "").replace(mt.group(0), "")
-    action = re.split(r"[,;.]", action)[0].strip()
+    action = _EN_CLAUSE_SPLIT_RE.split(action)[0].strip()
     if len(action) < 3:      # 「Owner: Mary Chen, due Nov 5, confirm sample capacity」：取沒有負責人與期限的那個子句
-        rest = [c.strip() for c in re.split(r"[:,;.]", line)
+        rest = [c.strip() for c in _EN_CLAUSE_SPLIT_COLON_RE.split(line)
                 if c.strip() and owner not in c and mt.group(0) not in c and c.strip().lower() not in ("owner", "assigned to")]
-        action = rest[-1] if rest else re.split(r"[:,;.]", line)[0].strip()
-    return action[:40], owner, mt.group(1)
+        action = rest[-1] if rest else _EN_CLAUSE_SPLIT_COLON_RE.split(line)[0].strip()
+    return _cut_keep_number(action, 40), owner, mt.group(1)
 
 
 def _note_lines(notes: str) -> List[str]:
@@ -1709,10 +1733,10 @@ def _recap_timeless_todo_en(line: str, topics=()):
     if not owner or owner.split()[0].lower() in ("we", "they", "i", "you", "it", "this", "that", "the", "all", "everyone", "team") \
             or owner.split()[0].lower() in _EN_NOT_NAMES:
         return None
-    action = re.split(r"[,;.]", mo.group(2) or mo.group(3) or "")[0].strip()
+    action = _EN_CLAUSE_SPLIT_RE.split(mo.group(2) or mo.group(3) or "")[0].strip()
     for t in topics:
         action = re.split(r"\s+" + re.escape(t) + r"\b", action, maxsplit=1, flags=re.I)[0].strip()
-    return (action[:40], owner, "-") if len(action) >= 3 else None
+    return (_cut_keep_number(action, 40), owner, "-") if len(action) >= 3 else None
 
 
 def _recap_timeless_todo(line: str):
