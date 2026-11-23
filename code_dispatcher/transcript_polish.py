@@ -231,8 +231,8 @@ def apply_glossary(text: str, terms: Sequence[str],
 def edit_opcodes(src: str, dst: str) -> List[Tuple[str, int, int, int, int]]:
     """difflib 的 opcodes，加一個修正：字數相同的連續同音字替換，difflib 常對成「替換＋相同 1 字＋刪除」
     （「清理協禮」→「請李協理」對成 清→請李協、理 相同、刪 協禮；11-12 會議詞彙＋MacBERT 實測看到），
-    修同音字因此整段不收、網頁標色也畫錯。相鄰的修改中間只隔 ≤ 1 個相同的字（不是空白／換行）、併起來兩邊字數相同時
-    併成一塊，再逐字切回最小的替換段（位置相同的字仍是 equal）。其他情況與 difflib 相同。"""
+    修同音字因此整段不收、網頁標色也畫錯。相鄰的修改中間只隔 ≤ 1 個相同的字（不是空白／換行）、併起來兩邊字數相同、
+    而且每一處不同的字都是同音中文字時併成一塊，再逐字切回最小的替換段（位置相同的字仍是 equal）。其他情況與 difflib 相同。"""
     ops = difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes()
     merged: List[Tuple[str, int, int, int, int]] = []
     i = 0
@@ -244,7 +244,10 @@ def edit_opcodes(src: str, dst: str) -> List[Tuple[str, int, int, int, int]]:
                    and not src[ops[k + 1][1]:ops[k + 1][2]].isspace() and ops[k + 2][0] != "equal"):
                 k += 2
             end = next((e for e in range(k, i, -2) if ops[e][2] - i1 == ops[e][4] - j1), None)
-            if end is not None:
+            # 合併後每一處不同的字都要是同音中文字 (S19：「補字＋相同 1 字＋刪字」的位移兩邊也等長，原本會併成替換，
+            # 補對的字整塊被當成「不是同音」拒收，網頁也畫出假的替換)
+            if end is not None and all(a == b or (_CJK_RE.match(a) and _CJK_RE.match(b) and sounds_alike(a, b))
+                                       for a, b in zip(src[i1:ops[end][2]], dst[j1:ops[end][4]])):
                 merged.append(("replace", i1, ops[end][2], j1, ops[end][4]))
                 i = end + 1
                 continue
