@@ -579,6 +579,19 @@ _TITLE_STUB = {"專": "專員", "協": "協理", "經": "經理", "課": "課長
 _STUB_SURNAME = {"理": "李", "立": "李", "留": "劉", "皇": "黃", "零": "林", "陽": "楊", "無": "吳", "五": "吳"}
 
 
+_DUE_BEFORE_RE = re.compile(r"(?:之前|以前|前)$")
+
+
+def _grounded(cell: str, tr_norm: str, due: bool = False) -> bool:
+    """cell 在 (已標準化的) 逐字稿裡出現。期限欄「前／之前／以前」視為同義：模型常把逐字稿的「10月7日之前」寫成
+    「10月7日前」，原本對不上就把有講過的期限改成「-」(2026-11-23)；去掉後要還有日期才比。"""
+    norm = _ground_norm(cell)
+    if norm in tr_norm:
+        return True
+    core = _DUE_BEFORE_RE.sub("", norm) if due else ""
+    return bool(core) and core != norm and core in tr_norm
+
+
 def ground_todo_table(md: str, transcript: str) -> str:
     """待辦表每列的負責人、時間欄若在逐字稿中找不到，改成「-」 (多人時只留找得到的人)；事項欄與其他段落不動。
     空的負責人／時間欄先從事項欄補 (_fill_todo_cells)，補上的也一樣要在逐字稿裡找得到。"""
@@ -603,10 +616,10 @@ def ground_todo_table(md: str, transcript: str) -> str:
                         if mt else []
                     cols[1] = next((f for f in full if f in transcript), "-")
                 for i in (1, 2):
-                    if cols[i] in _TODO_SKIP or _ground_norm(cols[i]) in tr:
+                    if cols[i] in _TODO_SKIP or _grounded(cols[i], tr, due=i == 2):
                         continue
                     parts = [x for x in re.split(r"[、,，/]|與|和", cols[i]) if x.strip()]
-                    kept = [x.strip() for x in parts if _ground_norm(x) in tr]
+                    kept = [x.strip() for x in parts if _grounded(x, tr, due=i == 2)]
                     cols[i] = "、".join(kept) if kept and len(parts) > 1 else "-"
                 line = "| " + " | ".join(cols) + " |"
         out.append(line)
