@@ -343,7 +343,7 @@ def speech_to_text(
             audio_np = None
 
     if audio_np is None or len(audio_np) < 8000:
-        print(f"[VoicePipeline] Audio PCM decode failed or too short (<0.5s)")
+        print("[VoicePipeline] Audio PCM decode failed or too short (<0.5s)")
         return None
 
     # 局部區間裁切 (Audio Region Trimming)
@@ -427,7 +427,7 @@ def speech_to_text(
                                     vad=CPU_VAD_LABEL, post=CPU_POST_LABEL)
                 for seg in segments:
                     if cancellation_event and hasattr(cancellation_event, "is_set") and cancellation_event.is_set():
-                        print(f"[VoicePipeline] Transcription cancelled mid-stream by token.")
+                        print("[VoicePipeline] Transcription cancelled mid-stream by token.")
                         return None
 
                     clean_seg_text = to_taiwan_traditional(seg.text.strip())
@@ -1321,7 +1321,7 @@ def transcribe_pcm_chunk(pcm_bytes: bytes) -> Optional[str]:
                 if res and res.get("text"):
                     return to_taiwan_traditional(res["text"]).strip()
         except Exception as hailo_err:
-            pass
+            print(f"[VoicePipeline] Hailo Whisper 轉錄失敗，改用 CPU faster-whisper：{hailo_err}")
 
         # 回退至 CPU faster-whisper (單執行緒/2執行緒避免爭搶)
         with _whisper_lock:
