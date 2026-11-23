@@ -700,10 +700,16 @@ async def _translate_flat(flat: Sequence[str], target: str,
     await asyncio.gather(*workers)
     if queue and not stats["stopped"]:          # 兩路都失敗：最後再用預設順序試一次 (不能用 CPU 時只試 Hailo：錄音中禁止 CPU 推論)
         for c in list(queue):
+            if should_stop():                   # 開始錄音：不再送請求 (S13：原本仍逐段送 Hailo 請求，且回報 stopped=False)
+                stats["stopped"] = True
+                break
             try:
                 if await translate_chunk(c, hailo_only=not use_cpu, cpu_first=False):
                     finished[c] = True
                     queue.remove(c)
+                else:
+                    stats["stopped"] = True
+                    break
             except LLMError as e:
                 logger.warning("[Translate] 第 %d/%d 段保底也失敗，保留原文：%s", c + 1, total, e)
     return {"done": done, "chunks": total, "translated_chunks": sum(finished), "kept_units": len(flat) - len(todo),
