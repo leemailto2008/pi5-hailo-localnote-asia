@@ -279,7 +279,9 @@ def live_asr_language(audio_path: str) -> str:
         if os.path.isfile(path):
             try:
                 with open(path, encoding="utf-8") as f:
-                    return json.load(f).get("language") or "auto"
+                    data = json.load(f)
+                # 不是物件 (格式不對) 也當成沒設定 (2026-11-23：原本 AttributeError 讓高精度稿失敗)
+                return (data.get("language") if isinstance(data, dict) else None) or "auto"
             except (OSError, ValueError) as e:
                 logger.warning("[refine] live ASR language unreadable (%s): %s", path, e)
     return "auto"
@@ -306,27 +308,33 @@ def load_live_asr(audio_path: str, n_samples: int, suffix: str = LIVE_ASR_SUFFIX
     except (OSError, ValueError) as e:
         logger.warning("[refine] live ASR results unreadable (%s): %s", path, e)
         return None
-    slices = [s for s in data.get("slices") or [] if int(s.get("n", 0)) > 0]
-    pos = 0
-    for s in slices:
-        if int(s["s"]) != pos:
-            logger.warning("[refine] live ASR slices not contiguous at %d (expected %d); re-decode everything", s["s"], pos)
+    # 結構不對 (最外層不是物件、切片少欄位、數字欄位不是數字…) 跟檔案壞掉一樣：整段重新辨識
+    # (2026-11-23：原本只接 JSON 解不開，其他格式錯誤拋 AttributeError／KeyError，讓高精度稿整個失敗)
+    try:
+        slices = [s for s in data.get("slices") or [] if int(s.get("n", 0)) > 0]
+        pos = 0
+        for s in slices:
+            if int(s["s"]) != pos:
+                logger.warning("[refine] live ASR slices not contiguous at %d (expected %d); re-decode everything", s["s"], pos)
+                return None
+            pos += int(s["n"])
+        # Whisper 即時稿文字只用來換字：錄音結束時尾端切片逾時沒轉完 (只蓋到前段) 也可以用，後段照用 SenseVoice
+        short_ok = suffix == LIVE_WHISPER_SUFFIX and pos < n_samples
+        if abs(pos - n_samples) > LIVE_ASR_MAX_DRIFT_S * SAMPLE_RATE and not short_ok:
+            logger.warning("[refine] live ASR covers %.2f s but audio is %.2f s; re-decode everything",
+                           pos / SAMPLE_RATE, n_samples / SAMPLE_RATE)
             return None
-        pos += int(s["n"])
-    # Whisper 即時稿文字只用來換字：錄音結束時尾端切片逾時沒轉完 (只蓋到前段) 也可以用，後段照用 SenseVoice
-    short_ok = suffix == LIVE_WHISPER_SUFFIX and pos < n_samples
-    if abs(pos - n_samples) > LIVE_ASR_MAX_DRIFT_S * SAMPLE_RATE and not short_ok:
-        logger.warning("[refine] live ASR covers %.2f s but audio is %.2f s; re-decode everything",
-                       pos / SAMPLE_RATE, n_samples / SAMPLE_RATE)
+        out = []
+        for s in slices:
+            if s["s"] >= n_samples:
+                break
+            out.append({**s, "n": min(int(s["n"]), n_samples - int(s["s"]))})
+        if pos < n_samples:
+            out.append({"s": pos, "n": n_samples - pos, "src": "tail"})
+        return out
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        logger.warning("[refine] live ASR results malformed (%s): %r; re-decode everything", path, e)
         return None
-    out = []
-    for s in slices:
-        if s["s"] >= n_samples:
-            break
-        out.append({**s, "n": min(int(s["n"]), n_samples - int(s["s"]))})
-    if pos < n_samples:
-        out.append({"s": pos, "n": n_samples - pos, "src": "tail"})
-    return out
 
 
 # 分說話人方法（2026-11-11）：sentence = 每句（SenseVoice 的 VAD 句子）算 CAM++ 嵌入後 FastClustering；
