@@ -63,6 +63,9 @@ class ArrivalMeter:
         self._first: Optional[Tuple[float, int]] = None
         self._last_t = float("-inf")
         self.unknown_codec = False
+        # 計數倒退 (控制器重新註冊、驅動重載時 hci_dev 統計歸零)：之前累計的數量接上，計數保持連續 (2026-11-23：原本算出負的到達率)
+        self._last_raw: Optional[int] = None
+        self._offset = 0
 
     def tick(self) -> None:
         """在錄音迴圈中頻繁呼叫；每 interval_s 秒才真的讀一次計數。"""
@@ -70,9 +73,13 @@ class ArrivalMeter:
         if now - self._last_t < self.interval_s:
             return
         self._last_t = now
-        n = self._read()
-        if n is None:
+        raw = self._read()
+        if raw is None:
             return
+        if self._last_raw is not None and raw < self._last_raw:
+            self._offset += self._last_raw
+        self._last_raw = raw
+        n = raw + self._offset
         if self._first is None:
             self._first = (now, n)
         self._samples.append((now, n))
