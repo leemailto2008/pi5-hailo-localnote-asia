@@ -620,7 +620,8 @@ def ground_todo_table(md: str, transcript: str) -> str:
                 for i in (1, 2):
                     if cols[i] in _TODO_SKIP or _grounded(cols[i], tr, due=i == 2):
                         continue
-                    parts = [x for x in re.split(r"[、,，/]|與|和", cols[i]) if x.strip()]
+                    # 「/」只拆負責人 (吳副理/李協理)：期限欄的「3/15」是日期，拆開會留下逐字稿裡碰巧有的「3」「15」(S19)
+                    parts = [x for x in re.split(r"[、,，/]|與|和" if i == 1 else r"[、,，]|與|和", cols[i]) if x.strip()]
                     kept = [x.strip() for x in parts if _grounded(x, tr, due=i == 2)]
                     cols[i] = "、".join(kept) if kept and len(parts) > 1 else "-"
                 line = "| " + " | ".join(cols) + " |"
@@ -650,7 +651,7 @@ def _drop_empty_item_rows(md: str) -> str:
         s = line.strip()
         if s.startswith("## "):
             sec = s[3:].strip()
-        if sec == "待辦" and s.startswith("|") and not _is_sep(s):
+        if sec == "待辦" and s.startswith("|") and not _is_gfm_sep(s):
             c = [x.strip() for x in s.strip("|").split("|")]
             if (len(c) >= 3 and c[0] and c[0] not in _TODO_HEADER_ECHO and not _LABEL_ONLY_ITEM_RE.match(c[0])
                     and c[1] not in _TODO_SKIP):
@@ -659,7 +660,7 @@ def _drop_empty_item_rows(md: str) -> str:
         s = line.strip()
         if s.startswith("## "):
             section = s[3:].strip()
-        if section == "待辦" and s.startswith("|") and not _is_sep(s):
+        if section == "待辦" and s.startswith("|") and not _is_gfm_sep(s):
             cells = [c.strip() for c in s.strip("|").split("|")]
             if not cells[0] or (len(cells) >= 3 and _LABEL_ONLY_ITEM_RE.match(cells[0])
                                 and (cells[2] in _TODO_SKIP or (cells[1] in real_owners and _said_elsewhere(cells[2], md, s)))):
@@ -724,6 +725,12 @@ def _drop_same_task_rows(md: str) -> str:
 
 def _is_sep(line: str) -> bool:
     return line.strip().startswith("|") and set(line.strip()) <= set("|-: ")
+
+
+def _is_gfm_sep(line: str) -> bool:
+    """嚴格的表格分隔線 (GFM)：每一格都至少有一個「-」。_is_sep 只看字元集合，「|  | - | - |」(事項空、
+    其他欄被清成 -) 也算分隔線；_drop_empty_item_rows 用這個才拿得掉這種列 (S19)。其他地方照舊用 _is_sep。"""
+    return _is_sep(line) and all("-" in c for c in line.strip().strip("|").split("|"))
 
 
 def _fix_table_separators(lines: List[str]) -> List[str]:
