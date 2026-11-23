@@ -3,6 +3,8 @@ import os
 import threading
 import time
 
+import sys
+
 import pytest
 
 import llm_backend as lb
@@ -100,6 +102,7 @@ def test_release_exclusive_only_skips_when_shared():
     assert w._proc is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="stt_worker 用 select.select 等子行程的 pipe，Windows 的 select 只支援 socket（Pi／Mac／CI 會跑）")
 def test_paused_stops_child_and_blocks_calls():
     w = sw.SttWorker()
     try:

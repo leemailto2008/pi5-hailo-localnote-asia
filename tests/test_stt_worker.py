@@ -1,4 +1,6 @@
 """stt_worker 子行程協定測試 (不需要 Hailo 硬體：CI 上 NPU 不可用，子行程應回 hailo_unavailable 而不是卡住或崩潰)。"""
+import sys
+
 import numpy as np
 import pytest
 
@@ -21,6 +23,7 @@ def _hailo_present() -> bool:
 
 
 @pytest.mark.skipif(_hailo_present(), reason="有 Hailo 的機器上會真的開 NPU，改由 HIL 測試涵蓋")
+@pytest.mark.skipif(sys.platform == "win32", reason="stt_worker 用 select.select 等子行程的 pipe，Windows 的 select 只支援 socket（Pi／Mac／CI 會跑）")
 def test_transcribe_without_npu_reports_unavailable(worker):
     with pytest.raises(RuntimeError, match="hailo_unavailable|ModuleNotFoundError|ImportError"):
         worker.transcribe(np.zeros(16000, dtype=np.float32))
@@ -28,6 +31,7 @@ def test_transcribe_without_npu_reports_unavailable(worker):
     assert worker.is_busy() is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="stt_worker 用 select.select 等子行程的 pipe，Windows 的 select 只支援 socket（Pi／Mac／CI 會跑）")
 def test_ping_release_and_restart_after_crash(worker):
     worker._ensure()
     assert worker._call("ping", None, 30)["ok"] is True
