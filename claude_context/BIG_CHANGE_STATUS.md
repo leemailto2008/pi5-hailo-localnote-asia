@@ -8,7 +8,9 @@
 - 錄音中 RAM +38–42 MB/h 線性（60／120／240 同速），swap 在上限內；上一場尾端背景翻完（6b2abe3）、紀要整塊重抄提早停（74ff581）。
 - **.229 沒有更新**（週末熱點模式連不到；11-21 21:38 自動執行被權限檢查擋下）。建議 aa31b01（實機全過）：`! bash .cc_scratch/tmp/b1_run.sh aa31b01`。
 - 11-23 上午（.228，不影響 B1 建議）：a8fc4bf 「李先生」→ Mr. Li；pyflakes 清未用 import（e1eb556、2438d16）；f016bbe TTS 沒給路徑時 TEMP_AUDIO_DIR 未定義（潛在 NameError）；
-  97bf10a／ba0f3c4 兩處 except: pass 改成印原因。W47–W51（數位 5／30／60）、Issue 回報 API 冒煙、W52 GS3 30（ba0f3c4：cer_num 0.0235、fact 0.965）都過。舊程式還有 99 處 except: pass，要不要整理待決定。
+  97bf10a／ba0f3c4 兩處 except: pass 改成印原因。下午（dr 指示）全 repo except-pass 清完：c532f0e、207a07d、ebd02a4、2a34e05、cd5e8e6（共約 100 處 → _log.debug，行為不變；
+  telegram_agent 的 TTS 也有同樣 TEMP_AUDIO_DIR bug 已修）；未用 import 清理（e1eb556、2438d16、fdee7e1、d7bc9dd）；requirements-dev 補 fastapi／httpx／pydantic／requests／pypinyin（435bef5，乾淨 venv 驗證）；
+  test_api_endpoints 離線化（26d7859，mock Hailo／BT，Mac 6 passed、tests/ 833 passed）。W52–W54 在 .228 過；16:2x 起 .228 連不上，ebd02a4 之後的 commit 只在 gitlab 分支 wip/offline-api-20261123。W47–W51（數位 5／30／60）、Issue 回報 API 冒煙、W52 GS3 30（ba0f3c4：cer_num 0.0235、fact 0.965）都過。舊程式還有 99 處 except: pass，要不要整理待決定。
 - 待 Andrew 決定：翻譯時錄音中先整理紀要（預設勾）、外語即時翻譯上限、.229 版本、地名英文譯名。同事 Issue 回報：.229 連不到，未拉回（.228 只有自測）。
 
 - W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
