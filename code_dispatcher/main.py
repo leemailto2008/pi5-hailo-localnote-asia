@@ -1331,12 +1331,13 @@ async def translate_text(req: VoiceTranslateRequest) -> Dict[str, Any]:
 async def text_to_speech_endpoint(req: VoiceTTSRequest) -> Dict[str, Any]:
     """Synthesize text to speech using edge-tts and optionally play on speaker/headset."""
     import uuid
-    from voice_pipeline import text_to_speech_async
+    from voice_pipeline import text_to_speech
 
     tts_id = uuid.uuid4().hex[:8]
     out_ogg = os.path.join(AUDIO_CACHE_DIR, f"tts_{tts_id}.ogg")
 
-    ok = await text_to_speech_async(req.text, out_ogg, voice=req.voice or "zh-TW-HsiaoChenNeural")
+    # 合成裡有同步的 gTTS 網路請求與 ffmpeg 轉檔 (各最長 10 s)：整段放執行緒，不卡住 event loop (11-23)
+    ok = await asyncio.to_thread(text_to_speech, req.text, out_ogg, req.voice or "zh-TW-HsiaoChenNeural")
     if not ok or not os.path.exists(out_ogg):
         raise HTTPException(status_code=500, detail="語音合成失敗")
 
@@ -2315,7 +2316,8 @@ async def ws_telemetry_loop():
             await ws_manager.broadcast("system", sys_data)
 
             # 2. 廣播藍牙基本狀態 (Bluetooth Status)
-            st = get_bt_status()
+            # get_bt_status 沒在錄音、快取過期 (3 s) 時會同步跑好幾個 bluetoothctl (各逾時 3 s)：放執行緒，不卡住 event loop
+            st = await asyncio.to_thread(get_bt_status)
             await ws_manager.broadcast("bt", {
                 "connected": bool(st.get("connected", False)),
                 "name": st.get("connected_name") or ""
@@ -2362,7 +2364,7 @@ async def websocket_status_endpoint(websocket: WebSocket):
         sys_data = get_system_telemetry_payload()
         await ws_manager.send_personal(websocket, "system", sys_data)
         await ws_manager.send_personal(websocket, "status", minutes_manager.status.model_dump())
-        bt_data = get_bt_status()
+        bt_data = await asyncio.to_thread(get_bt_status)
         await ws_manager.send_personal(websocket, "bt", {
             "connected": bool(bt_data.get("connected", False)),
             "name": bt_data.get("connected_name") or ""
@@ -2379,7 +2381,7 @@ async def websocket_status_endpoint(websocket: WebSocket):
                     sys_data = get_system_telemetry_payload()
                     await ws_manager.send_personal(websocket, "system", sys_data)
                     await ws_manager.send_personal(websocket, "status", minutes_manager.status.model_dump())
-                    bt_data = get_bt_status()
+                    bt_data = await asyncio.to_thread(get_bt_status)
                     await ws_manager.send_personal(websocket, "bt", {
                         "connected": bool(bt_data.get("connected", False)),
                         "name": bt_data.get("connected_name") or ""
