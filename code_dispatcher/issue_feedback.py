@@ -156,8 +156,13 @@ def list_reports() -> List[Dict[str, Any]]:
         except (OSError, ValueError) as e:
             out.append({"id": i, "error": f"讀不到：{e}"})
             continue
-        out.append({"id": i, "time": r.get("time"), "name": r.get("name") or "", "description": (r.get("description") or "")[:120],
-                    "version": r.get("version"), "job": (r.get("status") or {}).get("job"),
+        # 一筆格式不對不能拖垮整個列表 (2026-11-23：原本 AttributeError，/api/feedback 整個 500)
+        if not isinstance(r, dict):
+            out.append({"id": i, "error": f"讀不到：feedback.json 不是物件（{type(r).__name__}）"})
+            continue
+        status = r.get("status")
+        out.append({"id": i, "time": r.get("time"), "name": r.get("name") or "", "description": str(r.get("description") or "")[:120],
+                    "version": r.get("version"), "job": status.get("job") if isinstance(status, dict) else None,
                     "attachments": r.get("attachments") or {}, "size": _dir_size(os.path.join(FEEDBACK_DIR, i))})
     return out
 
