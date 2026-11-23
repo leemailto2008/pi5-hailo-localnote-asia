@@ -31,6 +31,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 import httpx
 import requests
 
+import request_metrics
 from npu_share import SHARED_KEEP_ALIVE, shared_group
 
 logger = logging.getLogger("Pi5LLM")
@@ -77,11 +78,16 @@ _hailo_activity_lock = threading.Lock()
 
 
 class _hailo_activity:
-    def __init__(self, active: bool) -> None:
+    """Hailo 請求計數＋每次 LLM 呼叫耗時 (Task 28：記到 request_metrics.stages，/api/metrics 的 stages 看 P50／P95)。"""
+
+    def __init__(self, active: bool, backend_name: Optional[str] = None) -> None:
         self.active = active
+        self.backend_name = backend_name
+        self._t0 = 0.0
 
     def __enter__(self) -> "_hailo_activity":
         global _hailo_inflight, _hailo_last_activity
+        self._t0 = time.perf_counter()
         if self.active:
             with _hailo_activity_lock:
                 _hailo_inflight += 1
@@ -94,6 +100,10 @@ class _hailo_activity:
             with _hailo_activity_lock:
                 _hailo_inflight -= 1
                 _hailo_last_activity = time.monotonic()
+        if self.backend_name:
+            failed = bool(exc and exc[0] is not None and not issubclass(exc[0], GeneratorExit))
+            request_metrics.stages.record(f"llm_{self.backend_name}", "LLM", 500 if failed else 200,
+                                          (time.perf_counter() - self._t0) * 1000.0)
 
     async def __aenter__(self) -> "_hailo_activity":
         return self.__enter__()
@@ -267,7 +277,7 @@ def chat_complete(
             _free_npu_for_llm()
         payload = backend.build_chat_payload(messages, stream=False, temperature=temperature, num_predict=num_predict, hailo_keep_alive=hailo_keep_alive)
         try:
-            with _hailo_activity(backend.is_hailo):
+            with _hailo_activity(backend.is_hailo, backend.name):
                 resp = requests.post(backend.chat_url, json=payload, timeout=timeout)
             if resp.status_code != 200:
                 raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
@@ -300,7 +310,7 @@ def iter_chat_stream(
         payload = backend.build_chat_payload(messages, stream=True, temperature=temperature, num_predict=num_predict, top_p=top_p, hailo_keep_alive=hailo_keep_alive)
         emitted = False
         try:
-            with _hailo_activity(backend.is_hailo), requests.post(backend.chat_url, json=payload, stream=True, timeout=timeout) as resp:
+            with _hailo_activity(backend.is_hailo, backend.name), requests.post(backend.chat_url, json=payload, stream=True, timeout=timeout) as resp:
                 if resp.status_code != 200:
                     raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
                 for raw in resp.iter_lines():
@@ -375,7 +385,7 @@ async def achat_complete(
         payload = backend.build_chat_payload(messages, stream=False, temperature=temperature, num_predict=num_predict, hailo_keep_alive=hailo_keep_alive)
         for attempt in range(1 + (hailo_retries if backend.is_hailo else 0)):
             try:
-                async with _hailo_activity(backend.is_hailo), httpx.AsyncClient(timeout=timeout) as client:
+                async with _hailo_activity(backend.is_hailo, backend.name), httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(backend.chat_url, json=payload)
                     if resp.status_code != 200:
                         raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
@@ -417,7 +427,7 @@ async def aiter_chat_stream(
             payload = backend.build_chat_payload(messages, stream=True, temperature=temperature, num_predict=num_predict, hailo_keep_alive=hailo_keep_alive)
             emitted = False
             try:
-                async with _hailo_activity(backend.is_hailo), httpx.AsyncClient(timeout=timeout) as client:
+                async with _hailo_activity(backend.is_hailo, backend.name), httpx.AsyncClient(timeout=timeout) as client:
                     async with client.stream("POST", backend.chat_url, json=payload) as resp:
                         if resp.status_code != 200:
                             body = await resp.aread()

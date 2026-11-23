@@ -251,7 +251,7 @@
   - **效益：** 保障熱點連線極致純淨與零頻寬浪費。
 
 - [ ] **Task 28: 結構化日誌與推論延遲追蹤 (Structured JSON Logging & Telemetry Tracing)**
-  - **11-23 進度（localnote）：** API 層先做——`code_dispatcher/request_metrics.py`：每條路由耗時 P50／P95／P99（GET /api/metrics，記憶體保留最近 500 筆、不寫磁碟）、超過 2 s 的請求寫一行 JSON log；單元測試 tests/test_request_metrics.py。尚未在 .228 驗證；STT／LLM 各階段耗時目前在 JobStatus.metrics。
+  - **11-23 進度（localnote）：** API 層先做——`code_dispatcher/request_metrics.py`：每條路由耗時 P50／P95／P99（GET /api/metrics，記憶體保留最近 500 筆、不寫磁碟）、超過 2 s 的請求寫一行 JSON log；單元測試 tests/test_request_metrics.py。同日第二步：每次 LLM 呼叫（hailo／cpu，含串流生成全程）的耗時與失敗數記到 /api/metrics 的 stages。尚未在 .228 驗證；STT 各階段耗時目前在 JobStatus.metrics。
   - **現狀問題：** 除錯需透過 `journalctl` 翻查純文字 Log，難以量化統計各階段精確耗時分佈。
   - **改良方案：** 導入結構化 JSON 日誌與輕量級指標收集中介軟體 (Prometheus / JSON Metric Middleware)，量化追蹤 P50/P95/P99 延遲。
   - **效益：** 提供客觀效能基線，快速鎖定效能退化點。

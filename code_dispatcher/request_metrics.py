@@ -79,11 +79,16 @@ def route_template(scope: Dict[str, Any]) -> str:
 
 
 metrics = RequestMetrics()
+# 非 HTTP 的處理階段 (目前：每次 LLM 呼叫，key「LLM llm_hailo」／「LLM llm_cpu」，含串流生成全程；errors_5xx＝呼叫失敗)。
+# 不寫慢請求 log：一段紀要本來就要數十秒。
+stages = RequestMetrics(slow_ms=float("inf"))
 
 
-def install(app: Any, store: Optional[RequestMetrics] = None, clock: Callable[[], float] = time.perf_counter) -> RequestMetrics:
+def install(app: Any, store: Optional[RequestMetrics] = None, clock: Callable[[], float] = time.perf_counter,
+            stage_store: Optional[RequestMetrics] = None) -> RequestMetrics:
     """把計時中介層與 GET /api/metrics 掛到 FastAPI app 上，回傳使用中的 RequestMetrics。"""
     store = store or metrics
+    stage_store = stage_store or stages
 
     @app.middleware("http")
     async def _timing(request, call_next):
@@ -98,7 +103,9 @@ def install(app: Any, store: Optional[RequestMetrics] = None, clock: Callable[[]
 
     @app.get("/api/metrics", tags=["System"])
     def get_request_metrics() -> Dict[str, Any]:
-        """各 API 路由的請求次數與耗時百分位數 (毫秒)，最近 KEEP 筆。"""
-        return store.summary()
+        """各 API 路由的請求次數與耗時百分位數 (毫秒)，最近 KEEP 筆；stages＝LLM 等非 HTTP 階段。"""
+        out = store.summary()
+        out["stages"] = stage_store.summary()["routes"]
+        return out
 
     return store

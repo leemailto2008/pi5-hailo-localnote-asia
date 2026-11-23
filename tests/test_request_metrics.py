@@ -61,3 +61,47 @@ def test_middleware_uses_route_template_and_serves_metrics():
     assert routes["GET <unmatched>"]["count"] == 1
     body = c.get("/api/metrics").json()                          # 這次請求本身在回應後才記，不在結果裡
     assert "GET /api/item/{iid}" in body["routes"] and body["keep"] == rm.KEEP
+
+
+def test_metrics_endpoint_includes_stages():
+    app = FastAPI()
+    stage_store = rm.RequestMetrics(slow_ms=float("inf"))
+    stage_store.record("llm_hailo", "LLM", 200, 1234.0)
+    rm.install(app, store=rm.RequestMetrics(slow_ms=1e9), stage_store=stage_store)
+    body = TestClient(app).get("/api/metrics").json()
+    assert body["stages"]["LLM llm_hailo"]["p50_ms"] == 1234.0
+
+
+def test_llm_activity_records_duration_and_failure(monkeypatch):
+    import llm_backend as lb
+    store = rm.RequestMetrics(slow_ms=float("inf"))
+    monkeypatch.setattr(rm, "stages", store)
+    with lb._hailo_activity(True, "hailo"):
+        pass
+    try:
+        with lb._hailo_activity(False, "cpu"):
+            raise lb.LLMError("boom")
+    except lb.LLMError:
+        pass
+    with lb._hailo_activity(False):               # 沒給 backend_name：不記
+        pass
+    routes = store.summary()["routes"]
+    assert routes["LLM llm_hailo"]["count"] == 1 and routes["LLM llm_hailo"]["errors_5xx"] == 0
+    assert routes["LLM llm_cpu"]["errors_5xx"] == 1
+    assert set(routes) == {"LLM llm_hailo", "LLM llm_cpu"}
+    assert lb._hailo_inflight == 0
+
+
+def test_stream_generator_closed_early_is_not_a_failure(monkeypatch):
+    import llm_backend as lb
+    store = rm.RequestMetrics(slow_ms=float("inf"))
+    monkeypatch.setattr(rm, "stages", store)
+
+    def gen():
+        with lb._hailo_activity(False, "cpu"):
+            yield 1
+            yield 2
+    g = gen()
+    next(g)
+    g.close()                                     # 呼叫端拿到要的 token 就停：GeneratorExit
+    assert store.summary()["routes"]["LLM llm_cpu"]["errors_5xx"] == 0
