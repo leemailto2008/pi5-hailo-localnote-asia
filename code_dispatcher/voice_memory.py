@@ -7,7 +7,6 @@ in-memory PCM streaming to eliminate MicroSD/NVMe flash wear and sub-second I/O 
 
 import os
 import time
-import sys
 import shutil
 import subprocess
 from typing import Dict, Any, Optional, Union, List

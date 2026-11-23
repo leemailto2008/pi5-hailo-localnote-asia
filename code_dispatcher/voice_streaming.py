@@ -7,25 +7,19 @@ recording and transcription.
 """
 
 import os
-import sys
 import time
 import json
 import glob
 import uuid
 import shutil
 import asyncio
-import subprocess
 from typing import Dict, Any, Optional, List, AsyncGenerator
-
-import requests
 
 # Ensure dependencies from voice_pipeline are importable
 from voice_pipeline import (
     NoMicrophoneError,
     speech_to_text,
     ensure_bluetooth_recording_ready,
-    to_taiwan_traditional,
-    _whisper_lock
 )
 
 # Active streaming sessions registry

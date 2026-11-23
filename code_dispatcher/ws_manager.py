@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 from typing import Set, Dict, Any, Optional
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 logger = logging.getLogger("ws_manager")
 

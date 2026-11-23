@@ -7,11 +7,9 @@ Task 32: Two-Layer Ring Buffer & Core-Isolated Voice Pipeline for Raspberry Pi 5
 """
 
 import os
-import sys
-import time
 import asyncio
 import subprocess
-from typing import Dict, Any, Optional, List, Callable, AsyncGenerator
+from typing import Dict, Any, Optional, List, Callable
 
 import numpy as np
 
@@ -186,7 +184,6 @@ class TwoLayerAudioPipe:
         frame_bytes = 1600  # 50ms @ 16kHz 16-bit mono
         chunk_idx = 0
         current_chunk_buffer = bytearray()
-        chunk_start_time = 0.0
 
         band_slices = [
             (4, 13), (13, 25), (25, 50), (50, 100),
