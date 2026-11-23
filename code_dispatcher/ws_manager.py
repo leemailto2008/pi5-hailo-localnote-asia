@@ -17,6 +17,9 @@ logger = logging.getLogger("ws_manager")
 # 而 broadcast() 的 await send_text() 沒有逾時 → 會議紀要流程在推送進度時永久卡住 (卡了 1 小時)。
 # 每次送出最多等 SEND_TIMEOUT_S，逾時就視為斷線並移除，其他客戶端與呼叫端都不再被拖住。
 SEND_TIMEOUT_S = 3.0
+# 只送給明確訂閱的主題："*" 不涵蓋。bt_hub＝藍牙中心詳細狀態 (每 1.5 s)，只有開著藍牙中心的分頁送 subscribe_bt_hub。
+# 2026-11-23 修正：原本每個連線預設有 "*"，bt_hub 送給所有分頁，取消訂閱也沒作用。
+OPT_IN_TOPICS = frozenset({"bt_hub"})
 
 
 class ConnectionManager:
@@ -104,12 +107,14 @@ class ConnectionManager:
 
         payload = json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
         target_topic = topic or event_type
+        wildcard_ok = target_topic not in OPT_IN_TOPICS
 
         # Snapshot current connections
         async with self._lock:
             targets = [
                 ws for ws in self.active_connections
-                if "*" in self.subscriptions.get(ws, set()) or target_topic in self.subscriptions.get(ws, set())
+                if target_topic in self.subscriptions.get(ws, set())
+                or (wildcard_ok and "*" in self.subscriptions.get(ws, set()))
             ]
 
         if not targets:
