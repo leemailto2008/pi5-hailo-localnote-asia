@@ -580,13 +580,20 @@ async def _complete(prompt: str, target: str, num_predict: int, *, hailo_only: b
         return "".join(parts)
 
     task = asyncio.ensure_future(consume())
-    while not task.done():
-        await asyncio.wait({task}, timeout=POLL_SEC)
-        if not task.done() and should_stop():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            return None
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=POLL_SEC)
+            if not task.done() and should_stop():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return None
+    except asyncio.CancelledError:
+        # 外層被取消 (即時翻譯停掉：取消錄音、尾端逾時)：內層串流也要取消並關掉，不然 Hailo 一直生成成孤兒 (S16)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):   # 內層剛好丟的錯不蓋掉取消
+            await task
+        raise
     return task.result()
 
 
