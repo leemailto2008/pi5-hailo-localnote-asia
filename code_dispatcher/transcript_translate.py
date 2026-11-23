@@ -124,7 +124,8 @@ _EN_SCALE = {"thousand": 10 ** 3, "million": 10 ** 6, "millions": 10 ** 6, "bill
              "juta": 10 ** 6, "miliar": 10 ** 9}
 _SCALE_WORDS = "|".join(sorted(_EN_SCALE, key=len, reverse=True))
 # 千分位：逗號、或空格／不換行空格 (法文「105 000 hectares」)
-_NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?!\d)|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|(?:" + _SCALE_WORDS + r")\b)?(?!\d)",
+# 千分位後面可以接小數「1,234.5」(S18 fuzz：原本讀成 1234 與 5 兩個數)
+_NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?:\.\d+)?(?!\d)|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|(?:" + _SCALE_WORDS + r")\b)?(?!\d)",
                      re.I)
 _CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
 # 「5萬3135円」「1萬5000元」= 53,135／15,000：萬後面直接接 1–4 位數字 (11-22 full8 日文翻英「5萬3135円」被換成「50,0003135」、數值對不上保留原文)
@@ -180,7 +181,8 @@ def numbers_ok(src: str, translation: str) -> bool:
     return all(v in have or (v in alt and alt[v] in have) for v in number_values(src))
 
 
-_EN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
+# 千分位「1,500 million」要整個吃進來 (S18 fuzz：原本只換「500 million」→「1,5億」，應為 15億)；不從數字中間開始比對
+_EN_SCALED_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
 
 
 # 即時稿 (SenseVoice ITN) 偶爾把阿拉伯數字和國字數字混寫：「加裝十0只警示燈」=10、「二十5」=25、「第1三個議題」=13、
