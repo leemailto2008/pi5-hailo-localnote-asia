@@ -8,16 +8,27 @@ SRC=${1:-$(cd "$(dirname "$0")/../.." && pwd)}
 DST=${LN_APP_DIR:-/home/pi/code_dispatcher}
 SVC=pi5-dispatcher-api.service
 
+E2E_JOBS=${LN_E2E_JOBS_FILE:-/dev/shm/ln_e2e_jobs.txt}   # e2e 自己開的工作 (tools/e2e/e2e.py OWN_JOBS)；測試時可改路徑
+# GET <path> 的 JSON 欄位；連不上、不是 JSON、沒有這個端點 (舊版服務回 404) 都印空字串
+api_field() { curl -s -m 5 "http://127.0.0.1$1" | python3 -c 'import sys,json
+d=json.load(sys.stdin); print(d.get(sys.argv[1]) or "" if isinstance(d, dict) else "")' "$2" 2>/dev/null || true; }
 api_state() { curl -s -m 5 http://127.0.0.1/api/status | python3 -c 'import sys,json;print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo down; }
 st=$(api_state)
-case "$st" in recording|processing) echo "app 忙碌中 ($st)，停止部署"; exit 75;; esac
+case "$st" in recording|processing) echo "app 忙碌中 (${st})，停止部署"; exit 75;; esac
 # 最近 15 分鐘內有人在網頁上錄音 (不是 e2e 開的工作，見 tools/e2e/e2e.py OWN_JOBS)：不要重啟服務打斷他 (11-05)
 if [ -z "${LN_DEPLOY_FORCE:-}" ]; then
-  job=$(curl -s -m 5 http://127.0.0.1/api/status | python3 -c 'import sys,json;print(json.load(sys.stdin).get("job") or "")' 2>/dev/null || true)
-  if [[ "$job" =~ ^m_([0-9]{9,})$ ]] && ! grep -qx "$job" /dev/shm/ln_e2e_jobs.txt 2>/dev/null \
+  job=$(api_field /api/status job)
+  if [[ "$job" =~ ^m_([0-9]{9,})$ ]] && ! grep -qx "$job" "$E2E_JOBS" 2>/dev/null \
       && (( $(date +%s) - BASH_REMATCH[1] < 900 )); then
-    echo "有人在用 app (job $job，15 分鐘內)，停止部署；確定要部署請設 LN_DEPLOY_FORCE=1"; exit 75
+    echo "有人在用 app (job ${job}，15 分鐘內)，停止部署；確定要部署請設 LN_DEPLOY_FORCE=1"; exit 75
   fi
+  # 會議結束後 (state=done) 的高精度逐字稿／潤稿／逐字稿翻譯還在背景跑：重啟服務會把它們中斷 (2026-11-23)。
+  # 上面的 15 分鐘從錄音「開始」算，30 分鐘的會議結束時早就過了，擋不到這段。
+  for ep in /api/refine /api/polish /api/translate_transcript; do
+    if [ "$(api_field "$ep" state)" = "running" ]; then
+      echo "背景工作進行中 (${ep#/api/})，停止部署；確定要部署請設 LN_DEPLOY_FORCE=1"; exit 75
+    fi
+  done
 fi
 
 echo "[deploy] 1/4 語法檢查"
@@ -40,7 +51,8 @@ echo "[deploy] 4/4 重啟與健康檢查"
 T0=$(date '+%Y-%m-%d %H:%M:%S')
 sudo -n systemctl restart "$SVC"
 ok=0
-for i in $(seq 1 60); do curl -s -m 2 http://127.0.0.1/health >/dev/null && { ok=1; break; }; sleep 1; done
+# -f：HTTP 4xx／5xx 不算健康 (2026-11-23：原本 /health 回 500 也算 OK，不回滾)
+for i in $(seq 1 60); do curl -sf -m 2 http://127.0.0.1/health >/dev/null && { ok=1; break; }; sleep 1; done
 sleep 5
 if [ "$ok" = 1 ] && ! journalctl -u "$SVC" --since "$T0" --no-pager | grep -q -E "Traceback|ImportError|ModuleNotFoundError|SyntaxError"; then
   echo "[deploy] OK → $DST (backup $BK)"

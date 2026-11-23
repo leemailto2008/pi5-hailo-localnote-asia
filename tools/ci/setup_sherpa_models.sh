@@ -12,7 +12,7 @@ GH=https://github.com/k2-fsa/sherpa-onnx/releases/download
 
 state=$(curl -s -m 5 http://127.0.0.1:8000/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))' || echo unknown)
 case "$state" in
-  recording|processing) echo "app 正在 $state，稍後再執行"; exit 75 ;;
+  recording|processing) echo "app 正在 ${state}，稍後再執行"; exit 75 ;;
 esac
 
 if ! python3 -c 'import sherpa_onnx' 2>/dev/null; then

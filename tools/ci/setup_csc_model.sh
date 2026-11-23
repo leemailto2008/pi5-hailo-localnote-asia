@@ -11,7 +11,7 @@ HF=https://huggingface.co/shibing624/macbert4csc-base-chinese/resolve/main/onnx
 
 state=$(curl -s -m 5 http://127.0.0.1:8000/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))' || echo unknown)
 case "$state" in
-  recording|processing) echo "app 正在 $state，稍後再跑"; exit 75 ;;
+  recording|processing) echo "app 正在 ${state}，稍後再跑"; exit 75 ;;
 esac
 
 for mod in onnxruntime tokenizers opencc; do

@@ -26,9 +26,9 @@ if [ -f "$CONFIG_FILE" ]; then
         echo "啟用 PCIe 3.0 高速模式 (dtparam=pciex1_gen=3)..."
         echo "dtparam=pciex1_gen=3" | sudo tee -a "$CONFIG_FILE"
     fi
-    echo "✅ PCIe 3.0 配置已寫入 $CONFIG_FILE。"
+    echo "✅ PCIe 3.0 配置已寫入 ${CONFIG_FILE}。"
 else
-    echo "❌ 找不到 $CONFIG_FILE，請確認 Debian 13 / Raspberry Pi OS 檔案路徑。"
+    echo "❌ 找不到 ${CONFIG_FILE}，請確認 Debian 13 / Raspberry Pi OS 檔案路徑。"
 fi
 
 # 3. 更新 apt 來源並安裝官方 hailo-all 套件
