@@ -34,3 +34,11 @@ def test_owner_grounding_unchanged():
     tr = "王經理要在10月7日之前送預算表，李協理下週五前回報交期，黃專員11月5日提出改善報告。"
     rows = _rows(su.ground_todo_table(MD, tr))
     assert rows[0] == "| 送預算表 | - | 10月7日前 |"       # 劉課長沒講過：負責人照舊拿掉
+
+
+def test_due_without_date_after_stripping_qian_is_not_grounded():
+    """11-20 L_final45 5 分實錄：模型把「週五前」寫成「週前」；去掉「前」只剩「週」，逐字稿到處都有，不能算講過。"""
+    import summary_utils as su
+    md = "## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 韌體測試 | 許經理 | 週前 |\n"
+    out = su.ground_todo_table(md, "許經理說韌體測試要在這週五前完成。")
+    assert "週前" not in out

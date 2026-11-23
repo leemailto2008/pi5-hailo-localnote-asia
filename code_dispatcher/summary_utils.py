@@ -580,6 +580,7 @@ _STUB_SURNAME = {"理": "李", "立": "李", "留": "劉", "皇": "黃", "零": 
 
 
 _DUE_BEFORE_RE = re.compile(r"(?:之前|以前|前)$")
+_DUE_HAS_DATE_RE = re.compile(r"\d|[月日號]|(?:週|星期|禮拜)[一二三四五六日天]")
 
 
 def _grounded(cell: str, tr_norm: str, due: bool = False) -> bool:
@@ -589,7 +590,8 @@ def _grounded(cell: str, tr_norm: str, due: bool = False) -> bool:
     if norm in tr_norm:
         return True
     core = _DUE_BEFORE_RE.sub("", norm) if due else ""
-    return bool(core) and core != norm and core in tr_norm
+    # 去掉「前」後要還有日期 (數字、月日號、週幾)：「週前」(模型把「週五前」寫壞) 去掉後剩「週」，到處都有，不算講過
+    return bool(core) and core != norm and bool(_DUE_HAS_DATE_RE.search(core)) and core in tr_norm
 
 
 def ground_todo_table(md: str, transcript: str) -> str:
