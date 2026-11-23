@@ -16,6 +16,10 @@
 mSBC 每 7.5 ms 一個 SCO 封包 (133.3 包/秒)。TX 計數由 PipeWire 依 RX 回送，兩者永遠相等，不能拿來當分母，
 所以分母用 mSBC 標稱速率；量到的速率明顯高於標稱 (例如 CVSD) 時視為未知編碼，不回報。
 """
+try:
+    import fcntl
+except ImportError:   # Windows 沒有 fcntl：讀不到計數，sco_rx_packets 回傳 None（同沒有藍牙）
+    fcntl = None
 import socket
 import struct
 import time
@@ -36,12 +40,11 @@ _SCO_RX_INDEX = 13 + 7
 def sco_rx_packets(dev_id: int = 0) -> Optional[int]:
     """hciN 自開機以來收到的 SCO 封包數；沒有藍牙或不支援時回傳 None。"""
     try:
-        import fcntl   # Linux 才有；放這裡讓模組在 Windows／Mac 也能匯入 (tests/test_bt_link_stats 用假計數器)
         with socket.socket(_AF_BLUETOOTH, socket.SOCK_RAW, _BTPROTO_HCI) as s:
             buf = bytearray(struct.calcsize(_DEV_INFO_FMT))
             struct.pack_into("H", buf, 0, dev_id)
             fcntl.ioctl(s, _HCIGETDEVINFO, buf)
-    except (ImportError, OSError, AttributeError, ValueError):
+    except (OSError, AttributeError, ValueError):
         return None
     return struct.unpack(_DEV_INFO_FMT, buf)[_SCO_RX_INDEX]
 
