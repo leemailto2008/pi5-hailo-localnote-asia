@@ -30,6 +30,8 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
+import logging
+_log = logging.getLogger(__name__)
 
 IDLE_RELEASE_SEC = float(os.environ.get("PI5_STT_IDLE_RELEASE_SEC", "10"))
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -174,8 +176,8 @@ class SttWorker:
             try:
                 self._proc.kill()
                 self._proc.wait(timeout=5)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("stt_worker.py:177 略過：%s", _exc)
         self._proc = None
 
     def _call(self, cmd: str, payload: Any, timeout: float) -> Dict[str, Any]:
@@ -230,8 +232,8 @@ class SttWorker:
         if self._proc is not None and self._proc.poll() is None:
             try:
                 self._call("exit", None, 10.0)
-            except RuntimeError:
-                pass
+            except RuntimeError as _exc:
+                _log.debug("stt_worker.py:233 略過：%s", _exc)
         self._kill()
 
     def shutdown(self) -> None:

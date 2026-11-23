@@ -7,10 +7,11 @@ If no client connects within TIMEOUT seconds, it automatically reverts to home W
 """
 
 import os
-import sys
 import time
 import subprocess
 import argparse
+import logging
+_log = logging.getLogger(__name__)
 
 WATCHDOG_FLAG_FILE = "/tmp/hotspot_keepalive.flag"
 STA_PROFILE = "My_5G_Guest1"
@@ -22,8 +23,8 @@ def has_connected_stations() -> bool:
         res = subprocess.run(["iw", "dev", "wlan0", "station", "dump"], capture_output=True, text=True, timeout=3)
         if "Station " in res.stdout:
             return True
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("hotspot_watchdog.py:25 略過：%s", _exc)
 
     # Check DHCP leases
     lease_paths = [
@@ -62,8 +63,8 @@ def get_sta_profiles() -> list:
                 name, ctype = parts[0], parts[1]
                 if "wireless" in ctype and "hotspot" not in name.lower() and "ap" not in name.lower():
                     profiles.append(name)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("hotspot_watchdog.py:65 略過：%s", _exc)
     
     # Priority defaults
     defaults = ["netplan-wlan0-My_5G_Guest1", "netplan-wlan0-My_2G_Guest1", "My_5G_Guest1"]

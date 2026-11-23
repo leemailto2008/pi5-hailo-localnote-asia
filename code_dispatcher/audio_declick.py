@@ -16,6 +16,8 @@ import time
 from typing import Tuple
 
 import numpy as np
+import logging
+_log = logging.getLogger(__name__)
 
 SMOOTH_TIMEOUT_S = 3600   # 整個修平工作的上限 (背景、nice 10；新錄音開始時會被停掉)
 
@@ -148,8 +150,8 @@ def make_smooth_ogg(src: str, dst: str = "", sr: int = 16000, bitrate: str = "64
                 p.wait()
         try:
             os.remove(tmp)
-        except OSError:
-            pass
+        except OSError as _exc:
+            _log.debug("audio_declick.py:151 略過：%s", _exc)
         return False, 0
 
 
@@ -188,8 +190,8 @@ def stop_smooth_job():
         if _bg_src:
             try:
                 os.remove(smooth_path(_bg_src) + ".part")
-            except FileNotFoundError:
-                pass
+            except FileNotFoundError as _exc:
+                _log.debug("audio_declick.py:191 略過：%s", _exc)
             except OSError as e:
                 print(f"[Declick] cannot remove partial smooth file: {e}")
     _bg_proc, _bg_src = None, ""

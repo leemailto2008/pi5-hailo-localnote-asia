@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Set, Dict, Any, Optional
 from fastapi import WebSocket
+_log = logging.getLogger(__name__)
 
 logger = logging.getLogger("ws_manager")
 
@@ -82,8 +83,8 @@ class ConnectionManager:
     async def _close_quietly(websocket: WebSocket) -> None:
         try:
             await asyncio.wait_for(websocket.close(code=1011), 1.0)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("ws_manager.py:85 略過：%s", _exc)
 
     async def send_personal(self, websocket: WebSocket, event_type: str, data: Any):
         if websocket not in self.active_connections:   # 已因逾時被移除的連線不再送 (避免每次都再卡 SEND_TIMEOUT_S)

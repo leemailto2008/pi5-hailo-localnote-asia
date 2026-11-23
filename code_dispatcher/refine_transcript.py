@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from summary_utils import to_taiwan_traditional
+_log = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -1280,8 +1281,8 @@ async def run_in_subprocess(path: str, should_stop: StopFn = None,
                     await asyncio.wait_for(proc.wait(), STOP_GRACE_S)
                 except asyncio.TimeoutError:
                     proc.kill()
-                except ProcessLookupError:
-                    pass
+                except ProcessLookupError as _exc:
+                    _log.debug("refine_transcript.py:1283 略過：%s", _exc)
                 return
 
     err_task = asyncio.create_task(read_stderr())

@@ -5,10 +5,11 @@ Prevents Raspberry Pi 5 from being bricked, trapped in offline state, or permane
 """
 
 import os
-import sys
 import time
 import subprocess
 import threading
+import logging
+_log = logging.getLogger(__name__)
 
 STA_PROFILE = "netplan-wlan0-My_5G_Guest1"
 AP_PROFILE = "Pi5-Hotspot"
@@ -28,8 +29,8 @@ def find_sta_profile() -> str:
                 name, ctype = parts[0], parts[1]
                 if "wireless" in ctype and "hotspot" not in name.lower() and "ap" not in name.lower():
                     return name
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("hotspot_controller.py:31 略過：%s", _exc)
     return "netplan-wlan0-My_5G_Guest1"
 
 def enable_hotspot_guard():
@@ -47,7 +48,7 @@ def disable_hotspot_guard():
         subprocess.run(["sudo", "nft", "delete", "table", "inet", "hotspot_guard"], capture_output=True, timeout=5)
         print("[HotspotController] Removed HotspotGuard.")
     except Exception as e:
-        pass
+        _log.debug("hotspot_controller.py:49 略過：%s", e)
 
 def switch_to_ap(timeout_sec: int = 180):
     """

@@ -12,6 +12,8 @@ import subprocess
 from typing import Dict, Any, Optional, Union, List
 
 import numpy as np
+import logging
+_log = logging.getLogger(__name__)
 
 # Maximum RAM quota allocated to audio sessions (Default: 64 MB)
 # 2026-10-27：會議最長 4 小時 (opus 64 kbps ≈ 115 MB)，舊配額 64 MB 會讓一場長會議單檔就超標而被整個刪掉。
@@ -125,8 +127,8 @@ def evict_audio_ring_buffer(
                     file_size = os.path.getsize(full_path)
                     entries.append({"path": full_path, "is_dir": False, "size": file_size, "mtime": mtime})
                     total_size += file_size
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_memory.py:128 略過：%s", _exc)
     except Exception as e:
         print(f"[VoiceMemory] Error reading ring buffer directory: {e}")
         return {"evicted_count": 0, "reclaimed_bytes": 0}
@@ -182,8 +184,8 @@ def get_cache_stats() -> Dict[str, Any]:
                 try:
                     total_size += os.path.getsize(fp)
                     item_count += 1
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_memory.py:185 略過：%s", _exc)
 
     return {
         "cache_dir": cache_dir,
