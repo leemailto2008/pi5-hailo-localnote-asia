@@ -9,7 +9,6 @@ Schedules, executes, and tracks 10 substantive self-evolution goals with:
 """
 
 import os
-import sys
 import time
 import json
 import sqlite3

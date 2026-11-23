@@ -18,7 +18,6 @@ from config import (
     WHISPER_DEVICE,
     WHISPER_COMPUTE_TYPE,
     DEFAULT_TTS_VOICE,
-    DATA_DIR
 )
 
 # Global faster-whisper model cache (lazy-loaded to save RAM until first audio)

@@ -22,10 +22,10 @@ import uuid
 import logging
 import asyncio
 import subprocess
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import requests
-from telegram import Update, BotCommand
+from telegram import Update
 from telegram.constants import ParseMode, ChatAction
 from telegram.request import HTTPXRequest
 from telegram.ext import (
@@ -47,7 +47,7 @@ from memory import ThreeTierMemoryManager
 from voice_pipeline import speech_to_text, text_to_speech_async, record_audio_from_mic
 from tools import execute_tool_call_if_needed
 from evolution_engine import evolution_engine
-from notifier import broadcast_daily_plan_overview, broadcast_progress_milestone, broadcast_deep_work_step, broadcast_message
+from notifier import broadcast_daily_plan_overview, broadcast_deep_work_step, broadcast_message
 from bluetooth_manager import (
     scan_devices as bt_scan_devices,
     pair_and_trust as bt_pair_and_trust,

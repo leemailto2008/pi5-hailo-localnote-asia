@@ -6,13 +6,9 @@ Three-Tier Memory Hierarchy for Raspberry Pi 5 AI Agent:
 - Tier 3: Long-Term Episodic Vector Memory (SQLite BLOB + nomic-embed-text + Cosine Similarity)
 """
 
-import os
-import json
 import sqlite3
-import struct
-from datetime import datetime
 from collections import deque
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 import numpy as np
 import requests
 

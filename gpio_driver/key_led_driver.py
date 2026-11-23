@@ -18,7 +18,6 @@ Special Function:
 """
 
 import sys
-import os
 import time
 import signal
 import argparse
@@ -26,7 +25,6 @@ import logging
 import threading
 import subprocess
 from typing import List, Dict, Any, Optional
-import requests
 from gpiozero import Button, LED
 
 logging.basicConfig(

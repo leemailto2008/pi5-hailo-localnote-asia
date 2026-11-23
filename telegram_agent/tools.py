@@ -9,7 +9,6 @@ Supports:
 """
 
 import os
-import sys
 import subprocess
 import urllib.request
 import urllib.parse
@@ -18,7 +17,7 @@ import re
 import json
 import logging
 import importlib.util
-from typing import List, Dict, Optional, Callable, Tuple
+from typing import Dict, Optional
 _log = logging.getLogger(__name__)
 
 logger = logging.getLogger("Pi5Skills")

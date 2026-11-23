@@ -6,7 +6,6 @@ and critical system alerts to authorized users.
 """
 
 import os
-import sys
 import json
 import logging
 import urllib.request
