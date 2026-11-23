@@ -79,33 +79,49 @@ def _find_cut(line: str, max_chars: int) -> int:
     return max_chars
 
 
-def split_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
-    """依換行切成段落，相鄰段落合併到不超過 max_chars；空行略過。"""
+def _split_chunks_with_seps(text: str, max_chars: int = MAX_CHUNK_CHARS) -> Tuple[List[str], List[Optional[str]]]:
+    """split_chunks 的本體，另回傳每塊和前一塊之間原本的分隔：None＝不同行（潤稿結果照舊空一行），
+    字串＝同一行切開的後半段（切點的空白，通常是空字串），接回時原樣接上。
+    2026-11-23：原本一律空一行接回，一位說話人超過 max_chars 的一行在句子中間斷成兩段、後半段沒有「說話人N：」。"""
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
-    pieces: List[str] = []
+    pieces: List[Tuple[str, Optional[str]]] = []    # (文字, 同一行的前一段與它之間的空白；新的一行為 None)
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
+        sep: Optional[str] = None
         while len(line) > max_chars:
             cut = _find_cut(line, max_chars)
-            pieces.append(line[:cut])
-            line = line[cut:].lstrip()
+            pieces.append((line[:cut], sep))
+            rest = line[cut:]
+            line = rest.lstrip()
+            sep = rest[:len(rest) - len(line)]
         if line:
-            pieces.append(line)
+            pieces.append((line, sep))
 
     chunks: List[str] = []
+    seps: List[Optional[str]] = []
     buf = ""
-    for piece in pieces:
-        if buf and len(buf) + 1 + len(piece) > max_chars:
+    for piece, sep in pieces:
+        joint = "\n" if sep is None else sep
+        if buf and len(buf) + len(joint) + len(piece) > max_chars:
             chunks.append(buf)
             buf = piece
+            seps.append(sep)
+        elif buf:
+            buf = f"{buf}{joint}{piece}"
         else:
-            buf = f"{buf}\n{piece}" if buf else piece
+            buf = piece
+            seps.append(sep)
     if buf:
         chunks.append(buf)
-    return chunks
+    return chunks, seps
+
+
+def split_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
+    """依換行切成段落，相鄰段落合併到不超過 max_chars；空行略過。"""
+    return _split_chunks_with_seps(text, max_chars)[0]
 
 
 def build_fix_prompt(chunk: str) -> str:
@@ -535,7 +551,7 @@ async def _polish_transcript(
             import pypinyin  # noqa: F401  同音判斷（與會議詞彙比對）要用
         except ImportError as e:
             raise RuntimeError("缺少 pypinyin（python3 -m pip install --user --break-system-packages pypinyin）") from e
-    chunks = split_chunks(text)
+    chunks, seps = _split_chunks_with_seps(text)
     stats: Dict[str, Any] = {
         "chunks": len(chunks),
         "failed_chunks": 0,
@@ -552,9 +568,13 @@ async def _polish_transcript(
     segments: List[List[str]] = []
     counts = {"rep": 0, "ins": 0, "del": 0}
 
+    def joint(i: int) -> str:
+        """第 i 塊（0 起）前面要接的分隔：不同行空一行；同一行切開的後半段原樣接回。"""
+        return "\n\n" if seps[i] is None else seps[i]
+
     def add_segments(src: str, dst: str) -> None:
-        if segments:
-            segments.append(["eq", "\n\n", ""])
+        if segments and joint(len(parts) - 1):
+            segments.append(["eq", joint(len(parts) - 1), ""])
         for seg in diff_segments(src, dst):
             segments.append(seg)
             if seg[0] in counts:
@@ -599,15 +619,15 @@ async def _polish_transcript(
         if new_chunk is None:
             logger.info("[polish] stopped at chunk %d/%d", idx, len(chunks))
             stats["stopped"] = True
-            parts.extend(chunks[idx - 1:])
             for rest in chunks[idx - 1:]:
+                parts.append(rest)
                 add_segments(rest, rest)
             break
         parts.append(new_chunk)
         add_segments(chunk, new_chunk)
         if on_progress is not None:
             on_progress(idx, len(chunks))
-    return {"mode": mode, "source": source, "engine": fix_engine, "polished": "\n\n".join(parts), "changes": [],
+    return {"mode": mode, "source": source, "engine": fix_engine, "polished": "".join((joint(i) if i else "") + p for i, p in enumerate(parts)), "changes": [],
             "segments": segments, "diff_counts": counts,
             "pre_fix_engine": "csc" if pre_corrector is not None else None, "pre_fix_edits": pre_stats["accepted_edits"],
             "glossary_terms": len(terms), "glossary_edits": glossary_edits,
