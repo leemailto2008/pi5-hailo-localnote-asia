@@ -16,7 +16,11 @@
   收 Mac 分身 S1–S7：約 300 項離線測試、bt_hub 只送訂閱的分頁、tools/*.sh 支援 macOS、姓氏讀音 曾 Zeng／覃 Qin、故障降級 4 項（暫存檔、LLM 串流錯誤、壞切片檔、壞回報）；
   S6 審查找到的 metrics method、telegram TTS 路徑、Hailo 切片錯誤洗版已修。Windows 1071 passed。
   要 Pi 才收：8369672 hailo_engine 偵測、114f509＋1e8b550＋c29e1e4 熱點名稱含「ap」、2a1acb6 Whisper 數字範圍／重複數字／非 16k WAV → 本機 verify/mac-held，
-  .228 回來先 recover_regress.sh 3a66726、過了推 main，再 verify_mac_held.sh 3a66726 849b90c（A/B）。
+  .228 回來先跑 `.cc_scratch/tmp/after_recover.sh`（main 打包＋scp＋Pi 上 recover_regress），過了推 main，再 verify_mac_held.sh（A/B）與 num_guard_eval.py。
+  21:00 後再收 S9–S14（潤稿長行、紀要不切數字、期限「前」同義〔重放找到誤留「週前」已補〕、其他文字判外語、SCO 計數歸零、英翻中萬／億精度、
+  翻譯單位不切數字、保底迴圈守 should_stop、日文含漢字不當中文）；S8 部署閘門與 S14 潤稿預填停止進 verify/mac-held。
+  36 個 mac commit 對帳：main 28、verify 7、不收 1（bd23da2）。本機回歸工具 .cc_scratch/ltr/replay_diff.py（CLAUDE.md 重點十）。
+  自己的候選 verify/num-guard：修同音字不能改中文數字的數值（MacBERT 快修每場都走這條），要 Pi 上 GS3 實錄量過才收。
 - 待 Andrew 決定：翻譯時錄音中先整理紀要（預設勾）、外語即時翻譯上限、.229 版本、地名英文譯名。同事 Issue 回報：.229 連不到，未拉回（.228 只有自測）。
 
 - W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
