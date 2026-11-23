@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 import threading
 import collections
-import requests
 from pydantic import BaseModel, Field
 import sys
 import numpy as np
@@ -1330,7 +1329,7 @@ class MeetingJobManager:
                 print(f"[MeetingMinutes] ⚡ 0秒尾端等待！成功取用即時切片串流 STT (字數: {len(transcript)}，段落數: {len(live_segments)})！")
             else:
                 # 保底：若即時切片為空，快速執行一次母帶轉錄
-                print(f"[MeetingMinutes] ⚠️ 即時切片為空，降級使用母帶轉錄...")
+                print("[MeetingMinutes] ⚠️ 即時切片為空，降級使用母帶轉錄...")
                 master_info: Dict[str, str] = {}
                 master_res = await asyncio.to_thread(
                     speech_to_text,
@@ -1892,7 +1891,6 @@ class MeetingJobManager:
         if len(clean_transcript) > lim["single_max"]:
             return await self._generate_hierarchical_summary_llm(clean_transcript, job_id=job_id)
 
-        import json
         from ws_manager import ws_manager
 
         # 2026-10-22 e2e 提示詞 A/B (Hailo qwen3:1.7b，同一份含辨識錯誤的逐字稿)：
