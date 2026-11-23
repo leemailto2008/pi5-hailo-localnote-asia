@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from llm_backend import LLMError, aiter_chat_stream
@@ -216,8 +217,11 @@ def prepare_source(text: str, target: str) -> str:
         return _CN_SCALED_RE.sub(repl, text)
 
     def repl_zh(m: "re.Match") -> str:
-        v = _scaled(m.group(1), m.group(2))
-        return f"{v / 10 ** 8:g}億" if v >= 10 ** 8 else f"{v / 10 ** 4:g}萬"
+        # 用 Decimal 從原字串算，不能用 :g (只留 6 位有效數字：「12.345678 million」會變「1234.57萬」，
+        # 模型照抄這個錯的數字，numbers_ok 比的又是換過的文字，錯的數字就會通過檢查)
+        v = Decimal(re.sub(r"[,   ]", "", m.group(1))) * _EN_SCALE[m.group(2).lower()]
+        unit, div = ("億", 10 ** 8) if v >= 10 ** 8 else ("萬", 10 ** 4)
+        return format((v / div).normalize(), "f") + unit
     return _EN_SCALED_RE.sub(repl_zh, text)
 
 
