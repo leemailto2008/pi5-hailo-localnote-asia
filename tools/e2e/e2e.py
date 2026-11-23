@@ -24,6 +24,8 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import scoring  # noqa: E402
+import logging
+_log = logging.getLogger(__name__)
 
 API = "http://127.0.0.1"
 SINK = "ln_test_sink"
@@ -79,8 +81,8 @@ def wait_idle(timeout=4 * 3600):
         try:
             if api("/api/status").get("state") not in ("recording", "processing"):
                 return True
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("e2e.py:82 略過：%s", _exc)
         time.sleep(5)
     return False
 
@@ -197,8 +199,8 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", pla
     finally:
         try:
             os.remove(FORCE)
-        except FileNotFoundError:
-            pass
+        except FileNotFoundError as _exc:
+            _log.debug("e2e.py:200 略過：%s", _exc)
         if use_null_sink:
             sh(f"pw-cli destroy {SINK} 2>/dev/null")
         time.sleep(3)

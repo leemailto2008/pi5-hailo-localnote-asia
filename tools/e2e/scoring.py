@@ -2,6 +2,8 @@
 import re
 import unicodedata
 from decimal import Decimal
+import logging
+_log = logging.getLogger(__name__)
 
 try:
     import opencc
@@ -24,8 +26,8 @@ def to_tw(text: str) -> str:
     if _CC and text:
         try:
             return _CC.convert(text)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("scoring.py:27 略過：%s", _exc)
     return text or ""
 
 
@@ -43,8 +45,8 @@ def levenshtein(a: str, b: str) -> int:
     try:
         from rapidfuzz.distance import Levenshtein
         return Levenshtein.distance(a, b)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("scoring.py:46 略過：%s", _exc)
     if len(a) < len(b):
         a, b = b, a
     prev = list(range(len(b) + 1))

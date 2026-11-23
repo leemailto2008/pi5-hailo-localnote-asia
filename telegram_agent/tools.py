@@ -19,6 +19,7 @@ import json
 import logging
 import importlib.util
 from typing import List, Dict, Optional, Callable, Tuple
+_log = logging.getLogger(__name__)
 
 logger = logging.getLogger("Pi5Skills")
 
@@ -116,16 +117,16 @@ def get_pi5_hardware_status(param: str = "") -> str:
             parts = lines[1].split()
             total, used, free, avail = parts[1], parts[2], parts[3], parts[6] if len(parts) > 6 else parts[3]
             results.append(f"• 記憶體狀態 (RAM): 已用 {used} / 總量 {total} (可用約 {avail})")
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("tools.py:119 略過：%s", _exc)
 
     # 3. CPU Load & Uptime
     try:
         res = subprocess.run(["uptime"], capture_output=True, text=True, timeout=3)
         uptime_str = res.stdout.strip()
         results.append(f"• 系統運作與負載: {uptime_str}")
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("tools.py:127 略過：%s", _exc)
 
     return "【樹莓派 5 實體硬體監控數據】:\n" + "\n".join(results)
 

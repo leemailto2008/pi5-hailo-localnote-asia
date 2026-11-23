@@ -60,8 +60,8 @@ def to_taiwan_traditional(text: str) -> str:
     if _opencc_converter:
         try:
             return _opencc_converter.convert(text)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("voice_pipeline.py:63 略過：%s", _exc)
     return text
 
 
@@ -173,6 +173,8 @@ def join_bilingual_tokens(tokens: List[str]) -> str:
 
 
 import threading
+import logging
+_log = logging.getLogger(__name__)
 _whisper_lock = threading.Lock()
 
 
@@ -401,8 +403,8 @@ def speech_to_text(
                             curr_prev = clean_hallucination_repetitions(curr_prev)
                             try:
                                 on_segment_callback(curr_prev, clean_seg_text, False)
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                _log.debug("voice_pipeline.py:404 略過：%s", _exc)
                     else:
                         if clean_seg_text:
                             print(f"[VoicePipeline] Filtered hallucination/noise: '{seg.text}' (no_speech_prob={seg.no_speech_prob:.2f}, logprob={seg.avg_logprob:.2f})")
@@ -455,7 +457,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
         return False
     if output_ogg_path is None:
         import uuid
-        output_ogg_path = os.path.join(TEMP_AUDIO_DIR, f"tts_{uuid.uuid4().hex[:8]}.ogg")
+        from voice_memory import get_in_memory_cache_dir   # RAM 磁碟 (零磁碟寫入)；原本的 TEMP_AUDIO_DIR 沒有定義
+        output_ogg_path = os.path.join(get_in_memory_cache_dir(), f"tts_{uuid.uuid4().hex[:8]}.ogg")
 
     clean_text = text.strip()
 
@@ -476,8 +479,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
                 )
                 try:
                     os.remove(temp_mp3)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_pipeline.py:479 略過：%s", _exc)
             else:
                 os.replace(temp_mp3, output_ogg_path)
 
@@ -515,8 +518,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
                 )
                 try:
                     os.remove(temp_wav)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_pipeline.py:518 略過：%s", _exc)
             else:
                 os.replace(temp_wav, output_ogg_path)
 
@@ -547,8 +550,8 @@ def _ensure_process_affinities():
             shell=True,
             timeout=2
         )
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_pipeline.py:550 略過：%s", _exc)
 
 
 async def ensure_bluetooth_recording_ready() -> str:
@@ -561,8 +564,8 @@ async def ensure_bluetooth_recording_ready() -> str:
     # 異步非阻塞在背景執行實時優先級提升與 CPU 綁定，杜絕阻塞主事件迴圈 (0 延遲啟動錄音)
     try:
         asyncio.create_task(asyncio.to_thread(_ensure_process_affinities))
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_pipeline.py:564 略過：%s", _exc)
 
     target_source = "default"
     try:
@@ -711,8 +714,8 @@ async def record_audio_from_mic(
         if on_proc_started:
             try:
                 on_proc_started(proc)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_pipeline.py:714 略過：%s", _exc)
 
         if need_stdout_pcm and proc.stdout:
             chunk_bytes = 1600  # 50ms @ 16kHz mono (800 samples * 2 bytes)
@@ -735,16 +738,16 @@ async def record_audio_from_mic(
                         print("[VoicePipeline] Microphone recording aborting due to cancellation event.")
                         try:
                             proc.terminate()
-                        except Exception:
-                            pass
+                        except Exception as _exc:
+                            _log.debug("voice_pipeline.py:738 略過：%s", _exc)
                         return False
 
                     if finish_early_event and finish_early_event.is_set():
                         print("[VoicePipeline] Microphone recording finishing early upon user request.")
                         try:
                             proc.terminate()
-                        except Exception:
-                            pass
+                        except Exception as _exc:
+                            _log.debug("voice_pipeline.py:746 略過：%s", _exc)
                         break
 
                     try:
@@ -755,15 +758,15 @@ async def record_audio_from_mic(
                             try:
                                 proc.terminate()
                                 proc.kill()
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                _log.debug("voice_pipeline.py:758 略過：%s", _exc)
                             return False
                         if finish_early_event and finish_early_event.is_set():
                             print("[VoicePipeline] Microphone recording finishing early upon user request (timeout).")
                             try:
                                 proc.terminate()
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                _log.debug("voice_pipeline.py:765 略過：%s", _exc)
                             break
                         continue
                     if not chunk:
@@ -834,8 +837,8 @@ async def record_audio_from_mic(
         if cancellation_event and cancellation_event.is_set():
             try:
                 proc.terminate()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_pipeline.py:837 略過：%s", _exc)
             return False
 
         await proc.wait()
@@ -898,7 +901,7 @@ def transcribe_pcm_chunk(pcm_bytes: bytes) -> Optional[str]:
                 if res and res.get("text"):
                     return to_taiwan_traditional(res["text"]).strip()
         except Exception as hailo_err:
-            pass
+            _log.debug("voice_pipeline.py:900 略過：%s", hailo_err)
 
         # 回退至 CPU faster-whisper (單執行緒/2執行緒避免爭搶)
         with _whisper_lock:

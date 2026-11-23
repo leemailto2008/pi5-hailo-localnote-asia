@@ -6,6 +6,8 @@ Handles environment variables, default models, hardware thresholds, and whitelis
 
 import os
 from typing import List
+import logging
+_log = logging.getLogger(__name__)
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,8 +27,8 @@ if os.path.exists(env_path):
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("config.py:28 略過：%s", _exc)
 
 # Telegram Bot Credentials & Access Control
 # Set via environment variable or .env file

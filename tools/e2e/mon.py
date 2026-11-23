@@ -21,7 +21,8 @@ def procs():
                     st = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
                     rss = int(st[21]) * PAGE; t = int(st[11]) + int(st[12])
                     a = res.setdefault(k, [0, 0]); a[0] += t; a[1] += rss
-        except Exception: pass
+        except Exception:   # 讀到一半行程剛好結束 (/proc/<pid> 消失)：這個行程不算
+            continue
     return res
 def mem():
     m = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo")}

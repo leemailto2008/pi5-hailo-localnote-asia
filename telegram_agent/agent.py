@@ -58,6 +58,7 @@ from bluetooth_manager import (
     load_bt_config,
     is_device_connected
 )
+_log = logging.getLogger(__name__)
 
 # Setup logging
 logging.basicConfig(
@@ -107,8 +108,8 @@ def get_hardware_telemetry() -> Dict[str, Any]:
                 parts = line.split()
                 total_ram_mb = int(parts[1])
                 free_ram_mb = int(parts[6])
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("agent.py:110 略過：%s", _exc)
 
     return {
         "cpu_temp": temp_c,
@@ -631,8 +632,8 @@ async def voice_record_command(update: Update, context: ContextTypes.DEFAULT_TYP
         if os.path.exists(temp_ogg):
             try:
                 os.remove(temp_ogg)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("agent.py:634 略過：%s", _exc)
 
 
 def translate_text_to_english(text: str) -> str:
@@ -779,8 +780,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # Send recording audio action
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("agent.py:782 略過：%s", _exc)
 
     # Download voice file from Telegram
     voice_file = await voice.get_file()
@@ -805,8 +806,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception:
                 try:
                     await update.message.reply_text("🔇 無法辨識語音內容，請靠近麥克風清晰說話約 2~5 秒再試一次。")
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("agent.py:808 略過：%s", _exc)
             return
 
         logger.info(f"[Voice STT] User {chat_id}: {transcribed_text}")
@@ -821,8 +822,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         # 2. LLM Reasoning with Three-Tier Memory & Tools
         try:
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("agent.py:824 略過：%s", _exc)
 
         base_instruction = (
             "你是部署於樹莓派 5 上的邊緣 AI 雙語語音助理。使用者正使用語音與你交談。"
@@ -848,8 +849,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     await update.message.reply_text("🌐 *正在為您連線檢索最新台灣即時資訊...*", parse_mode=ParseMode.MARKDOWN)
                 elif "自我進化" in tool_context:
                     await update.message.reply_text("🛠️ *正在調用代碼模型自建新技能模組並熱載入...*", parse_mode=ParseMode.MARKDOWN)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("agent.py:851 略過：%s", _exc)
             base_instruction = f"{base_instruction}\n\n【真實數據與事實嚴格原則】: 若有提供工具數據 (如證交所股價、硬體數據)，必須 100% 依據提供之數字回答，嚴禁憑空猜測或編造虛假行情！\n\n{tool_context}"
 
         messages = memory_mgr.build_prompt_messages(chat_id, transcribed_text, base_instruction)
@@ -899,15 +900,15 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Voice pipeline error: {e}")
         try:
             await update.message.reply_text(f"❌ 語音處理管線錯誤: {e}")
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("agent.py:902 略過：%s", _exc)
     finally:
         for p in [input_oga_path, output_ogg_path]:
             if os.path.exists(p):
                 try:
                     os.remove(p)
-                except OSError:
-                    pass
+                except OSError as _exc:
+                    _log.debug("agent.py:909 略過：%s", _exc)
 
 
 # =============================================================================

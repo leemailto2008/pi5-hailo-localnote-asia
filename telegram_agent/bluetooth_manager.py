@@ -17,6 +17,7 @@ import logging
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional, Tuple, Any
+_log = logging.getLogger(__name__)
 
 logger = logging.getLogger("Pi5Bluetooth")
 
@@ -156,8 +157,8 @@ def scan_devices(timeout_sec: int = 6) -> List[Dict[str, Any]]:
                 name = match.group(2).strip()
                 if mac not in discovered_map:
                     discovered_map[mac] = name if (name and not re.match(r"^[0-9A-Fa-f:-]{17}$", name)) else "已配對設備"
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("bluetooth_manager.py:159 略過：%s", _exc)
 
     # 3. 並行查詢設備詳情 (ThreadPoolExecutor 提速 20 倍，杜絕前端請求逾時)
     def _inspect_device(item: Tuple[str, str]) -> Optional[Dict[str, Any]]:
@@ -191,8 +192,8 @@ def scan_devices(timeout_sec: int = 6) -> List[Dict[str, Any]]:
                     "rssi": rssi,
                     "battery_level": battery
                 }
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("bluetooth_manager.py:194 略過：%s", _exc)
         return None
 
     devices: List[Dict[str, Any]] = []
@@ -481,8 +482,8 @@ def get_full_bt_status() -> Dict:
                 if line.strip() == "" or "Sources:" in line or "Filters:" in line:
                     break
                 pipewire_sinks.append(line.strip())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("bluetooth_manager.py:484 略過：%s", _exc)
 
     return {
         "controller_ok": controller_ok,
@@ -506,8 +507,8 @@ def get_device_battery(mac: str) -> Optional[int]:
         m = re.search(r"Battery Percentage:\s*.*\((\d+)\)", res.stdout) or re.search(r"Battery Percentage:\s*(\d+)", res.stdout)
         if m:
             return int(m.group(1))
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("bluetooth_manager.py:509 略過：%s", _exc)
     return None
 
 
@@ -552,8 +553,8 @@ def auto_reconnect_tick() -> Optional[str]:
                 if "Connection successful" in res.stdout or is_device_connected(cand_mac):
                     currently_connected_mac = cand_mac
                     break
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("bluetooth_manager.py:555 略過：%s", _exc)
 
     is_connected = bool(currently_connected_mac)
 
