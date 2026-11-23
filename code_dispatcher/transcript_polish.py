@@ -60,6 +60,7 @@ FIX_ENGINE = os.environ.get("PI5_POLISH_FIX_ENGINE", "llm").strip().lower()
 PRE_CSC = os.environ.get("PI5_POLISH_PRE_CSC", "1").strip() != "0"
 FIX_MAX_INSERT = 1    # fix 補字（漏字）一次最多幾個字；更多視為加內容，保留原文
 REQUEST_TIMEOUT_SEC = 120.0
+POLL_SEC = 0.5   # 預填中 (還沒有 token) 檢查 should_stop 的間隔
 OUTPUT_MIN_TOKENS_PER_SEC = 4.0  # 估整段輸出逾時用：Hailo qwen3:1.7b 約 4.5 tok/s、CPU qwen2.5:3b 約 6 tok/s
 
 _CUT_CHARS = "。！？!?.；;，,"
@@ -395,20 +396,33 @@ def _rewrite_numbers_ok(src: str, out: str) -> bool:
 
 async def _complete(mode: str, prompt: str, system: str, temperature: float, num_predict: int,
                     stats: Dict[str, Any], should_stop: Optional[Callable[[], bool]]) -> Optional[str]:
-    """串流取得模型輸出（後端依 POLISH_BACKENDS[mode]）。should_stop() 成立就關掉串流（Ollama 隨即停止生成）並回傳 None。"""
-    parts: List[str] = []
-    stream = aiter_chat_stream(
-        prompt, system=system, temperature=temperature, num_predict=num_predict,
-        timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / OUTPUT_MIN_TOKENS_PER_SEC),
-        hailo_retries=1, cpu_first=POLISH_BACKENDS[mode] == "cpu",
-    )
-    async with contextlib.aclosing(stream):
-        async for token, _done, backend in stream:
-            stats["backend"] = backend.label
-            if should_stop is not None and should_stop():
-                return None
-            parts.append(token)
-    return "".join(parts)
+    """串流取得模型輸出（後端依 POLISH_BACKENDS[mode]）。should_stop() 成立就關掉串流（Ollama 隨即停止生成）並回傳 None。
+    CPU 預填一段約 40 s 沒有 token，所以另外每 POLL_SEC 秒檢查一次（同 transcript_translate._complete；S14：原本只在收到 token 時檢查，
+    預填中開始錄音，CPU 推論會一直跑到第一個 token，違反 CLAUDE.md 重點一）。"""
+    async def consume() -> Optional[str]:
+        parts: List[str] = []
+        stream = aiter_chat_stream(
+            prompt, system=system, temperature=temperature, num_predict=num_predict,
+            timeout=max(REQUEST_TIMEOUT_SEC, 30.0 + num_predict / OUTPUT_MIN_TOKENS_PER_SEC),
+            hailo_retries=1, cpu_first=POLISH_BACKENDS[mode] == "cpu",
+        )
+        async with contextlib.aclosing(stream):
+            async for token, _done, backend in stream:
+                stats["backend"] = backend.label
+                if should_stop is not None and should_stop():
+                    return None
+                parts.append(token)
+        return "".join(parts)
+
+    task = asyncio.ensure_future(consume())
+    while not task.done():
+        await asyncio.wait({task}, timeout=POLL_SEC)
+        if not task.done() and should_stop is not None and should_stop():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            return None
+    return task.result()
 
 
 def _strip_echoed_header(out: str) -> str:
