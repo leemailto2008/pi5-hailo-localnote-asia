@@ -93,9 +93,12 @@ def effective_mode(pref: str, asr_lang: str) -> str:
 
 
 def target_for(text: str, mode: str) -> str:
-    """這段要翻成哪種語言：auto 時中文 (中文字不少於英文字母的一半) 翻英文，其他翻中文。"""
+    """這段要翻成哪種語言：auto 時中文 (中文字不少於英文字母的一半、不是日文) 翻英文，其他翻中文。
+    日文 (tt.is_japanese) 翻中文 (S14：含漢字的日文原本被判成中文翻英文，日文會議一句英文一句中文交錯)。"""
     if mode in ("en", "zh"):
         return mode
+    if tt.is_japanese(text):
+        return "zh"
     return "en" if len(_CJK_RE.findall(text)) * 2 >= len(_LATIN_RE.findall(text)) and _CJK_RE.search(text) else "zh"
 
 

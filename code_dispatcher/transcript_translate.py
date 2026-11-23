@@ -37,6 +37,15 @@ _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 _NON_EN_LATIN_RE = re.compile(r"[À-ɏḀ-ỿ]")     # 帶附加符號的拉丁字母：德、法、西、越…
 _OTHER_SCRIPT_RE = re.compile(r"[฀-๿぀-ヿ가-힯Ѐ-ӿ]")   # 泰、假名、韓、俄
+_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
+
+
+def is_japanese(text: str) -> bool:
+    """日文 (含漢字也算)：假名 ≥ 3 個且佔假名＋漢字一成五以上；中文句子裡偶爾一個「キ」不算。
+    條件和 hailo_whisper.engine.text_language 的 "ja" 相同 (tests/test_translate_japanese_not_chinese.py 比對兩者)；
+    這裡不 import engine (它會載入 numpy，也要另外處理 sys.path)。"""
+    kana = len(_KANA_RE.findall(text or ""))
+    return kana >= 3 and kana >= 0.15 * (kana + len(_CJK_RE.findall(text or "")))
 # 西、法、德、印尼文常見功能詞 (不收跟英文同形的 a、in、an、die、no…)
 _FOREIGN_FUNCTION_WORDS = frozenset(
     "de la el los las que y del por para con una se lo su al es "            # 西
@@ -64,7 +73,7 @@ def in_target_language(text: str, target: str) -> bool:
     """這個單位已經是目標語言 (照抄，不送模型)。
     英文：沒有中文字、沒有英文以外的拉丁字母 (ä é ñ ß…)、英文功能詞比例夠 (summary_utils.english_share ≥ 0.5)。
     只看「沒有中文字」不夠：11-19 德文會議按 Translate to English，134 句德文全被當成英文照抄。太短的英文句 (「Yes.」) 會送模型，只是多花一點時間。
-    中文：中文字不少於英文字母的一半。"""
+    中文：中文字不少於英文字母的一半，而且不是日文 (is_japanese；S14：含漢字的日文「今日の会議を始めます」原本被當成中文照抄不翻)。"""
     cjk, latin = len(_CJK_RE.findall(text)), len(_LATIN_RE.findall(text))
     if not re.search(r"[^\W\d_]", text):       # 只有標點／數字 (「...」「.」)：照抄
         return True
@@ -79,7 +88,7 @@ def in_target_language(text: str, target: str) -> bool:
         foreign = sum(w in _FOREIGN_FUNCTION_WORDS for w in words)
         share = english_share(text)
         return (share >= 0.5 and foreign * 5 <= len(words)) or (foreign == 0 and len(words) >= 4)
-    return cjk > 0 and cjk * 2 >= latin
+    return cjk > 0 and cjk * 2 >= latin and not is_japanese(text)
 
 
 def untranslated_left(translation: str, target: str) -> bool:
