@@ -14,6 +14,8 @@ import uuid
 import shutil
 import asyncio
 from typing import Dict, Any, Optional, List, AsyncGenerator
+import logging
+_log = logging.getLogger(__name__)
 
 # Ensure dependencies from voice_pipeline are importable
 from voice_pipeline import (
@@ -34,8 +36,8 @@ def is_any_recording_active() -> bool:
         from meeting_minutes import minutes_manager
         if minutes_manager and hasattr(minutes_manager, "status") and minutes_manager.status.state == "recording":
             return True
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_streaming.py:37 略過：%s", _exc)
     return False
 
 
@@ -150,8 +152,8 @@ class StreamingVoiceSession:
             self.is_stopped = True
             try:
                 self.ffmpeg_proc.terminate()
-            except ProcessLookupError:
-                pass
+            except ProcessLookupError as _exc:
+                _log.debug("voice_streaming.py:153 略過：%s", _exc)
 
     async def _speculative_prewarm(self, text: str):
         """Speculative pre-warm of the active LLM backend's weights while recording is ongoing."""
@@ -188,8 +190,8 @@ class StreamingVoiceSession:
                 if self.ffmpeg_proc and self.ffmpeg_proc.returncode is None:
                     try:
                         self.ffmpeg_proc.terminate()
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _log.debug("voice_streaming.py:191 略過：%s", _exc)
             elif self.ffmpeg_proc:
                 try:
                     await asyncio.wait_for(asyncio.shield(self.ffmpeg_proc.wait()), timeout=0.1)
@@ -224,8 +226,8 @@ class StreamingVoiceSession:
                 try:
                     self.ffmpeg_proc.kill()
                     await self.ffmpeg_proc.wait()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_streaming.py:227 略過：%s", _exc)
 
         # 2. 瞬間無損拼接 master.ogg 與 master.mp3 (使用 ffmpeg concat demuxer copy，極速完成)
         await asyncio.sleep(0.2)
@@ -388,8 +390,8 @@ class StreamingVoiceSession:
         try:
             from voice_memory import evict_audio_ring_buffer
             evict_audio_ring_buffer()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("voice_streaming.py:391 略過：%s", _exc)
 
     async def event_generator(self) -> AsyncGenerator[str, None]:
         """
@@ -424,8 +426,8 @@ def create_streaming_session(duration_sec: int, base_dir: str) -> StreamingVoice
         if old_sess and os.path.exists(old_sess.session_dir):
             try:
                 shutil.rmtree(old_sess.session_dir)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_streaming.py:427 略過：%s", _exc)
 
     session_id = uuid.uuid4().hex[:8]
     session = StreamingVoiceSession(session_id, duration_sec, base_dir)

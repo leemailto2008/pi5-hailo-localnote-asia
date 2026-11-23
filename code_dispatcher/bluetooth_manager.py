@@ -19,6 +19,7 @@ import pty
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional, Tuple, Any
+_log = logging.getLogger(__name__)
 
 logger = logging.getLogger("Pi5Bluetooth")
 
@@ -193,8 +194,8 @@ class BluetoothctlSession:
         try:
             if self._master_fd is not None:
                 os.write(self._master_fd, b"quit\n")
-        except OSError:
-            pass
+        except OSError as _exc:
+            _log.debug("bluetooth_manager.py:196 略過：%s", _exc)
         if self._proc is not None:
             try:
                 self._proc.wait(timeout=3)
@@ -204,8 +205,8 @@ class BluetoothctlSession:
         if self._master_fd is not None:
             try:
                 os.close(self._master_fd)
-            except OSError:
-                pass
+            except OSError as _exc:
+                _log.debug("bluetooth_manager.py:207 略過：%s", _exc)
             self._master_fd = None
 
     def __enter__(self) -> "BluetoothctlSession":
@@ -585,8 +586,8 @@ def _switch_pipewire_default_sink(device_name_hint: str) -> str:
                                     if msbc_idx is not None:
                                         subprocess.run(["wpctl", "set-profile", str(dev_id), str(msbc_idx)], capture_output=True, timeout=3)
                                     break
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("bluetooth_manager.py:588 略過：%s", _exc)
 
         msg_parts = []
         if target_sink_id:
@@ -690,8 +691,8 @@ def get_full_bt_status() -> Dict:
                 if line.strip() == "" or "Sources:" in line or "Filters:" in line:
                     break
                 pipewire_sinks.append(line.strip())
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("bluetooth_manager.py:693 略過：%s", _exc)
 
     return {
         "controller_ok": controller_ok,
@@ -715,8 +716,8 @@ def get_device_battery(mac: str) -> Optional[int]:
         m = re.search(r"Battery Percentage:\s*.*\((\d+)\)", res.stdout) or re.search(r"Battery Percentage:\s*(\d+)", res.stdout)
         if m:
             return int(m.group(1))
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("bluetooth_manager.py:718 略過：%s", _exc)
     return None
 
 
@@ -768,8 +769,8 @@ def auto_reconnect_tick() -> Optional[str]:
                 if "Connection successful" in res.stdout or is_device_connected(cand_mac):
                     currently_connected_mac = cand_mac
                     break
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("bluetooth_manager.py:771 略過：%s", _exc)
 
     is_connected = bool(currently_connected_mac)
 

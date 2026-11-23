@@ -12,6 +12,8 @@ import subprocess
 from typing import Dict, Any, Optional, List, Callable
 
 import numpy as np
+import logging
+_log = logging.getLogger(__name__)
 
 
 def extract_waveform_peaks(audio_path: str, num_peaks: int = 200) -> List[float]:
@@ -223,8 +225,8 @@ class TwoLayerAudioPipe:
                             "bands": bands,
                             "active": True
                         })
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _log.debug("two_layer_audio.py:226 略過：%s", _exc)
 
                 # When chunk threshold reached, slice into RAM chunk file
                 if len(current_chunk_buffer) >= chunk_bytes_target:
@@ -255,8 +257,8 @@ class TwoLayerAudioPipe:
                         res = on_chunk_ready(chunk_idx, chunk_path, chunk_duration)
                         if asyncio.iscoroutine(res):
                             asyncio.create_task(res)
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _log.debug("two_layer_audio.py:258 略過：%s", _exc)
 
         except Exception as e:
             print(f"[TwoLayerAudio] Reader loop exception: {e}")
@@ -308,8 +310,8 @@ class TwoLayerAudioPipe:
         if self._proc:
             try:
                 self._proc.terminate()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("two_layer_audio.py:311 略過：%s", _exc)
 
 
 _isolated_whisper_model = None
@@ -345,8 +347,8 @@ def transcribe_chunk_isolated(chunk_wav_path: str) -> str:
     try:
         if hasattr(os, "sched_setaffinity"):
             os.sched_setaffinity(0, {2, 3})
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("two_layer_audio.py:348 略過：%s", _exc)
 
     model = get_isolated_whisper_model()
     if not model:
