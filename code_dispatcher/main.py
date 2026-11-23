@@ -94,6 +94,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Task 28：每條 API 路由的耗時 P50／P95／P99（GET /api/metrics）與慢請求 JSON log（request_metrics.py）
+import request_metrics  # noqa: E402
+request_metrics.install(app)
+
 @app.on_event("shutdown")
 def _shutdown_stt_worker():
     """關閉 STT 子行程 (會先釋放 Hailo NPU)。"""
