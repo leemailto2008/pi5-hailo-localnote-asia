@@ -111,8 +111,8 @@ def _dir_size(path: str) -> int:
         for n in files:
             try:
                 total += os.path.getsize(os.path.join(root, n))
-            except OSError:
-                pass
+            except OSError as e:   # 算大小時檔案剛被刪掉：不算這個檔
+                print(f"[IssueFeedback] 算資料夾大小時略過 {n}：{e}")
     return total
 
 
