@@ -268,19 +268,36 @@ def edit_opcodes(src: str, dst: str) -> List[Tuple[str, int, int, int, int]]:
     return out
 
 
+def _positional_opcodes(src: str, dst: str) -> List[Tuple[str, int, int, int, int]]:
+    """等長的兩段逐字對齊：連續相同的字是 equal，連續不同的字是一個 replace (不產生 insert／delete)。"""
+    out: List[Tuple[str, int, int, int, int]] = []
+    k = 0
+    while k < len(src):
+        same = src[k] == dst[k]
+        s = k
+        while k < len(src) and (src[k] == dst[k]) == same:
+            k += 1
+        out.append(("equal" if same else "replace", s, k, s, k))
+    return out
+
+
 def accept_homophone_edits(src: str, dst: str,
-                           protected: Sequence[Tuple[int, int]] = ()) -> Tuple[str, Dict[str, int]]:
+                           protected: Sequence[Tuple[int, int]] = (), positional: bool = False) -> Tuple[str, Dict[str, int]]:
     """把模型的校對全文 dst 對齊原文 src（difflib），只收「修同音字與漏字」，其餘位置保留原文：
       - 替換：兩邊都是中文、字數相同、拼音（不計聲調）相同；
       - 補字：≤ FIX_MAX_INSERT 個中文字；
       - 刪字、改數字或標點、改寫一律不收；protected 範圍（說話人標籤）不動。
+    positional=True (MacBERT：只做等長換字、位置一一對應)：兩邊等長時逐字對齊，不用 difflib。difflib 對齊重複字時會把
+    一次換字拆成「insert＋相同的字＋delete」，補字被收、刪字被拒，字數 +1，quick_fix 的 restore_layout 就整份保留原稿
+    (W-verify-bac9cfd：e2e 句子做的 MacBERT 式換字 19,984 句裡 9 句；「好好的好→好的的好」main 原本就會)。
     11-11 量測（CPU qwen2.5:3b 的校對全文；SenseVoice 稿）：只收 ≤ 4 字的小修改時，實錄 10 分事實召回 0.879 → 0.871
     （「吳副理→吳部長」「週五前→週前」這類改錯）；改成只收同音字與 1 字補字，0.879 不變、CER 0.189 → 0.1825。
     回傳 (新文字, {"accepted": 處數, "rejected": 處數})。"""
     out: List[str] = []
     stats = {"accepted": 0, "rejected": 0}
     pos = 0
-    for tag, i1, i2, j1, j2 in edit_opcodes(src, dst):
+    ops = _positional_opcodes(src, dst) if positional and len(src) == len(dst) else edit_opcodes(src, dst)
+    for tag, i1, i2, j1, j2 in ops:
         if tag == "equal":
             continue
         out.append(src[pos:i1])
@@ -456,7 +473,7 @@ async def _run_fix_csc(chunk: str, stats: Dict[str, Any], should_stop: Optional[
     out = await asyncio.to_thread(corrector.correct, chunk, should_stop)
     if out is None:
         return None
-    new_chunk, edits = accept_homophone_edits(chunk, out, protected_spans(chunk))
+    new_chunk, edits = accept_homophone_edits(chunk, out, protected_spans(chunk), positional=True)   # MacBERT 只做等長換字
     stats["accepted_edits"] += edits["accepted"]
     stats["rejected_edits"] += edits["rejected"]
     return new_chunk
