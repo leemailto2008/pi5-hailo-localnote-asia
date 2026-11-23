@@ -522,7 +522,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
         return False
     if output_ogg_path is None:
         import uuid
-        output_ogg_path = os.path.join(TEMP_AUDIO_DIR, f"tts_{uuid.uuid4().hex[:8]}.ogg")
+        from voice_memory import get_in_memory_cache_dir   # RAM 磁碟 (零磁碟寫入)；原本的 TEMP_AUDIO_DIR 沒有定義
+        output_ogg_path = os.path.join(get_in_memory_cache_dir(), f"tts_{uuid.uuid4().hex[:8]}.ogg")
 
     clean_text = text.strip()
 
