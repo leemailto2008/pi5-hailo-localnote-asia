@@ -468,8 +468,8 @@ def speech_to_text(
                             curr_prev = clean_hallucination_repetitions(curr_prev)
                             try:
                                 on_segment_callback(curr_prev, clean_seg_text, False)
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                _log.debug("voice_pipeline.py:471 略過：%s", _exc)
                     else:
                         if clean_seg_text:
                             print(f"[VoicePipeline] Filtered hallucination/noise: '{seg.text}' (no_speech_prob={seg.no_speech_prob:.2f}, logprob={seg.avg_logprob:.2f})")
@@ -544,8 +544,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
                 )
                 try:
                     os.remove(temp_mp3)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_pipeline.py:547 略過：%s", _exc)
             else:
                 os.replace(temp_mp3, output_ogg_path)
 
@@ -583,8 +583,8 @@ async def text_to_speech_async(text: str, output_ogg_path: Optional[str] = None,
                 )
                 try:
                     os.remove(temp_wav)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("voice_pipeline.py:586 略過：%s", _exc)
             else:
                 os.replace(temp_wav, output_ogg_path)
 
@@ -615,8 +615,8 @@ def _ensure_process_affinities():
             shell=True,
             timeout=2
         )
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_pipeline.py:618 略過：%s", _exc)
 
 
 async def _wait_for_live_audio(source_node: str, attempts: int = 4, probe_sec: float = 0.6) -> bool:
@@ -731,6 +731,8 @@ def live_asr_engine(pref: str, source: str, sv_on_bt: bool = LIVE_SV_ON_BT, sv_a
 
 # SenseVoice 底噪輸出過濾：規則與量測見 refine_transcript.sv_is_noise（高精度稿補 VAD 漏句時也用同一條）。
 from refine_transcript import SV_NOISE_MAX_CHARS, sv_is_noise  # noqa: E402,F401
+import logging
+_log = logging.getLogger(__name__)
 
 
 def whisper_probe_npu(audio_np: np.ndarray) -> Optional[Dict[str, Any]]:
@@ -847,16 +849,16 @@ async def ensure_bluetooth_recording_ready() -> str:
         if _forced:
             print(f"[VoicePipeline] 🧪 TEST MODE: recording from forced source '{_forced}'")
             return _forced
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as _exc:
+        _log.debug("voice_pipeline.py:850 略過：%s", _exc)
     except Exception as _e:
         print(f"[VoicePipeline] forced-source read error: {_e}")
 
     # 異步非阻塞在背景執行實時優先級提升與 CPU 綁定，杜絕阻塞主事件迴圈 (0 延遲啟動錄音)
     try:
         asyncio.create_task(asyncio.to_thread(_ensure_process_affinities))
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_pipeline.py:858 略過：%s", _exc)
 
     target_source = "default"
     try:
@@ -988,8 +990,8 @@ def _stop_smooth():
     try:
         from audio_declick import stop_smooth_job
         stop_smooth_job()
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.debug("voice_pipeline.py:991 略過：%s", _exc)
 
 
 async def record_audio_from_mic(
@@ -1095,8 +1097,8 @@ async def record_audio_from_mic(
         if proc and proc.returncode is None:
             try:
                 proc.kill() if kill else proc.terminate()
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_pipeline.py:1098 略過：%s", _exc)
 
     async def _deliver(clean: bytes):
         nonlocal chunk_buffer, first_slice_pending
@@ -1184,8 +1186,8 @@ async def record_audio_from_mic(
         if on_proc_started:
             try:
                 on_proc_started(cap)
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("voice_pipeline.py:1187 略過：%s", _exc)
 
         stopping = False
         while True:

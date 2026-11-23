@@ -60,6 +60,8 @@ from summary_utils import (assemble_long_minutes, clean_summary_markdown, compac
                            merge_body_todos, merge_recap_into_minutes, recap_notes, to_internal_sections, transcript_todo_rows,
                            clean_live_segment, live_join_sep, map_notes_complete, minutes_extra_start, line_repeat_start, generation_loop_start, split_with_recap, summary_limit_chunks, summary_limits, take_stable_chunk,
                            tidy_live_transcript)
+import logging
+_log = logging.getLogger(__name__)
 
 # 長會議紀要 (2026-10-27 e2e)：Hailo qwen3:1.7b 單次請求約 1500 字就 context full (HTTP 500)，
 # 5 分鐘會議 (約 1000 字) 單次整理品質良好 → 1200 字以內維持單次；超過則切成 <= 1000 字的區塊逐段抽重點，
@@ -200,8 +202,8 @@ async def stream_map_notes_cpu(prompt: str, lang: str = "zh", should_stop: Optio
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as _exc:
+                _log.debug("meeting_minutes.py:203 略過：%s", _exc)
             return "", None, True
     text, backend = task.result()
     return text, backend, False
@@ -650,8 +652,8 @@ class MeetingJobManager:
                     asyncio.run_coroutine_threadsafe(coro, self._main_loop)
                 else:
                     coro.close()
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("meeting_minutes.py:653 略過：%s", _exc)
 
     def get_cpu_load(self) -> float:
         """Calculate CPU percentage from /proc/stat non-blockingly."""
@@ -683,14 +685,14 @@ class MeetingJobManager:
             res = subprocess.run(["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=1)
             if res.returncode == 0:
                 return float(res.stdout.strip().replace("temp=", "").replace("'C", ""))
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("meeting_minutes.py:686 略過：%s", _exc)
 
         try:
             with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
                 return float(f.read().strip()) / 1000.0
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("meeting_minutes.py:692 略過：%s", _exc)
         return 45.0
 
     def get_network_mode(self) -> str:
@@ -699,8 +701,8 @@ class MeetingJobManager:
             res = subprocess.run(["ip", "-4", "addr", "show", "wlan0"], capture_output=True, text=True, timeout=1)
             if "10.20.0.1" in res.stdout:
                 return "ap"
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("meeting_minutes.py:702 略過：%s", _exc)
         return "sta"
 
     async def cancel_current_job(self) -> Dict[str, Any]:
@@ -718,8 +720,8 @@ class MeetingJobManager:
                 self._current_ffmpeg_proc.terminate()
                 try:
                     self._current_ffmpeg_proc.kill()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("meeting_minutes.py:721 略過：%s", _exc)
                 print("[MeetingMinutes] Active ffmpeg recording process terminated and killed.")
             except Exception as pe:
                 print(f"[MeetingMinutes] Error terminating ffmpeg process: {pe}")
@@ -756,8 +758,8 @@ class MeetingJobManager:
                 "bands": [0] * 8,
                 "active": False
             })
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("meeting_minutes.py:759 略過：%s", _exc)
 
         # 5. Reset status to idle
         self.status = JobStatus(
@@ -797,8 +799,8 @@ class MeetingJobManager:
         # Capture running loop for thread-safe cross-thread calls
         try:
             self._main_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
+        except RuntimeError as _exc:
+            _log.debug("meeting_minutes.py:800 略過：%s", _exc)
 
         # Always instantiate brand new cancellation tokens to avoid race condition with zombie tasks
         self._cancellation_token = asyncio.Event()
@@ -875,8 +877,8 @@ class MeetingJobManager:
                 try:
                     from ws_manager import ws_manager
                     await ws_manager.broadcast("vu", vu_data)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("meeting_minutes.py:878 略過：%s", _exc)
 
             def _on_proc(proc):
                 self._current_ffmpeg_proc = proc
@@ -1079,8 +1081,8 @@ class MeetingJobManager:
                 while not premap_stop.is_set() and not self._cancellation_token.is_set():
                     try:
                         await asyncio.wait_for(premap_stop.wait(), timeout=SUMMARY_PREMAP_POLL_S)
-                    except asyncio.TimeoutError:
-                        pass
+                    except asyncio.TimeoutError as _exc:
+                        _log.debug("meeting_minutes.py:1082 略過：%s", _exc)
                     live = fix_meeting_terms(tidy_live_transcript(curr_preview))
                     # 提示詞語言跟錄音後整理相同 (2026-11-18)：原本固定用中文提示詞，英文／德文等會議 (detect_language = en) 的前幾段重點
                     # 寫成中文，錄音後又照樣沿用，紀要中英混雜 (德文 6 分 e2e：「- 認定 Kaffee 有加 Milch 且無 Sugar 的版本」)。
@@ -1212,8 +1214,8 @@ class MeetingJobManager:
                     self._premap_task.cancel()
                 try:
                     await self._premap_task
-                except asyncio.CancelledError:
-                    pass
+                except asyncio.CancelledError as _exc:
+                    _log.debug("meeting_minutes.py:1215 略過：%s", _exc)
                 except Exception as e:
                     print(f"[MeetingMinutes] 錄音中預先整理結束時出錯: {e}")
                 self._premap_task = None
@@ -1288,8 +1290,8 @@ class MeetingJobManager:
                     "bands": [0] * 8,
                     "active": False
                 })
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("meeting_minutes.py:1291 略過：%s", _exc)
 
             if not record_ok or not os.path.exists(raw_ogg) or os.path.getsize(raw_ogg) == 0:
                 if self._cancellation_token.is_set():
@@ -1762,8 +1764,8 @@ class MeetingJobManager:
                     task.cancel()
                     try:
                         await task
-                    except asyncio.CancelledError:
-                        pass
+                    except asyncio.CancelledError as _exc:
+                        _log.debug("meeting_minutes.py:1765 略過：%s", _exc)
                     why = "CPU 先寫完" if slot in finished else "紀要取消"
                     print(f"[MeetingMinutes] 第 {slot + 1}/{total} 段{why}，取消 Hailo 那一份 ({time.time() - t_req:.1f}s)")
                     return
@@ -2100,8 +2102,8 @@ class MeetingJobManager:
                 if ogg_files:
                     ogg_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                     target_ogg = ogg_files[0]
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.debug("meeting_minutes.py:2103 略過：%s", _exc)
 
         if not target_ogg or not os.path.exists(target_ogg):
             raise ValueError("找不到可供剪輯轉錄的音訊母帶，請先進行錄音。")
