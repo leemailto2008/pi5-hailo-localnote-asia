@@ -574,32 +574,6 @@ def keepalive_network() -> Dict[str, Any]:
     return {"status": "ok", "message": "Watchdog keepalive touched"}
 
 
-@app.get("/manifest.json", tags=["PWA"])
-def get_pwa_manifest() -> Dict[str, Any]:
-    """PWA Web Manifest for iOS/Android Add to Home Screen."""
-    return {
-        "name": "Pi 5 Edge AI Arena",
-        "short_name": "Pi5 Arena",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#090d16",
-        "theme_color": "#4f46e5",
-        "description": "Raspberry Pi 5 Local LLM Arena & Code Gateway",
-        "icons": [
-            {
-                "src": "https://img.icons8.com/color/192/raspberry-pi.png",
-                "sizes": "192x192",
-                "type": "image/png"
-            },
-            {
-                "src": "https://img.icons8.com/color/512/raspberry-pi.png",
-                "sizes": "512x512",
-                "type": "image/png"
-            }
-        ]
-    }
-
-
 # =============================================================================
 # Bluetooth & Voice Application API Endpoints
 # =============================================================================
@@ -887,7 +861,7 @@ def remove_bt_device(req: BTRemoveRequest) -> Dict[str, Any]:
 
         # 2. Untrust & Remove from BlueZ
         subprocess.run(["bluetoothctl", "untrust", target_mac], capture_output=True, text=True, timeout=5)
-        res_rm = subprocess.run(["bluetoothctl", "remove", target_mac], capture_output=True, text=True, timeout=5)
+        subprocess.run(["bluetoothctl", "remove", target_mac], capture_output=True, text=True, timeout=5)
 
         # 3. Clean up config (auto_connect_devices & default_mac)
         config = load_bt_config()
@@ -1824,7 +1798,7 @@ def get_system_telemetry_payload() -> Dict[str, Any]:
                 sys.path.append(hailo_adapter_path)
             from hailo_engine.device_manager import is_hailo_available, HailoDeviceManager
             if is_hailo_available():
-                info = HailoDeviceManager().get_info()
+                HailoDeviceManager().get_info()   # 確認裝置可開啟（回傳值不用）
                 npu_info = {
                     "detected": True,
                     "device": "AI NPU",

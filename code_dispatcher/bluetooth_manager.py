@@ -462,7 +462,6 @@ def pair_and_trust(target: str) -> Tuple[bool, str]:
 
         is_connected = "Connected: yes" in info_out
         is_paired = "Paired: yes" in info_out
-        is_trusted = "Trusted: yes" in info_out
 
         name_match = re.search(r"Name:\s*(.+)", info_out)
         if name_match:
@@ -470,7 +469,7 @@ def pair_and_trust(target: str) -> Tuple[bool, str]:
 
         # Step 4: If paired but not connected, try one direct connect
         if is_paired and not is_connected:
-            conn_res = subprocess.run(["bluetoothctl", "connect", target_mac], capture_output=True, text=True, timeout=8)
+            subprocess.run(["bluetoothctl", "connect", target_mac], capture_output=True, text=True, timeout=8)
             time.sleep(1)
             info_res = subprocess.run(["bluetoothctl", "info", target_mac], capture_output=True, text=True, timeout=3)
             info_out = info_res.stdout
@@ -727,7 +726,7 @@ def auto_reconnect_tick() -> Optional[str]:
     Monitors Bluetooth connection transitions (Connect / Disconnect).
     Returns a formatted notification string whenever state changes.
     """
-    global _is_pairing_lock, _last_connection_state
+    global _last_connection_state
 
     if _is_pairing_lock or _bt_exclusive.locked():
         return None

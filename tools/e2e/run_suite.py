@@ -52,7 +52,7 @@ def sha256(path):
 def write_junit(path, cases):
     total = sum(len(c["checks"]) for c in cases)
     fails = sum(sum(not k["passed"] for k in c["checks"]) for c in cases)
-    out = [f'<?xml version="1.0" encoding="UTF-8"?>', f'<testsuites name="localnote-e2e" tests="{total}" failures="{fails}">']
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', f'<testsuites name="localnote-e2e" tests="{total}" failures="{fails}">']
     for c in cases:
         nf = sum(not k["passed"] for k in c["checks"])
         out.append(f'  <testsuite name="e2e.{c["minutes"]:g}min" tests="{len(c["checks"])}" failures="{nf}" time="{c.get("total_s", 0)}">')

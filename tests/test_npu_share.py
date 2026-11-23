@@ -1,5 +1,4 @@
 """NPU 共用模式 (npu_share / llm_backend / stt_worker) 的單元測試，不需要 Hailo 硬體。"""
-import os
 import threading
 import time
 

@@ -1873,7 +1873,6 @@ def cut_glued_topic_numbers(md: str) -> str:
     """摘要／決議條目尾巴黏著的「第N個議題(是X)」拿掉 (前面至少留 6 個字)；條目開頭的「第28議題品質異常：」是議題名稱，不動。"""
     if not md or not re.search(r"[議意]題", md):
         return md
-    out = []
     for sec in ("摘要", "決議"):
         m = _minutes_section(md, sec)
         if not m:

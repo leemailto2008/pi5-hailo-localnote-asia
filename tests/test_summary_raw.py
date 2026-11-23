@@ -6,8 +6,6 @@ import asyncio
 import sys
 import types
 
-import pytest
-
 sys.modules.setdefault("config", types.SimpleNamespace(WHISPER_MODEL_SIZE="small", WHISPER_DEVICE="cpu", WHISPER_COMPUTE_TYPE="int8",
                                                        DEFAULT_TTS_VOICE="zh-TW-HsiaoChenNeural", DATA_DIR="/tmp"))
 import meeting_minutes as mm  # noqa: E402
