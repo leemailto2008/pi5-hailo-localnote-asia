@@ -105,3 +105,39 @@ def test_stream_generator_closed_early_is_not_a_failure(monkeypatch):
     next(g)
     g.close()                                     # 呼叫端拿到要的 token 就停：GeneratorExit
     assert store.summary()["routes"]["LLM llm_cpu"]["errors_5xx"] == 0
+
+
+def test_unknown_methods_share_one_key():
+    app = FastAPI()
+    store = rm.install(app, store=rm.RequestMetrics(slow_ms=1e9), stage_store=rm.RequestMetrics(slow_ms=1e9))
+    c = TestClient(app)
+    for m in ("FOO", "BAR", "XYZZY"):
+        c.request(m, "/nope")
+    c.get("/nope")
+    keys = set(store.summary()["routes"])
+    assert keys == {"OTHER <unmatched>", "GET <unmatched>"}
+    assert store.summary()["routes"]["OTHER <unmatched>"]["count"] == 3
+    assert rm.normalize_method("get") == "GET" and rm.normalize_method("") == "OTHER"
+
+
+def test_client_disconnect_is_not_5xx():
+    import asyncio
+
+    app = FastAPI()
+    store = rm.RequestMetrics(slow_ms=1e9)
+    rm.install(app, store=store, stage_store=rm.RequestMetrics(slow_ms=1e9))
+    timing = [m for m in app.user_middleware if m.kwargs.get("dispatch")][0].kwargs["dispatch"]
+
+    class Req:
+        scope = {}
+        method = "GET"
+
+    async def gone(_req):
+        raise asyncio.CancelledError()
+
+    try:
+        asyncio.run(timing(Req(), gone))
+    except asyncio.CancelledError:
+        pass
+    r = store.summary()["routes"]["GET <unmatched>"]
+    assert r["count"] == 1 and r["errors_5xx"] == 0

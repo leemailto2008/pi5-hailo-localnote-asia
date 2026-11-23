@@ -4,8 +4,12 @@
 - GET /api/metrics 回傳各路由的次數、p50／p95／p99／最大值 (毫秒)。
 - 超過 SLOW_MS 的請求寫一行 JSON 到 log (logger "request_metrics")，journalctl 撈出來就能統計。
 - 每個請求只多一次 time.perf_counter() 與一次 deque.append，不做推論，錄音中照常記 (CLAUDE.md 重點一)。
+- SSE／StreamingResponse 路由記到的是「送出回應標頭」的時間，不是整段串流的時間。
+- 統計 key 不能讓客戶端無限增加：標準以外的 HTTP method 記成 OTHER、沒比對到的路由記成 <unmatched>；
+  客戶端中途斷線 (CancelledError) 記成 499，不算 5xx。
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -18,6 +22,15 @@ KEEP = 500          # 每條路由保留最近幾筆
 SLOW_MS = 2000.0    # 超過這個毫秒數寫一行 JSON log
 
 _log = logging.getLogger("request_metrics")
+
+_STD_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
+STATUS_CLIENT_GONE = 499
+
+
+def normalize_method(method: str) -> str:
+    """標準 method 原樣；其他 (客戶端可以亂送) 一律 OTHER，避免統計表被撐大。"""
+    m = (method or "").upper()
+    return m if m in _STD_METHODS else "OTHER"
 
 
 def percentile(values: List[float], q: float) -> Optional[float]:
@@ -98,8 +111,12 @@ def install(app: Any, store: Optional[RequestMetrics] = None, clock: Callable[[]
             response = await call_next(request)
             status = response.status_code
             return response
+        except asyncio.CancelledError:
+            status = STATUS_CLIENT_GONE
+            raise
         finally:
-            store.record(route_template(request.scope), request.method, status, (clock() - t0) * 1000.0)
+            store.record(route_template(request.scope), normalize_method(request.method), status,
+                         (clock() - t0) * 1000.0)
 
     @app.get("/api/metrics", tags=["System"])
     def get_request_metrics() -> Dict[str, Any]:
