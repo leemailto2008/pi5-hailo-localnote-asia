@@ -614,7 +614,7 @@ for d in _possible_agent_dirs:
     if os.path.exists(d) and d not in sys.path:
         sys.path.append(d)
 
-from voice_memory import get_in_memory_cache_dir, evict_audio_ring_buffer, get_cache_stats
+from voice_memory import get_in_memory_cache_dir, get_cache_stats
 
 AUDIO_CACHE_DIR = get_in_memory_cache_dir()
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
@@ -2325,8 +2325,6 @@ def post_demo_net_switch(req: DemoNetSwitchRequest) -> Dict[str, Any]:
 async def ws_telemetry_loop():
     """Periodic telemetry broadcaster replacing high-frequency HTTP polling."""
     from ws_manager import ws_manager
-    from meeting_minutes import minutes_manager
-    qr_path = os.path.join(STATIC_DIR, "wifi.png")
 
     while True:
         try:
