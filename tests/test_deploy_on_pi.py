@@ -35,7 +35,13 @@ case "$name" in
     path=${url#http://127.0.0.1}
     case "$path" in
       /health)
-        case "$(cat "$STUB_DIR/health")" in
+        h=$(cat "$STUB_DIR/health")
+        case "$h" in
+          after:*)   # 前 N 次連不上、之後 OK（W-gate-mut：健康檢查重試次數）
+            n=$(( $(cat "$STUB_DIR/health_count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/health_count"
+            [ "$n" -gt "${h#after:}" ] && { echo '{"status":"ok"}'; exit 0; }; exit 7 ;;
+        esac
+        case "$h" in
           ok) echo '{"status":"ok"}'; exit 0 ;;
           500) echo 'Internal Server Error'; [ "$fail" = 1 ] && exit 22; exit 0 ;;
           *) exit 7 ;;
@@ -181,3 +187,56 @@ def test_human_job_exactly_15_minutes_old_does_not_block(env):
     _api(env, "/api/status", {"state": "done", "job": f"m_{int(time.time()) - 900}"})
     r = _deploy(env)
     assert r.returncode == 0 and _restarted(env), r.stdout
+
+
+# ------------------------------------------------------------------ W-gate-mut（2026-11-24 localnote@mac）
+# S19／W-gate-mut 的突變測試存活清單裡、不是等價突變的 8 個：每個一個測試。等價的 8 個見 mac_reports/W-gate-mut.md。
+@pytest.mark.parametrize("fails,ok", [(59, True), (60, False)])
+def test_health_check_tries_exactly_60_times(env, fails, ok):
+    """健康檢查最多試 60 次（sleep 是 stub，不會真的等 60 s）：第 60 次才起來還算成功，60 次都不行就回滾。"""
+    _api(env, "/api/status", {"state": "idle"})
+    (env["stub"] / "health").write_text(f"after:{fails}", encoding="utf-8")
+    r = _deploy(env)
+    assert (r.returncode == 0) is ok, r.stdout
+    assert int((env["stub"] / "health_count").read_text(encoding="utf-8")) == min(fails + 1, 60)
+
+
+@pytest.mark.parametrize("error", ["ImportError: cannot import name 'x'", "ModuleNotFoundError: No module named 'y'",
+                                   "SyntaxError: invalid syntax"])
+def test_startup_errors_in_journal_roll_back(env, error):
+    """/health 回 OK，但啟動日誌有這幾種錯誤（服務其實半壞）：也要回滾。原本只測了 Traceback。"""
+    _api(env, "/api/status", {"state": "idle"})
+    (env["stub"] / "journal.txt").write_text(f"{error}\n", encoding="utf-8")
+    r = _deploy(env)
+    assert r.returncode == 1 and "回滾" in r.stdout, r.stdout
+
+
+def test_rollback_restores_static_and_hailo_whisper(env):
+    _api(env, "/api/status", {"state": "idle"})
+    (env["dst"] / "static" / "a.css").write_text("old", encoding="utf-8")
+    (env["dst"] / "hailo_whisper" / "eng.py").write_text("Y = 1\n", encoding="utf-8")
+    (env["stub"] / "health").write_text("500", encoding="utf-8")
+    r = _deploy(env)
+    assert r.returncode == 1, r.stdout
+    assert (env["dst"] / "static" / "a.css").read_text(encoding="utf-8") == "old"
+    assert (env["dst"] / "hailo_whisper" / "eng.py").read_text(encoding="utf-8") == "Y = 1\n"
+
+
+def test_e2e_job_list_needs_exact_match(env):
+    """e2e 名單要整行相同才算 e2e 自己開的工作：名單裡只有「同一串數字再多一位」的 job 時，這場仍是真人在用。"""
+    job = f"m_{int(time.time()) - 60}"
+    _api(env, "/api/status", {"state": "done", "job": job})
+    (env["tmp"] / "e2e_jobs.txt").write_text(job + "7\n", encoding="utf-8")
+    r = _deploy(env)
+    assert r.returncode == 75 and not _restarted(env), r.stdout
+
+
+def test_waits_before_reading_journal(env):
+    """/health 起來後先等 5 s 再看啟動日誌（晚一點才印出的 Traceback 也要看到）。"""
+    _api(env, "/api/status", {"state": "idle"})
+    assert _deploy(env).returncode == 0
+    log = (env["stub"] / "calls.log").read_text(encoding="utf-8").splitlines()
+    i_sleep = next(i for i, l in enumerate(log) if l == "sleep [5]")
+    i_journal = next(i for i, l in enumerate(log) if l.startswith("journalctl"))
+    i_health = max(i for i, l in enumerate(log) if l.startswith("curl") and "/health" in l)
+    assert i_health < i_sleep < i_journal
