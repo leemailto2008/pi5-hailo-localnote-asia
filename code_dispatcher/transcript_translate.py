@@ -442,12 +442,31 @@ def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
         and numbers_ok(prepare_source(src, target), translation)
 
 
+def _in_number(s: str, i: int) -> bool:
+    """s[i] 夾在數字中間 (千分位「12,345」、小數「3.75」、連續數字)：切在 i 之前或把 s[i] 當切點都會拆開數字。"""
+    if i <= 0 or i >= len(s):
+        return False
+    a, b = s[i - 1], s[i]
+    if b in ",. " and i + 1 < len(s):
+        return a.isdigit() and s[i + 1].isdigit()
+    return (a.isdigit() or a in ",.") and b.isdigit() and (a.isdigit() or (i >= 2 and s[i - 2].isdigit()))
+
+
 def _split_long(sentence: str, limit: int) -> List[str]:
+    """太長的句子切成 ≤ limit 字的翻譯單位：在後半段最後一個「，,、 」後切，沒有就硬切。
+    不切在數字中間 (S13：「1500萬」硬切成「1」＋「500萬」兩個單位各自通過數值比對，組回去金額錯了)：
+    夾在數字中間的「,」「 」不當切點，硬切落在數字裡就退到那串數字之前 (整串都是數字才照原樣硬切)。"""
     out = []
     while len(sentence) > limit:
-        window = sentence[:limit]
-        cut = max(window.rfind(c) for c in "，,、 ")
-        cut = cut + 1 if cut >= limit // 2 else limit
+        cut = max((i for i in range(limit) if sentence[i] in "，,、 " and not _in_number(sentence, i)), default=-1)
+        if cut >= limit // 2:
+            cut += 1
+        else:
+            cut = limit
+            while cut > 0 and _in_number(sentence, cut):
+                cut -= 1
+            if cut == 0:
+                cut = limit
         out.append(sentence[:cut].strip())
         sentence = sentence[cut:].strip()
     if sentence:
