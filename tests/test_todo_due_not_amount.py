@@ -38,6 +38,7 @@ def test_real_dates_still_found(text, due):
     assert m and m.group(1).replace(" ", "") == due
 
 
-@pytest.mark.parametrize("text", ["追加2.5萬元", "預算1.5億", "3.5噸", "3-5人", "12.5%", "版本2.15.3", "13.5", "1.32"])
+@pytest.mark.parametrize("text", ["追加2.5萬元", "預算1.5億", "3.5噸", "3-5人", "12.5%", "版本2.15.3", "13.5", "1.32",
+                                  "第3.5版", "改成3.5版", "第2/3季"])   # 11-24 localnote：版本號、「第N/M」不是日期
 def test_numbers_not_dates(text):
     assert su._TIME_RE.search(text) is None, su._TIME_RE.search(text)
