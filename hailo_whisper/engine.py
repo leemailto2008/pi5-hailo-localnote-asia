@@ -888,13 +888,16 @@ class HailoWhisperEngine(WhisperEngineInterface):
                 with wave.open(audio_source, "rb") as wf:
                     framerate = wf.getframerate()
                     n_channels = wf.getnchannels()
-                    frames = wf.readframes(wf.getnframes())
-                    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-                    if n_channels > 1:
-                        audio = audio[::n_channels]
-                    return np.clip(audio, -1.0, 0.999999)
-            except Exception:
-                pass
+                    # 只有 16 kHz／16-bit 能直接讀；其他取樣率或位元深度交給下面的 ffmpeg 重新取樣
+                    # (2026-11-23 修正：原本不看取樣率，8 kHz WAV 被當 16 kHz 送進模型)
+                    if framerate == 16000 and wf.getsampwidth() == 2:
+                        frames = wf.readframes(wf.getnframes())
+                        audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                        if n_channels > 1:
+                            audio = audio[::n_channels]
+                        return np.clip(audio, -1.0, 0.999999)
+            except Exception as wav_err:
+                logger.debug(f"[HailoWhisper] not a plain WAV, using ffmpeg: {wav_err}")
 
             # ffmpeg fallback
             try:
@@ -988,9 +991,12 @@ class HailoWhisperEngine(WhisperEngineInterface):
 
             # Clean Unicode replacement character (\ufffd) and repeated pause noise artifacts
             final_text = final_text.replace("\ufffd", "").replace("\uFFFD", "")
+            # 數字範圍「3 - 5」先收成「3-5」，不被下一行當成停頓雜訊改成「3，5」(2026-11-23 修正：範圍變兩個數)
+            final_text = re.sub(r"(?<=\d)\s*-\s*(?=\d)", "-", final_text)
             final_text = re.sub(r"([,\-\s]{2,})+", "，", final_text)
             final_text = re.sub(r"(，\s*){2,}", "，", final_text)
-            final_text = re.sub(r"\b(\w)\1{3,}\b", r"\1", final_text)
+            # 重複字幻覺只縮文字、不縮數字 (2026-11-23 修正：「分機 1111」被縮成「分機 1」)
+            final_text = re.sub(r"\b([^\W\d])\1{3,}\b", r"\1", final_text)
 
             # Clean leading/trailing punctuation artifacts (dashes, commas, dots)
             final_text = re.sub(r"^[\s\-,\.，。]+", "", final_text)
