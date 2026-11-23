@@ -90,3 +90,21 @@ def test_english_rows_with_mixed_cells_do_not_crash():
 def test_unspoken_due_and_owner_cleared():
     md = H + "| 招募方面 | 6位 | 7月1 |\n| 確認預算表 | 蔡組長 | 3/15 |\n"
     assert _rows(su.ground_todo_table(md, ZH_TR)) == ["| 確認預算表 | - | - |"]                 # 標籤列拿掉；蔡組長、3/15 沒講過
+
+
+# ------------------------------------------------------------------ _todo_parts：「待辦事項是…」（e2e 測資的結尾總結句）
+def test_todo_mark_with_owner_lead():
+    rows = su.extract_todos(["待辦事項是負責人是許經理，已經加裝八支警示燈，並在十二月二十六日前完成全員複訓。",
+                             "待辦事項是負責人是劉課長，希望在五月二十六日前完成報到。"])
+    cells = [[c.strip() for c in r.strip("|").split("|")] for r in rows]
+    assert [(c[1], c[2]) for c in cells] == [("許經理", "十二月二十六日"), ("劉課長", "五月二十六日")]
+    assert not any(c[0].startswith(("人是", "是", "負責")) for c in cells), rows        # 「負責人是」整段拿掉
+
+
+def test_todo_mark_with_please_and_weekday():
+    assert su.extract_todos(["待辦事項是請李協理跟對方確認，週四回報。"]) == ["| 跟對方確認 | 李協理 | 週四 |"]
+
+
+def test_recipient_is_owner_by_e2e_definition():
+    """「請各部門…把名單交給黃專員」：e2e 測資的 facts 把黃專員記成「T9訓練-負責人」，負責人取黃專員是刻意的。"""
+    assert su.extract_todos(["請各部門在週四前把名單交給黃專員。"])[0].split("|")[2].strip() == "黃專員"
