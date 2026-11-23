@@ -390,7 +390,8 @@ async def achat_complete(
     """hailo_retries：Hailo 失敗時先等 3 s 重試幾次再換下一個後端 (hailo-ollama 偶發 500 後通常重載即恢復)。"""
     last_err: Optional[Exception] = None
     messages = build_messages(prompt, system)
-    for backend in backends_in_order():
+    # 健康檢查是同步的 requests.get (最長 1.5 s)：放到執行緒，不卡住 event loop (S17)
+    for backend in await asyncio.to_thread(backends_in_order):
         if backend.is_hailo:
             await asyncio.to_thread(_free_npu_for_llm)
         payload = backend.build_chat_payload(messages, stream=False, temperature=temperature, num_predict=num_predict, hailo_keep_alive=hailo_keep_alive)
@@ -429,7 +430,8 @@ async def aiter_chat_stream(
     cpu_first：CPU Ollama 優先 (cpu_first_backends)；呼叫端要在錄音開始時中止串流 (關閉串流 Ollama 就停止生成)。"""
     last_err: Optional[Exception] = None
     messages = build_messages(prompt, system)
-    order = [HAILO_BACKEND] if hailo_only else (cpu_first_backends() if cpu_first else backends_in_order())
+    # 健康檢查是同步的 requests.get (最長 1.5 s，快取 20 s 過期就重探)：放到執行緒，不卡住 event loop (S17)
+    order = [HAILO_BACKEND] if hailo_only else await asyncio.to_thread(cpu_first_backends if cpu_first else backends_in_order)
     for backend in order:
         attempts = 1 + (hailo_retries if backend.is_hailo else 0)
         for attempt in range(attempts):
