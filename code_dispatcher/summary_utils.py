@@ -831,6 +831,10 @@ def live_join_sep(prev_chunk: str, cur_chunk: str) -> str:
     is_eng_curr = any(c.isascii() and c.isalpha() for c in cur_chunk)
     if is_eng_prev and is_eng_curr:
         return " " if prev_chunk.endswith((".", "!", "?", "…", ";", ":", ",")) else ", "
+    # 前段已經以逗號／頓號／分號／冒號結尾：不再補「，」(2026-11-23：「好的,，」「第一點：，」「3,，500 萬」；
+    # 中文「，，」tidy_live_transcript 會合併，半形與「：，」不會，留在紀要用的全文裡)
+    if prev_chunk.endswith(("，", "、", "；", "：", ",", ";", ":")):
+        return ""
     return " " if prev_chunk.endswith(("!", "?", ".", "…")) else "，"
 
 
