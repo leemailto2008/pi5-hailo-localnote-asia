@@ -251,6 +251,17 @@ def extract_token(chunk: Dict[str, Any]) -> str:
     return chunk.get("response", "") or ""
 
 
+def _check_chunk(chunk: Any, backend: LLMBackend) -> Dict[str, Any]:
+    """回應／串流的一筆 JSON 必須是物件；Ollama 生成失敗時 (HTTP 200 已送出) 會在串流裡送 {"error": "..."}。
+    2026-11-23 修正：原本 error 物件當成沒有字的 chunk (錯誤被吞掉、回空字串)，非物件 (null、字串、陣列) 在 extract_token
+    拋 AttributeError (不在退避的 except 清單裡)。非物件 → ValueError、error → LLMError，交給原本的退避／中斷邏輯。"""
+    if not isinstance(chunk, dict):
+        raise ValueError(f"{backend.label} unexpected response chunk: {str(chunk)[:100]}")
+    if chunk.get("error"):
+        raise LLMError(f"{backend.label} error: {str(chunk['error'])[:200]}")
+    return chunk
+
+
 def _describe(e: Optional[BaseException]) -> str:
     """例外的類型＋訊息。httpx.ReadTimeout 等例外的 str() 是空字串，只印訊息會看到空白（11-11 日誌）。"""
     if e is None:
@@ -281,7 +292,7 @@ def chat_complete(
                 resp = requests.post(backend.chat_url, json=payload, timeout=timeout)
             if resp.status_code != 200:
                 raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
-            text = extract_token(resp.json()).strip()
+            text = extract_token(_check_chunk(resp.json(), backend)).strip()
             return text, backend
         except (requests.RequestException, ValueError, LLMError) as e:
             last_err = e
@@ -316,7 +327,7 @@ def iter_chat_stream(
                 for raw in resp.iter_lines():
                     if not raw:
                         continue
-                    chunk = json.loads(raw.decode("utf-8"))
+                    chunk = _check_chunk(json.loads(raw.decode("utf-8")), backend)
                     tok = extract_token(chunk)
                     done = bool(chunk.get("done", False))
                     if tok:
@@ -436,7 +447,7 @@ async def aiter_chat_stream(
                             line = line.strip()
                             if not line:
                                 continue
-                            chunk = json.loads(line)
+                            chunk = _check_chunk(json.loads(line), backend)
                             tok = extract_token(chunk)
                             done = bool(chunk.get("done", False))
                             if tok:
