@@ -21,6 +21,10 @@
   翻譯單位不切數字、保底迴圈守 should_stop、日文含漢字不當中文）；S8 部署閘門與 S14 潤稿預填停止進 verify/mac-held。
   36 個 mac commit 對帳：main 28、verify 7、不收 1（bd23da2）。本機回歸工具 .cc_scratch/ltr/replay_diff.py（CLAUDE.md 重點十）。
   自己的候選 verify/num-guard：修同音字不能改中文數字的數值（MacBERT 快修每場都走這條），要 Pi 上 GS3 實錄量過才收。
+  23:00 後：自己審 async 路徑修 get_bt_status／TTS 卡 event loop（8fe11dc）；S16–S19：錄音剛開始不丟高精度稿、錄音中不載 MacBERT、翻譯取消關 Hailo 串流、
+  LLM 健康檢查不卡 loop（verify）；1,500 million、萬億 Decimal、紀要重複條目、期限不把金額／版本號當日期、「3/15」不拆（main）；
+  bac9cfd 我推測會讓 MacBERT 快修字數 +1 整份丟掉 → Mac 窮舉／e2e 模擬證實（main 本身也偶發）→ 連同 973e6a7（MacBERT 路徑逐字對齊）進 verify，
+  Pi 上 quickfix_ab.py 用真 MacBERT A/B。.228 回來的完整流程：after_recover.sh → verify_mac_held.sh（8 關，失敗即停）。
 - 待 Andrew 決定：翻譯時錄音中先整理紀要（預設勾）、外語即時翻譯上限、.229 版本、地名英文譯名。同事 Issue 回報：.229 連不到，未拉回（.228 只有自測）。
 
 - W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
