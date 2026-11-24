@@ -141,3 +141,28 @@ def test_client_disconnect_is_not_5xx():
         pass
     r = store.summary()["routes"]["GET <unmatched>"]
     assert r["count"] == 1 and r["errors_5xx"] == 0
+
+
+def test_cancelled_llm_call_is_not_a_failure(monkeypatch):
+    """11-24 .228：錄音中預先整理遇到 should_stop 會 task.cancel()，CancelledError 不該記成 LLM 失敗。"""
+    import asyncio
+
+    import llm_backend as lb
+    store = rm.RequestMetrics(slow_ms=float("inf"))
+    monkeypatch.setattr(rm, "stages", store)
+
+    async def call():
+        async with lb._hailo_activity(True, "hailo"):
+            await asyncio.sleep(10)
+
+    async def main():
+        t = asyncio.ensure_future(call())
+        await asyncio.sleep(0.05)
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+    asyncio.run(main())
+    r = store.summary()["routes"]["LLM llm_hailo"]
+    assert r["count"] == 1 and r["errors_5xx"] == 0

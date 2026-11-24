@@ -101,7 +101,9 @@ class _hailo_activity:
                 _hailo_inflight -= 1
                 _hailo_last_activity = time.monotonic()
         if self.backend_name:
-            failed = bool(exc and exc[0] is not None and not issubclass(exc[0], GeneratorExit))
+            # 呼叫端提早關串流 (GeneratorExit) 或取消 (CancelledError：錄音中預先整理遇到 should_stop) 不算失敗
+            # (11-24 .228 回歸：48 次裡 1 次「失敗」其實是預先整理被取消)
+            failed = bool(exc and exc[0] is not None and not issubclass(exc[0], (GeneratorExit, asyncio.CancelledError)))
             request_metrics.stages.record(f"llm_{self.backend_name}", "LLM", 500 if failed else 200,
                                           (time.perf_counter() - self._t0) * 1000.0)
 
