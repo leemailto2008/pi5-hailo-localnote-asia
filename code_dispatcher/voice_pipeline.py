@@ -1296,6 +1296,7 @@ async def record_audio_from_mic(
 
 
 _hailo_chunk_errors_seen: set = set()
+_HAILO_CHUNK_ERRORS_MAX = 64
 
 
 def _report_hailo_chunk_error(err: Exception) -> None:
@@ -1303,6 +1304,9 @@ def _report_hailo_chunk_error(err: Exception) -> None:
     key = f"{type(err).__name__}: {err}"[:200]
     if key in _hailo_chunk_errors_seen:
         _log.debug("[VoicePipeline] Hailo Whisper 轉錄失敗 (重複)：%s", key)
+        return
+    if len(_hailo_chunk_errors_seen) >= _HAILO_CHUNK_ERRORS_MAX:   # 上限（11-24 Mac N4：錯誤字串帶變動內容時集合會一直長）
+        _log.debug("[VoicePipeline] Hailo Whisper 轉錄失敗（去重表已滿）：%s", key)
         return
     _hailo_chunk_errors_seen.add(key)
     print(f"[VoicePipeline] Hailo Whisper 轉錄失敗，改用 CPU faster-whisper：{err}（同一錯誤之後不再印）")

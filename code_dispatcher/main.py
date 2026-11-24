@@ -634,11 +634,22 @@ class VoiceTTSRequest(BaseModel):
 
 _last_bt_status_cache: Dict[str, Any] = {}
 _last_bt_status_time: float = 0.0
+# 同時只有一個執行緒去跑 bluetoothctl／hcitool（11-24 Mac N4 審查：8fe11dc 之後 ws_telemetry_loop／/ws 走 to_thread、
+# 同步 API 端點走 threadpool，快取 3 s 過期時幾個執行緒會同時刷新）。拿到鎖後 _impl 會再看一次快取，剛被別人刷新就直接回快取。
+_bt_status_lock = threading.Lock()
 
 
 @app.get("/api/bt/status", tags=["Bluetooth"])
 def get_bt_status() -> Dict[str, Any]:
     """Retrieve Bluetooth controller and paired audio devices status."""
+    from voice_streaming import is_any_recording_active
+    if is_any_recording_active() and _last_bt_status_cache:   # 錄音中只回快取，不排隊等鎖
+        return _last_bt_status_cache
+    with _bt_status_lock:
+        return _get_bt_status_impl()
+
+
+def _get_bt_status_impl() -> Dict[str, Any]:
     global _last_bt_status_cache, _last_bt_status_time
     import time
     import re

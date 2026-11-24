@@ -68,3 +68,40 @@ def test_tts_endpoint_runs_off_the_event_loop(monkeypatch, tmp_path):
     worst, res = asyncio.run(run())
     assert res.get("status") == "success"
     assert worst < BLOCK_S / 2, f"event loop blocked {worst:.2f} s"
+
+
+def test_bt_status_refresh_is_serialized(monkeypatch):
+    """11-24 Mac N4：get_bt_status 從 to_thread 與 threadpool 同時被叫時，同時只有一個執行緒去跑 bluetoothctl。"""
+    import threading
+    import voice_streaming
+    monkeypatch.setattr(voice_streaming, "is_any_recording_active", lambda: False)
+    state = {"now": 0, "max": 0}
+    guard = threading.Lock()
+
+    def slow_impl():
+        with guard:
+            state["now"] += 1
+            state["max"] = max(state["max"], state["now"])
+        time.sleep(0.2)
+        with guard:
+            state["now"] -= 1
+        return {"connected": False}
+    monkeypatch.setattr(main_mod, "_get_bt_status_impl", slow_impl)
+    ts = [threading.Thread(target=main_mod.get_bt_status) for _ in range(5)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(5)
+    assert state["max"] == 1
+
+
+def test_bt_status_while_recording_returns_cache_without_lock(monkeypatch):
+    import voice_streaming
+    monkeypatch.setattr(voice_streaming, "is_any_recording_active", lambda: True)
+    monkeypatch.setattr(main_mod, "_last_bt_status_cache", {"connected": True, "cached": True})
+    monkeypatch.setattr(main_mod, "_get_bt_status_impl", lambda: (_ for _ in ()).throw(AssertionError("不該刷新")))
+    assert main_mod._bt_status_lock.acquire(timeout=1)       # 鎖被別人拿著也不等
+    try:
+        assert main_mod.get_bt_status() == {"connected": True, "cached": True}
+    finally:
+        main_mod._bt_status_lock.release()
