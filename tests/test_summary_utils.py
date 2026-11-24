@@ -258,7 +258,9 @@ def test_assemble_prefers_topic_diversity():
     chunks = ["- 教育訓練：報名22人\n- 預算：80萬", "- 教育訓練：報名28人\n- 客戶訂單：200台", "- 總結：工安加裝警示燈"]
     md = assemble_long_minutes(chunks, max_summary=4, tail_lines=1)
     summ = [l for l in md.split("## 待辦")[0].splitlines()[1:] if l]
-    assert summ == ["- 教育訓練：報名22人", "- 預算：80萬", "- 客戶訂單：200台", "- 總結：工安加裝警示燈"]
+    # 預期值也過同一個台灣用字轉換：有裝 OpenCC 的機器（Pi）把「台」轉成「臺」，沒裝的（PC／Mac／CI）不轉（11-24 Pi 上這項一直失敗）
+    want = ["- 教育訓練：報名22人", "- 預算：80萬", "- 客戶訂單：200台", "- 總結：工安加裝警示燈"]
+    assert summ == [summary_utils.to_taiwan_traditional(x) for x in want]
 
 
 def test_split_with_recap_isolates_closing_summary():
