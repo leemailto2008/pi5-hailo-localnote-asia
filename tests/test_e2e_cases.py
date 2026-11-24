@@ -80,3 +80,16 @@ def test_sigterm_exits_through_finally_blocks():
         assert exc.value.code == 128 + signal.SIGTERM
     finally:
         signal.signal(signal.SIGTERM, old)
+
+
+def test_copy_live_translation(tmp_path, monkeypatch):
+    """e2e 跑完把 RAM 磁碟的 <job>.live_tr.json 複製到報告資料夾；沒有就略過（11-24）。"""
+    import e2e
+    state = tmp_path / "state"; state.mkdir()
+    out = tmp_path / "out"; out.mkdir()
+    (state / "m_1.live_tr.json").write_text('{"segments": []}', encoding="utf-8")
+    monkeypatch.setattr(e2e, "STATE_DIR", str(state))
+    dst = e2e._copy_live_translation("m_1", str(out))
+    assert dst and (out / "m_1.live_tr.json").read_text(encoding="utf-8") == '{"segments": []}'
+    assert e2e._copy_live_translation("m_2", str(out)) is None      # 這場沒開翻譯
+    assert e2e._copy_live_translation("", str(out)) is None

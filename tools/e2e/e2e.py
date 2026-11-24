@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -241,7 +242,29 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", pla
     }
     with open(os.path.join(out_dir, f"e2e_{label}.json"), "w", encoding="utf-8") as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
+    _copy_live_translation(job, out_dir)
     return res
+
+
+# app 把即時翻譯逐段結果存在 RAM 磁碟 localnote_state/<job>.live_tr.json（只留最近幾場）：e2e 跑完順手複製到報告資料夾，
+# 之後用 .cc_scratch/ltr/residue_audit.py／replay_diff.py 重放（11-24：手動跑的 D30／en_long 沒有複製，事後才去 /dev/shm 撈）。
+# 尾端幾段可能在紀要後才背景翻完，所以這裡複製到的可能不完整；檔案裡的 live_tr_done／live_tr_segments 看得出來。
+STATE_DIR = os.environ.get("LN_E2E_STATE_DIR", "/dev/shm/localnote_state")
+
+
+def _copy_live_translation(job, out_dir):
+    if not job:
+        return None
+    src = os.path.join(STATE_DIR, f"{job}.live_tr.json")
+    if not os.path.isfile(src):
+        return None
+    dst = os.path.join(out_dir, os.path.basename(src))
+    try:
+        shutil.copy2(src, dst)
+    except OSError as e:
+        print(f"[e2e] live_tr 複製失敗（不影響結果）：{e}", file=sys.stderr)
+        return None
+    return dst
 
 
 def main():
