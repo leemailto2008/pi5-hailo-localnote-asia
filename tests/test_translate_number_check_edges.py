@@ -99,3 +99,26 @@ def test_spanish_dotted_millions_do_not_crash():
                                       ("六7", 67), ("七8", 78), ("八9", 89), ("九0", 90), ("1十", 10), ("十1", 11)])
 def test_mixed_number_each_digit_char(run, want):
     assert tt.fix_mixed_numbers(f"共{run}個") == f"共{want}個"
+
+
+@pytest.mark.parametrize("text,want", [("約.5K", [5.0]), ("1,5K", [1.0, 5.0]), ("2 Milliarden", [2e9]), ("3 milliarden Euro", [3e9])])
+def test_more_number_boundaries(text, want):
+    assert sorted(NV(text)) == want
+
+
+@pytest.mark.parametrize("text,want", [("提高到百分之", "提高到百分之"), ("成長百分之30", "成長百分之30"),
+                                       ("三個月成長百分之30", "3個月成長百分之30"), ("成長百分之三十", "成長30%"),
+                                       ("三分之一", "3分之一"), ("一百分", "100分")])
+def test_percent_word_hundred_is_not_100(text, want):
+    # N5：「百分之30」原本換成「100分之30」
+    assert tt.cn_numerals_to_digits(text) == want
+
+
+def test_fix_numerals_does_not_show_100_fen_zhi():
+    # 原文「3 months … 30%」，模型寫「三個月成長百分之30」：數字修正後是「3個月成長百分之30」，不是「3個月成長100分之30」
+    assert tt.fix_numerals("growth of 30% in 3 months", "三個月成長百分之30", "zh") == "3個月成長百分之30"
+
+
+@pytest.mark.parametrize("s,i,want", [("1X2", 1, False), ("1X5", 2, False), ("1,2", 1, True), ("1.2", 1, True)])
+def test_in_number_more(s, i, want):
+    assert tt._in_number(s, i) is want
