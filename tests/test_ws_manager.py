@@ -148,3 +148,29 @@ def test_unsubscribed_topic_not_sent():
 
     ws = _run(scenario())
     assert len(ws.sent) == 1
+
+
+def test_close_tasks_are_kept_until_done():
+    """N8：_drop 建的關閉 task 要留住參照（event loop 只有弱參照，可能還沒關完就被回收），關完自動移除。"""
+    import asyncio
+    from ws_manager import ConnectionManager
+
+    class _WS:
+        closed = False
+
+        async def accept(self):
+            pass
+
+        async def close(self, code=1000):
+            await asyncio.sleep(0.05)
+            self.closed = True
+
+    async def go():
+        m = ConnectionManager()
+        ws = _WS()
+        await m.connect(ws)
+        await m._drop([ws], "test")
+        assert len(m._closing) == 1                      # 還在關：參照留著
+        await asyncio.sleep(0.2)
+        assert ws.closed and not m._closing              # 關完：自動移除
+    asyncio.run(go())

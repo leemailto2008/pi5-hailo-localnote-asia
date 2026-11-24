@@ -30,6 +30,8 @@ class ConnectionManager:
         self.subscriptions: Dict[WebSocket, Set[str]] = {}
         self._send_locks: Dict[WebSocket, asyncio.Lock] = {}
         self._lock = asyncio.Lock()
+        # 關閉逾時連線的背景 task：event loop 對 task 只有弱參照，不留住的話可能還沒關完就被回收 (N8，asyncio 文件的警告)
+        self._closing: Set["asyncio.Task[None]"] = set()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -79,7 +81,9 @@ class ConnectionManager:
         if not connections:
             return
         for ws in connections:
-            asyncio.create_task(self._close_quietly(ws))
+            task = asyncio.create_task(self._close_quietly(ws))
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
         logger.warning(f"[WS] Dropped {len(connections)} unresponsive client(s) ({reason}). Active clients: {len(self.active_connections)}")
 
     @staticmethod
