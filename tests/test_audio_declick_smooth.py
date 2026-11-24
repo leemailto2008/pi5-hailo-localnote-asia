@@ -52,8 +52,13 @@ class _Enc:
 @pytest.fixture
 def procs(monkeypatch):
     state = {"dec_rc": 0, "enc_rc": 0, "pcm": b"", "made": []}
+    real_popen = ad.subprocess.Popen
 
     def popen(argv, **kw):
+        # ad.subprocess 就是全域 subprocess：只假 ffmpeg，其他指令交回真的 Popen
+        # （11-24 Windows 偶發：platform._syscmd_ver 用 check_output 跑 ver，拿到 _Dec → TypeError）
+        if not (isinstance(argv, (list, tuple)) and "ffmpeg" in argv):
+            return real_popen(argv, **kw)
         if "-i" in argv and argv[argv.index("-i") + 1] == "-":
             p = _Enc(argv, rc=state["enc_rc"])
         else:
