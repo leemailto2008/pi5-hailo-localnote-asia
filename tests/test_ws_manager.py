@@ -174,3 +174,41 @@ def test_close_tasks_are_kept_until_done():
         await asyncio.sleep(0.2)
         assert ws.closed and not m._closing              # 關完：自動移除
     asyncio.run(go())
+
+
+def test_payload_shape_subscribe_toggle_defaults_and_close_code():
+    """N11：網頁靠 {"type", "data"} 這兩個鍵分派訊息；預設訂閱的主題；取消訂閱；逾時關閉用 1011。"""
+    import asyncio
+    import json
+    from ws_manager import ConnectionManager
+
+    class _WS:
+        def __init__(self):
+            self.sent, self.code = [], None
+
+        async def accept(self):
+            pass
+
+        async def send_text(self, t):
+            self.sent.append(json.loads(t))
+
+        async def close(self, code=1000):
+            self.code = code
+
+    async def go():
+        m = ConnectionManager()
+        ws = _WS()
+        await m.connect(ws)
+        assert m.subscriptions[ws] == {"*", "system", "status", "bt", "vu", "audio_ready", "transcript_stream",
+                                       "transcript_ready", "summary_stream"}
+        await m.broadcast("status", {"a": 1})
+        await m.send_personal(ws, "bt", {"b": 2})
+        assert ws.sent == [{"type": "status", "data": {"a": 1}}, {"type": "bt", "data": {"b": 2}}]
+        m.subscribe(ws, "bt_hub")
+        assert "bt_hub" in m.subscriptions[ws]
+        m.subscribe(ws, "bt_hub", enable=False)
+        assert "bt_hub" not in m.subscriptions[ws]
+        await m._drop([ws], "test")
+        await asyncio.sleep(0.05)
+        assert ws.code == 1011
+    asyncio.run(go())

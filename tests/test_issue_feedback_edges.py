@@ -43,3 +43,38 @@ def test_save_gives_up_after_many_collisions(monkeypatch, tmp_path):
     else:
         raise AssertionError("一直撞同一個 id 時要失敗，不能蓋掉")
     assert json.load(open(os.path.join(tmp_path, GOOD, "feedback.json"), encoding="utf-8"))["description"] == "x"
+
+
+def test_valid_id_one_char_host():
+    assert fb.valid_id("20261124_101010_a_abcd")                  # 主機名稱 1 字也合法 (new_id 會產生)
+
+
+def test_collision_retries_exactly_five_times(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "FEEDBACK_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(fb, "new_id", lambda now=None: calls.append(1) or GOOD)
+    os.makedirs(os.path.join(tmp_path, GOOD))
+    try:
+        fb.save({"description": "x"}, "")
+    except FileExistsError:
+        pass
+    assert len(calls) == 5
+
+
+def test_audio_attachment_text_and_clamp(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "FEEDBACK_DIR", str(tmp_path))
+    made = []
+
+    def fake_cut(src, dst, minutes):
+        made.append(os.path.basename(dst))
+        open(dst, "wb").close()
+        return None
+    monkeypatch.setattr(fb, "cut_audio", fake_cut)
+    src = str(tmp_path / "m_1.ogg")
+    r1 = fb.load(fb.save({"description": "a"}, "", audio_src=src))                  # 預設 5 分鐘
+    r2 = fb.load(fb.save({"description": "b"}, "", audio_src=src, audio_minutes=0))  # 下限 1
+    r3 = fb.load(fb.save({"description": "c"}, "", audio_src=src, audio_minutes=99)) # 上限 AUDIO_MAX_MIN
+    assert made == ["audio.ogg"] * 3
+    assert r1["attachments"]["audio"] == "audio.ogg（m_1 最後 5 分鐘）"
+    assert r2["attachments"]["audio"] == "audio.ogg（m_1 最後 1 分鐘）"
+    assert r3["attachments"]["audio"] == f"audio.ogg（m_1 最後 {fb.AUDIO_MAX_MIN} 分鐘）"
