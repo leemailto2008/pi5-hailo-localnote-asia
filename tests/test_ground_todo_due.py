@@ -42,3 +42,16 @@ def test_due_without_date_after_stripping_qian_is_not_grounded():
     md = "## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 韌體測試 | 許經理 | 週前 |\n"
     out = su.ground_todo_table(md, "許經理說韌體測試要在這週五前完成。")
     assert "週前" not in out
+
+
+@pytest.mark.parametrize("cell,tr", [("下週前", "請大家在下週之前交"), ("年底前", "年底之前要完成"), ("本週前", "本週之前回覆"),
+                                     ("明天前", "明天之前給我"), ("下個月前", "下個月之前上線"), ("週末前", "週末之前寄出")])
+def test_relative_due_before_is_grounded(cell, tr):
+    # N4 審查 ed1e372：「去掉前後要還有日期」只認數字／月日號／週幾，相對期限被當成沒講過
+    assert su._grounded(cell, su._ground_norm(tr), due=True)
+
+
+def test_bare_week_still_not_grounded():
+    assert not su._grounded("週前", su._ground_norm("週五之前交"), due=True)
+    # 「今天」會議裡到處都有 (「今天的週會」)：「今天前」不靠去掉「前」來對
+    assert not su._grounded("今天前", su._ground_norm("今天的週會有三個議題"), due=True)
