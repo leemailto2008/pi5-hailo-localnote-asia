@@ -127,10 +127,13 @@ _SCALE_WORDS = "|".join(sorted(_EN_SCALE, key=len, reverse=True))
 # 千分位後面可以接小數「1,234.5」(S18 fuzz：原本讀成 1234 與 5 兩個數)
 _NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?:\.\d+)?(?!\d)|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿|(?:" + _SCALE_WORDS + r")\b)?(?!\d)",
                      re.I)
-_CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
+# 千分位「1,500萬」要整個吃進來、不從數字中間開始 (N3：原本「12,000萬」→「12,0」、「1,500萬元」→「1,5,000,000元」，紀要常這樣寫)；
+# 單位後面緊接數字、或前面緊接數字／單位的不換 (「1.5萬3千」原本變成「1,500.03」：整串看不懂就原樣保留)
+_CN_SCALED_RE = re.compile(r"(?<![\d.,十百千萬万億亿])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)(?!\d)")
 # 「5萬3135円」「1萬5000元」= 53,135／15,000：萬後面直接接 1–4 位數字 (11-22 full8 日文翻英「5萬3135円」被換成「50,0003135」、數值對不上保留原文)
-# 後面接的不能是單位 (N2：「2萬3萬」原本變成 200,030,000；「2萬5千」由 _CN_COMPOSITE_RE 先處理)
-_CN_WAN_COMPOSITE_RE = re.compile(r"(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,十百千萬万億亿])")
+# N2：混寫的一串先由 _CN_COMPOSITE_RE 處理 (「2萬5千」「2萬3萬」)，這裡只剩「3萬52」這種 (_composite_value 回 _DEFER)；
+# 前面不能緊接數字、小數點、千分位、單位 (「1.5萬52」不從 5 開始換)
+_CN_WAN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿])(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,])")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
@@ -231,57 +234,66 @@ def fix_mixed_numbers(text: str) -> str:
 # N2（11-24）：原本「萬後接數字」把「2萬5千」讀成 2萬5＝20,005 再乘千 → 送模型的原文變成「20,005,000」(錯的數字，而且數值檢查照樣通過)；
 # 「3萬5」(三萬五＝35,000) 也被讀成 30,005。看不懂的 (係數不是 1 位數、單位順序不對、尾數位數對不上) 原樣保留。
 _UNIT_VAL = {"十": 10, "百": 100, "千": 1000, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "亿": 10 ** 8}
-_CN_COMPOSITE_RE = re.compile(r"(?<![\d.,])\d+\s*[十百千萬万億亿](?:零?\d+\s*[十百千萬万億亿]|[萬万億亿]){0,12}(?:零?\d+)?(?![\d.,])")
-_COMPOSITE_TOKEN_RE = re.compile(r"零?(\d*)\s*([十百千萬万億亿])")
+_CN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿])\d+\s*[十百千萬万億亿](?:零?\d+\s*[十百千萬万億亿]|[萬万億亿]){0,12}(?:零?\d+)?(?![\d.,十百千萬万億亿])")
+_COMPOSITE_TOKEN_RE = re.compile(r"(零?)(\d*)\s*([十百千萬万億亿])")
 
 
-def _composite_value(run: str) -> Optional[int]:
-    """「2萬5千3百」→ 25300、「3萬5」→ 35000、「1千200」→ 1200、「3萬零5百」→ 30500、「5百萬」→ 5000000、「1億2千萬」→ 120000000；
-    看不懂 → None。
-    只有一個萬／千／億、後面沒有尾數 (「15萬」「2千」) 也回 None，交給 _CN_SCALED_RE (可帶小數)；單獨的「8十」「3百」要換。"""
+def _fits(digits: str, zero: bool, below: int) -> bool:
+    """接在單位 below 的位數裡：比 below 小，而且位數剛好 (千後面 3 位、百後面 2 位) 或前面有「零」(「3萬零5」)。"""
+    return int(digits) < below and (zero or len(digits) == len(str(below)) - 1)
+
+
+_DEFER: Any = object()   # _composite_value：交給原本的 _CN_WAN_COMPOSITE_RE／_CN_SCALED_RE
+
+
+def _composite_value(run: str) -> Any:
+    """「2萬5千3百」→ 25300、「3萬5」→ 35000、「1千200」→ 1200、「3萬零5百」→ 30500、「5百萬」→ 5000000、「1億2千萬」→ 120000000、
+    「3百10萬」→ 3100000；看不懂 → None。規則：
+    - 十百千前面的係數是 1 位數，同一節裡由大到小 (「5百5百」不行)；萬億由大到小 (「2萬3萬」不行)。
+    - 萬億前面：這一節還沒有十百千時是 1–4 位數 (「1億5000萬」)；已經有時，數字要接得上最後的十百千 (「3百10萬」「3百零9萬」；「3百5萬」有歧義不換)。
+    - 「5百萬」：萬億前面沒有數字時乘上這一節。
+    - 尾數：位數剛好或前面有零就照數字加 (「5萬3135」「1千200」「3萬零5」)；只有 1 位數時是口語省略單位 (「3萬5」＝35000、「2百5」＝250)；
+      其他位數 (「3萬52」) 有歧義，回 None。
+    回 _DEFER：只有一個萬／千／億、後面沒有尾數 (「15萬」「2千」，交給 _CN_SCALED_RE)，或「N萬」後面 2–3 位數 (「3萬52」，照舊由
+    _CN_WAN_COMPOSITE_RE 照數字加)。單獨的「8十」「3百」要換。"""
     run = run.replace(" ", "")
     tokens, pos = [], 0
     for m in _COMPOSITE_TOKEN_RE.finditer(run):
         if m.start() != pos:
             return None
-        tokens.append((m.group(1), m.group(2)))
+        tokens.append((bool(m.group(1)), m.group(2), _UNIT_VAL[m.group(3)]))
         pos = m.end()
     rest = run[pos:]
-    if len(tokens) == 1 and not rest and tokens[0][1] not in "十百":
-        return None
-    total, section, last_small, last_big = 0, 0, 10 ** 5, 10 ** 13
-    for n, u in tokens:
-        unit = _UNIT_VAL[u]
-        if not n:                                # 「5百萬」「1億2千萬」：萬／億前面沒有數字，乘前面的整節
-            if unit < 10 ** 4 or not section or unit >= last_big:
+    if len(tokens) == 1 and tokens[0][2] >= 1000 and (not rest or tokens[0][2] == 10 ** 4 and re.fullmatch(r"\d{2,3}", rest)):
+        return _DEFER
+    total, section = 0, 0
+    last_small = last_big = None                 # 這一節最後的十百千；最後的萬億
+    for zero, digits, unit in tokens:
+        if unit < 10 ** 4:                       # 十百千
+            if not digits or int(digits) > 9 or (last_small is not None and unit >= last_small):
                 return None
-            total += section * unit
-            section, last_small, last_big = 0, 10 ** 5, unit
-            continue
-        v = int(n)
-        if unit < 10 ** 4:                       # 十百千：係數 1 位數、同一節裡由大到小
-            if v > 9 or unit >= last_small:
-                return None
-            section += v * unit
+            section += int(digits) * unit
             last_small = unit
-        else:                                    # 萬億：前面整節 (含這個數字) 乘上去
-            if unit >= last_big or v > 9999 or (section and v > 9):
-                return None
-            total += (section + v) * unit
-            section, last_small, last_big = 0, 10 ** 5, unit
-    if rest:
-        zero = rest.startswith("零")
-        digits = rest.lstrip("零")
-        last_unit = _UNIT_VAL[tokens[-1][1]]
-        if last_unit >= 10 ** 4 and section:
+            continue
+        if last_big is not None and unit >= last_big:
             return None
-        lower = last_small if section else last_big   # 尾數接在哪個單位後面
-        width = len(str(lower)) - 1                   # 萬後面 4 位、千後面 3 位、百後面 2 位、十後面 1 位
-        if zero or len(digits) == width:              # 「3萬零5」「5萬3135」「1千200」：照數字加
-            if int(digits) >= lower:
+        if digits:
+            if last_small is None:
+                if int(digits) > 9999:
+                    return None
+            elif not _fits(digits, zero, last_small):
                 return None
             section += int(digits)
-        elif len(digits) == 1 and lower >= 100:        # 「3萬5」「1千2」「2百5」：口語省略後面的單位 (三萬五＝35,000)
+        elif not section:                        # 「萬萬」：萬前面什麼都沒有
+            return None
+        total += section * unit
+        section, last_small, last_big = 0, None, unit
+    if rest:
+        zero, digits = rest.startswith("零"), rest.lstrip("零")
+        lower = last_small if last_small is not None else last_big   # 尾數接在哪個單位後面
+        if _fits(digits, zero, lower):            # 「3萬零5」「5萬3135」「1千200」：照數字加
+            section += int(digits)
+        elif len(digits) == 1 and lower >= 100:   # 「3萬5」「1千2」「2百5」：口語省略後面的單位 (三萬五＝35,000)
             section += int(digits) * lower // 10
         else:
             return None
@@ -294,12 +306,20 @@ def prepare_source(text: str, target: str) -> str:
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
     text = fix_mixed_numbers(text)
     if target == "en":
-        text = _CN_COMPOSITE_RE.sub(lambda m: (lambda v: m.group(0) if v is None else str(v))(_composite_value(m.group(0))), text)
-        text = _CN_WAN_COMPOSITE_RE.sub(lambda m: str(int(m.group(1)) * 10 ** 4 + int(m.group(3))), text)
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))
             return f"{int(v):,}" if v == int(v) else f"{v:,}"
-        return _CN_SCALED_RE.sub(repl, text)
+
+        def plain(t: str) -> str:
+            t = _CN_WAN_COMPOSITE_RE.sub(lambda m: str(int(m.group(1)) * 10 ** 4 + int(m.group(3))), t)
+            return _CN_SCALED_RE.sub(repl, t)
+        # 混寫的一串整個換；看不懂的整串原樣保留 (不讓後面的規則只換其中一段：「3百5萬」原本會變成「3百50,000」)
+        out, last = [], 0
+        for m in _CN_COMPOSITE_RE.finditer(text):
+            v = _composite_value(m.group(0))
+            out += [plain(text[last:m.start()]), plain(m.group(0)) if v is _DEFER else m.group(0) if v is None else str(v)]
+            last = m.end()
+        return "".join(out) + plain(text[last:])
 
     def repl_zh(m: "re.Match") -> str:
         # 用 Decimal 從原字串算，不能用 :g (只留 6 位有效數字：「12.345678 million」會變「1234.57萬」，
