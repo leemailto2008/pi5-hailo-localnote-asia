@@ -25,6 +25,12 @@
   LLM 健康檢查不卡 loop（verify）；1,500 million、萬億 Decimal、紀要重複條目、期限不把金額／版本號當日期、「3/15」不拆（main）；
   bac9cfd 我推測會讓 MacBERT 快修字數 +1 整份丟掉 → Mac 窮舉／e2e 模擬證實（main 本身也偶發）→ 連同 973e6a7（MacBERT 路徑逐字對齊）進 verify，
   Pi 上 quickfix_ab.py 用真 MacBERT A/B。.228 回來的完整流程：after_recover.sh → verify_mac_held.sh（8 關，失敗即停）。
+- 11-24（.228 Andrew 09:1x 強制 power cycle 後回來）：斷線＝Wi-Fi 斷 17 h、系統一直活著（hailort log 07:18／09:02 有寫），非熱點看門狗；journal 只在 RAM、根因查不到
+  （待 Andrew 決定：persistent journal、Wi-Fi 自救）。回歸 1d52a5b PASS → main 雙推 435bef5..1d52a5b。verify_mac_held 8 關：mac-held 18 commit 全過 → d795868 雙推；
+  第 4 關一度 FAIL＝腳本緊接上一場、NPU 被會後工作佔（單獨重跑兩版都 0.0981），腳本加 quiet() 等待。num-guard v1／v2 不收（實錄沒擋到真錯，e2e 測資擋掉
+  「式二月→十二月」「已百→一百」等對的修正）。c73d24c：metrics 取消不算 LLM 失敗、3 個環境相依測試修正（Windows platform.ver 撞假 Popen、子行程啟動慢、
+  Pi OpenCC 臺／台）。.228 c73d24c：數位 30 分 PASS（cer_num 0.018、fact 0.967）、en_long PASS（cer 0.0779）；中→英即時翻譯 276 段夾中文 2＝都是「新竹→New竹」
+  （待 Andrew 決定地名）。94e0181：保留原文的段記 kept 原因。BT30（GS3→RichChipAN、c73d24c）跑中。
 - 待 Andrew 決定：翻譯時錄音中先整理紀要（預設勾）、外語即時翻譯上限、.229 版本、地名英文譯名。同事 Issue 回報：.229 連不到，未拉回（.228 只有自測）。
 
 - W1 Issue 回報（3ea6c8e）通過：閒置回報 4 檔（audio 3 分 1.68 MB、feedback.json 12 KB、service.log 1,681 行、transcript）、zip、壞 id 404、重啟後仍在、
