@@ -662,8 +662,9 @@ def _get_bt_status_impl() -> Dict[str, Any]:
 
     now = time.time()
     # 錄音進行中或快取未過期 (3秒內)：直接回傳快取，嚴禁執行任何藍牙終端子進程干擾 SCO 語音
-    if is_any_recording_active() and _last_bt_status_cache:
-        return _last_bt_status_cache
+    # 等鎖期間開始錄音、快取又是空的也不跑（11-25 Mac N12：原本只在有快取時才擋，第一個 bluetoothctl 會照跑）
+    if is_any_recording_active():
+        return _last_bt_status_cache or _bt_recording_placeholder()
 
     if (now - _last_bt_status_time < 3.0) and _last_bt_status_cache:
         return _last_bt_status_cache

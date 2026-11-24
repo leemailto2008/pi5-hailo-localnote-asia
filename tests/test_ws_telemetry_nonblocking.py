@@ -140,3 +140,21 @@ def test_bt_status_stops_when_recording_starts_mid_refresh(monkeypatch):
     st = main_mod.get_bt_status()
     assert len(calls) == 1 and calls[0][:3] == ["bluetoothctl", "devices", "Connected"]
     assert st["state_hash"] == "recording"
+
+
+def test_bt_status_recording_starts_while_waiting_for_lock(monkeypatch):
+    """11-25 Mac N12：外層檢查時還沒錄音、等鎖期間開始錄音、快取是空的 → 拿到鎖也不能跑 bluetoothctl。"""
+    import sys
+    import types
+    import voice_streaming
+    rec = {"n": 0}
+
+    def recording():
+        rec["n"] += 1
+        return rec["n"] > 1            # 第一次（外層）還沒錄音，之後（_impl 開頭）已在錄音
+    monkeypatch.setattr(voice_streaming, "is_any_recording_active", recording)
+    monkeypatch.setattr(main_mod, "_last_bt_status_cache", {})
+    monkeypatch.setattr(main_mod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不該跑 bluetoothctl")))
+    monkeypatch.setitem(sys.modules, "bluetooth_manager",
+                        types.SimpleNamespace(get_full_bt_status=lambda: "", load_bt_config=lambda: {}))
+    assert main_mod.get_bt_status()["state_hash"] == "recording"
