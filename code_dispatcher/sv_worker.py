@@ -12,14 +12,13 @@ SenseVoiceSmall int8（sherpa-onnx，CPU）在獨立子行程常駐，一次辨�
 """
 
 import os
-import select
 import subprocess
 import sys
 import threading
 import time
 from typing import Any, Dict, Optional
 
-from stt_worker import _read_frame, _write_frame
+from stt_worker import _FrameInbox, _read_frame, _write_frame
 
 LIVE_THREADS = int(os.environ.get("PI5_LIVE_SV_THREADS", "2"))
 LIVE_CPUS = {2, 3}
@@ -74,14 +73,14 @@ def _child_main() -> None:
                   flush=True)
         return (time.perf_counter() - t0) * 1000
 
+    inbox = _FrameInbox(in_fd)   # Windows 不能 select pipe：改用常駐執行緒收訊框（見 stt_worker._FrameInbox）
     print(f"[SvWorker] ready (pid {os.getpid()})", flush=True)
     while True:
-        r, _, _ = select.select([in_fd], [], [], IDLE_EXIT_SEC)
-        if not r:
+        try:
+            cmd, payload = inbox.get(IDLE_EXIT_SEC)
+        except TimeoutError:
             print("[SvWorker] idle, exiting", flush=True)
             break
-        try:
-            cmd, payload = _read_frame(in_fd)
         except EOFError:
             break
         if cmd == "exit":

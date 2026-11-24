@@ -22,6 +22,7 @@ stt_worker.py — Hailo-10H Whisper 語音轉文字 (STT) 獨立子行程 (2026-
 
 import os
 import pickle
+import queue
 import select
 import struct
 import subprocess
@@ -43,6 +44,35 @@ def _write_frame(f, obj: Any) -> None:
     f.flush()
 
 
+# Windows 的 select() 只接受 socket，對 pipe 會 OSError（WinError 10038／10093）。主行程讀回覆、子行程等命令都會用到，
+# 兩端都要改：不能 select pipe 時，主行程用背景執行緒讀＋逾時（_read_chunk_with_timeout），子行程用常駐執行緒收訊框（_FrameInbox）。
+# POSIX（Pi）一律用 select，行為不變。PI5_STT_SELECT_PIPES=0／1 可強制指定（子行程會繼承環境變數；測試在 Mac 上用它走 Windows 路徑）。
+def _select_pipes_from_env() -> bool:
+    return {"0": False, "1": True}.get(os.environ.get("PI5_STT_SELECT_PIPES", ""), os.name != "nt")
+
+
+_SELECT_PIPES = _select_pipes_from_env()
+
+
+def _read_chunk_with_timeout(fd: int, n: int, timeout: float) -> bytes:
+    """讀最多 n bytes，timeout 秒內沒有資料就 TimeoutError。逾時後呼叫端會砍掉子行程，pipe 關閉，卡在 os.read 的執行緒就會結束。"""
+    result: Dict[str, Any] = {}
+
+    def reader() -> None:
+        try:
+            result["data"] = os.read(fd, n)
+        except OSError as e:
+            result["error"] = e
+    t = threading.Thread(target=reader, daemon=True, name="stt-pipe-read")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError("stt worker reply timeout")
+    if "error" in result:
+        raise result["error"]
+    return result["data"]
+
+
 def _read_exact(fd: int, n: int, deadline: Optional[float]) -> bytes:
     buf = bytearray()
     while len(buf) < n:
@@ -50,6 +80,12 @@ def _read_exact(fd: int, n: int, deadline: Optional[float]) -> bytes:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("stt worker reply timeout")
+            if not _SELECT_PIPES:
+                chunk = _read_chunk_with_timeout(fd, n - len(buf), remaining)
+                if not chunk:
+                    raise EOFError("stt worker closed the pipe")
+                buf += chunk
+                continue
             r, _, _ = select.select([fd], [], [], remaining)
             if not r:
                 raise TimeoutError("stt worker reply timeout")
@@ -63,6 +99,53 @@ def _read_exact(fd: int, n: int, deadline: Optional[float]) -> bytes:
 def _read_frame(fd: int, deadline: Optional[float] = None) -> Any:
     (size,) = struct.unpack(">I", _read_exact(fd, 4, deadline))
     return pickle.loads(_read_exact(fd, size, deadline))
+
+
+class _FrameInbox:
+    """子行程收命令用：get(timeout) 回傳下一個訊框；timeout 秒內沒有命令 → TimeoutError（None = 一直等）；主行程關掉 pipe → EOFError。
+    能 select pipe 的平台（POSIX）：select 等到有資料再讀，跟原本一樣。
+    不能的平台（Windows）：常駐 daemon 執行緒一直讀訊框放進 queue；EOF 或讀取錯誤也放進 queue 由 get 拋出，之後執行緒結束。"""
+
+    def __init__(self, fd: int, use_select: Optional[bool] = None) -> None:
+        self._fd = fd
+        self._select = _SELECT_PIPES if use_select is None else use_select
+        self._q: Optional[queue.Queue] = None
+        self._failed: Optional[BaseException] = None
+        if not self._select:
+            self._q = queue.Queue()
+            threading.Thread(target=self._pump, daemon=True, name="stt-child-inbox").start()
+
+    def _pump(self) -> None:
+        assert self._q is not None
+        while True:
+            try:
+                frame = _read_frame(self._fd)
+            except BaseException as e:          # EOFError、OSError、訊框損毀：交給 get 拋出
+                self._q.put(_InboxError(e))
+                return
+            self._q.put(frame)
+
+    def get(self, timeout: Optional[float]) -> Any:
+        if self._failed is not None:
+            raise self._failed
+        if self._q is None:
+            r, _, _ = select.select([self._fd], [], [], timeout)
+            if not r:
+                raise TimeoutError("no command")
+            return _read_frame(self._fd)
+        try:
+            item = self._q.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError("no command") from None
+        if isinstance(item, _InboxError):
+            self._failed = item.exc
+            raise item.exc
+        return item
+
+
+class _InboxError:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
 
 
 # --------------------------------------------------------------------------- 子行程
@@ -96,16 +179,16 @@ def _child_main() -> None:
         engine, engine_group = None, None
         print("[SttWorker] Hailo NPU released", flush=True)
 
+    inbox = _FrameInbox(in_fd)
     print(f"[SttWorker] ready (pid {os.getpid()})", flush=True)
     while True:
         timeout = IDLE_RELEASE_SEC if engine is not None and engine_group is None else None   # 共用模式不做閒置釋放
-        r, _, _ = select.select([in_fd], [], [], timeout)
-        if not r:
+        try:
+            cmd, payload = inbox.get(timeout)
+        except TimeoutError:
             if engine is not None and time.monotonic() - last_use >= IDLE_RELEASE_SEC:
                 release()
             continue
-        try:
-            cmd, payload = _read_frame(in_fd)
         except EOFError:
             break
         if cmd == "exit":
