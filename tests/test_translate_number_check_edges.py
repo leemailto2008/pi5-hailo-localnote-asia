@@ -141,3 +141,10 @@ def test_garbled_runs_stable(src):
 @pytest.mark.parametrize("src,want", [("３萬５千元", "35000元"), ("一０個", "10個"), ("營收１,５００萬", "營收15,000,000")])
 def test_fullwidth_digits_normalised(src, want):
     assert tt.prepare_source(src, "en") == want
+
+
+
+def test_private_use_chars_in_source_survive():
+    # 看不懂的混寫用私用區字元佔位：原文本身就有私用區字元時要原樣保留
+    src = "\ue000預算3百5萬\ue001，另外15萬"
+    assert tt.prepare_source(src, "en") == "\ue000預算3百5萬\ue001，另外150,000"

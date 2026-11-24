@@ -319,21 +319,24 @@ def prepare_source(text: str, target: str) -> str:
         # 混寫的一串整個換；看不懂的整串原樣保留 (不讓後面的規則只換其中一段：「3百5萬」原本會變成「3百50,000」)：
         # 看不懂的先換成一個私用區字元佔位，整句一起跑原本的規則 (_DEFER 的「15萬」「3萬52」也在整句裡換，前後文才看得到；
         # N7 fuzz：「10万 億」單獨換成「100,000」後接「 億」，number_values 再乘一次億＝1e13)，最後再換回來
-        out, kept, last = [], [], 0
+        # 佔位字元挑原文裡沒有的私用區字元 (原文本身有私用區字元時不會被換掉)
+        out, kept, last = [], {}, 0
+        free = (chr(c) for c in range(0xE000, 0xF900) if chr(c) not in text)
         for m in _CN_COMPOSITE_RE.finditer(text):
             v = _composite_value(m.group(0))
             out.append(text[last:m.start()])
             if v is _DEFER:
                 out.append(m.group(0))
             elif v is None:
-                out.append(chr(0xE000 + len(kept)))
-                kept.append(m.group(0))
+                ph = next(free)
+                kept[ph] = m.group(0)
+                out.append(ph)
             else:
                 out.append(str(v))
             last = m.end()
         out.append(text[last:])
-        return re.sub("[\ue000-\uf8ff]", lambda m: kept[ord(m.group(0)) - 0xE000] if ord(m.group(0)) - 0xE000 < len(kept)
-                      else m.group(0), plain("".join(out)))
+        joined = plain("".join(out))
+        return "".join(kept.get(ch, ch) for ch in joined) if kept else joined
 
     def repl_zh(m: "re.Match") -> str:
         # 用 Decimal 從原字串算，不能用 :g (只留 6 位有效數字：「12.345678 million」會變「1234.57萬」，
