@@ -643,10 +643,15 @@ _bt_status_lock = threading.Lock()
 def get_bt_status() -> Dict[str, Any]:
     """Retrieve Bluetooth controller and paired audio devices status."""
     from voice_streaming import is_any_recording_active
-    if is_any_recording_active() and _last_bt_status_cache:   # 錄音中只回快取，不排隊等鎖
-        return _last_bt_status_cache
+    if is_any_recording_active():   # 錄音中只回快取、不排隊等鎖；快取是空的也不刷新（11-24 Mac N6：服務剛重啟就錄音會跑 bluetoothctl）
+        return _last_bt_status_cache or _bt_recording_placeholder()
     with _bt_status_lock:
         return _get_bt_status_impl()
+
+
+def _bt_recording_placeholder() -> Dict[str, Any]:
+    """錄音中、還沒有快取時回這個：不跑任何 bluetoothctl／hcitool（CLAUDE.md 重點一 嚴格禁忌 2）。connected=None＝不知道。"""
+    return {"status_text": "錄音中，藍牙狀態暫不查詢", "connected": None, "state_hash": "recording", "trusted_devices": []}
 
 
 def _get_bt_status_impl() -> Dict[str, Any]:
@@ -686,6 +691,8 @@ def _get_bt_status_impl() -> Dict[str, Any]:
                 break
 
         # 備用檢查：若 devices Connected 未列出，查詢 bluetoothctl info 確認是否包含 Connected: yes
+        if is_any_recording_active():   # 刷新途中開始錄音：後面的 bluetoothctl 都不跑（11-24 Mac N6）
+            return _last_bt_status_cache or _bt_recording_placeholder()
         if not connected_mac:
             res_info_any = subprocess.run(["bluetoothctl", "info"], capture_output=True, text=True, timeout=3)
             if "Connected: yes" in res_info_any.stdout:
@@ -697,6 +704,8 @@ def _get_bt_status_impl() -> Dict[str, Any]:
                         connected_name = m_name.group(1).strip()
 
         # 2. 若有設備已連線，針對該設備提取電池電量與訊號強度
+        if is_any_recording_active():
+            return _last_bt_status_cache or _bt_recording_placeholder()
         if connected_mac:
             res_dev_info = subprocess.run(["bluetoothctl", "info", connected_mac], capture_output=True, text=True, timeout=3)
             if not connected_name:
@@ -741,6 +750,8 @@ def _get_bt_status_impl() -> Dict[str, Any]:
 
         # 3. 取得已信任設備清單
         trusted_devices = []
+        if is_any_recording_active():
+            return _last_bt_status_cache or _bt_recording_placeholder()
         try:
             res_trusted = subprocess.run(["bluetoothctl", "devices", "Trusted"], capture_output=True, text=True, timeout=3)
             auto_map = config.get("auto_connect_devices", {})

@@ -1301,7 +1301,8 @@ _HAILO_CHUNK_ERRORS_MAX = 64
 
 def _report_hailo_chunk_error(err: Exception) -> None:
     """transcribe_pcm_chunk 每個切片都會呼叫：同一種 Hailo 錯誤只印第一次，之後記 debug (不洗版 journal)。"""
-    key = f"{type(err).__name__}: {err}"[:200]
+    # 數字（位址、時間、計數）換成 #：同一類錯誤只佔一格（11-24 Mac N6）
+    key = re.sub(r"\d+", "#", f"{type(err).__name__}: {err}")[:200]
     if key in _hailo_chunk_errors_seen:
         _log.debug("[VoicePipeline] Hailo Whisper 轉錄失敗 (重複)：%s", key)
         return

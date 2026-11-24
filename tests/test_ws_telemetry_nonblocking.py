@@ -105,3 +105,35 @@ def test_bt_status_while_recording_returns_cache_without_lock(monkeypatch):
         assert main_mod.get_bt_status() == {"connected": True, "cached": True}
     finally:
         main_mod._bt_status_lock.release()
+
+
+def test_bt_status_recording_with_empty_cache_does_not_refresh(monkeypatch):
+    """11-24 Mac N6：服務剛重啟就錄音（快取是空的）也不能跑 bluetoothctl（CLAUDE.md 嚴格禁忌 2）。"""
+    import voice_streaming
+    monkeypatch.setattr(voice_streaming, "is_any_recording_active", lambda: True)
+    monkeypatch.setattr(main_mod, "_last_bt_status_cache", {})
+    monkeypatch.setattr(main_mod, "_get_bt_status_impl", lambda: (_ for _ in ()).throw(AssertionError("不該刷新")))
+    st = main_mod.get_bt_status()
+    assert st["connected"] is None and st["state_hash"] == "recording"
+
+
+def test_bt_status_stops_when_recording_starts_mid_refresh(monkeypatch):
+    """11-24 Mac N6：刷新途中開始錄音，後面的 bluetoothctl 都不跑。"""
+    import subprocess as sp
+    import voice_streaming
+    rec = {"on": False}
+    calls = []
+    monkeypatch.setattr(voice_streaming, "is_any_recording_active", lambda: rec["on"])
+    monkeypatch.setattr(main_mod, "_last_bt_status_cache", {})
+    monkeypatch.setattr(main_mod, "_last_bt_status_time", 0.0)
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        rec["on"] = True                       # 第一個 bluetoothctl 跑完時錄音開始
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+    monkeypatch.setattr(main_mod.subprocess, "run", fake_run)
+    import bluetooth_manager
+    monkeypatch.setattr(bluetooth_manager, "get_full_bt_status", lambda: "")
+    st = main_mod.get_bt_status()
+    assert len(calls) == 1 and calls[0][:3] == ["bluetoothctl", "devices", "Connected"]
+    assert st["state_hash"] == "recording"
