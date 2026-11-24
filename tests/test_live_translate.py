@@ -240,3 +240,39 @@ def test_next_recording_lets_previous_tail_finish(monkeypatch):
     assert asyncio.run(scenario(closed=True, keep_tail=True)) == {0: "x"}
     assert asyncio.run(scenario(closed=True, keep_tail=False)) == "cancelled"     # 取消錄音
     assert asyncio.run(scenario(closed=False, keep_tail=True)) == "cancelled"     # 還在錄 (沒 close) 不留
+
+
+def _run_one(monkeypatch, fake_flat, text="預算是80萬元"):
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario():
+        tr = lt.LiveTranslator("en")
+        task = asyncio.create_task(tr.run())
+        tr.add(text)
+        tr.close()
+        await asyncio.wait_for(task, 2)
+        return tr
+    return asyncio.run(scenario())
+
+
+def test_kept_reason_rejected_when_unit_not_returned(monkeypatch):
+    """11-24：保留原文的段要記原因，事後才查得出是請求失敗還是沒通過檢查。"""
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        return {"done": {}}
+    tr = _run_one(monkeypatch, fake_flat)
+    segs = tr.dump()["segments"]
+    assert segs[0]["kept"] == "rejected" and segs[0]["out"] == segs[0]["src"]
+
+
+def test_kept_reason_llm_error_when_batch_fails(monkeypatch):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        raise lt.tt.LLMError("hailo 500")
+    tr = _run_one(monkeypatch, fake_flat)
+    assert tr.dump()["segments"][0]["kept"] == "llm_error"
+
+
+def test_translated_segment_has_no_kept_field(monkeypatch):
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        return {"done": {0: "The budget is 800,000 yuan."}}
+    tr = _run_one(monkeypatch, fake_flat)
+    assert "kept" not in tr.dump()["segments"][0]

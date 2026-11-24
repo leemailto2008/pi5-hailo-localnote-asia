@@ -123,6 +123,7 @@ class LiveTranslator:
         self._added: List[float] = []
         self.latencies: List[float] = []
         self.kept = 0          # 沒翻成 (數值對不上、模型沒回)：顯示原文
+        self.kept_reason: Dict[int, str] = {}   # 段號 → "llm_error"（整批請求失敗）／"rejected"（模型沒回這段或沒通過數值等檢查）
         self.requests = 0
         self.llm_calls = 0     # 含單句重翻
         self._event = asyncio.Event()
@@ -179,7 +180,9 @@ class LiveTranslator:
 
     def dump(self) -> Dict[str, Any]:
         """逐段原文、譯文、目標語言、延遲 (秒)：存到 RAM 磁碟給量測用 (MeetingMinutes._start_live_translate)。"""
-        segs = [{"src": t, "out": self.out.get(i), "target": self.targets.get(i)} for i, t in enumerate(self.src)]
+        # 保留原文的段多記 kept 原因（11-24：.228 中文 30 分有 1 段保留原文，事後查不出是請求失敗還是沒通過檢查）
+        segs = [{"src": t, "out": self.out.get(i), "target": self.targets.get(i),
+                 **({"kept": self.kept_reason[i]} if i in self.kept_reason else {})} for i, t in enumerate(self.src)]
         return {"mode": self.mode, "segments": segs, "latencies": [round(x, 2) for x in self.latencies], **self.stats()}
 
     def _next_batch(self, start: int) -> List[int]:
@@ -226,6 +229,9 @@ class LiveTranslator:
             except tt.LLMError as e:
                 logger.warning("[LiveTranslate] 第 %d–%d 段翻譯失敗，顯示原文：%s", idxs[0] + 1, idxs[-1] + 1, e)
                 got = {}
+                batch_failed = True
+            else:
+                batch_failed = False
             if not self._go.is_set() and not self._should_stop():
                 self.requests -= 1
                 continue
@@ -233,9 +239,11 @@ class LiveTranslator:
             for k, i in enumerate(idxs):
                 if k in got:
                     self.out[i] = got[k]
+                    self.kept_reason.pop(i, None)
                 else:
                     self.out[i] = self.src[i]
                     self.kept += 1
+                    self.kept_reason[i] = "llm_error" if batch_failed else "rejected"
                 self.targets[i] = tgt
                 self.latencies.append(now - self._added[i])
             done = idxs[-1] + 1
