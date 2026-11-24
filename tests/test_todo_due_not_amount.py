@@ -42,3 +42,14 @@ def test_real_dates_still_found(text, due):
                                   "第3.5版", "改成3.5版", "第2/3季"])   # 11-24 localnote：版本號、「第N/M」不是日期
 def test_numbers_not_dates(text):
     assert su._TIME_RE.search(text) is None, su._TIME_RE.search(text)
+
+
+@pytest.mark.parametrize("text", ["V3.5上線", "韌體v3.12要更新", "版本3.12", "版本 3.5 上線"])
+def test_version_number_is_not_a_due_date(text):
+    # N4 審查 69eca7e：「第3.5版」「3.5版」擋了，前面寫 V／版本的版本號仍被當成 3/5、3/12
+    assert [m.group(0) for m in su._TIME_RE.finditer(text)] == []
+
+
+@pytest.mark.parametrize("text,want", [("3.15前交", ["3.15"]), ("在3/15前", ["3/15"]), ("TV 3/15上市", ["3/15"])])
+def test_dates_still_found_near_letters(text, want):
+    assert [m.group(0) for m in su._TIME_RE.finditer(text)] == want
