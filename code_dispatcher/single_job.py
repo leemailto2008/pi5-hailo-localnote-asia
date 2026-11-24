@@ -97,9 +97,18 @@ class SingleJob:
     async def _run(self, runner: Callable[["SingleJob"], Awaitable[Dict[str, Any]]]) -> None:
         try:
             result = await runner(self)
+        except asyncio.CancelledError:
+            # 被取消 (CancelledError 是 BaseException，下面的 except Exception 接不到)：也不能停在 running，
+            # 否則之後每次 start() 都 JobBusyError (N8)
+            self._state.update(state="stopped", error="cancelled", finished=time.time())
+            raise
         except Exception as e:  # 背景工作：未預期錯誤要寫進狀態，否則前端會永遠停在 running
             logger.exception("[%s] job failed", self.name)
             self._state.update(state="error", error=str(e) or type(e).__name__, finished=time.time())
+            return
+        if not isinstance(result, dict):   # runner 回傳的不是 dict：result.get 會 AttributeError、停在 running (N8)
+            logger.error("[%s] runner returned %s, not a dict", self.name, type(result).__name__)
+            self._state.update(state="error", error=f"runner returned {type(result).__name__}", finished=time.time())
             return
         self._state.update(
             state="stopped" if result.get("stopped") else "done", result=result, finished=time.time()
