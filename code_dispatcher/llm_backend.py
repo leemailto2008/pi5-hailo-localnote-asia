@@ -290,11 +290,12 @@ def chat_complete(
             _free_npu_for_llm()
         payload = backend.build_chat_payload(messages, stream=False, temperature=temperature, num_predict=num_predict, hailo_keep_alive=hailo_keep_alive)
         try:
+            # HTTP 錯誤、{"error"} 的檢查也要在 _hailo_activity 裡面，失敗才會記成失敗 (N4：原本只包 post，失敗記成 200)
             with _hailo_activity(backend.is_hailo, backend.name):
                 resp = requests.post(backend.chat_url, json=payload, timeout=timeout)
-            if resp.status_code != 200:
-                raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
-            text = extract_token(_check_chunk(resp.json(), backend)).strip()
+                if resp.status_code != 200:
+                    raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
+                text = extract_token(_check_chunk(resp.json(), backend)).strip()
             return text, backend
         except (requests.RequestException, ValueError, LLMError) as e:
             last_err = e
@@ -403,7 +404,8 @@ async def achat_complete(
                     resp = await client.post(backend.chat_url, json=payload)
                     if resp.status_code != 200:
                         raise LLMError(f"{backend.label} HTTP {resp.status_code}: {resp.text[:200]}")
-                    return extract_token(resp.json()).strip(), backend
+                    # 和 chat_complete 一樣經過 _check_chunk (N4：{"error"} 原本回空字串當成功、非物件 JSON 拋 AttributeError)
+                    return extract_token(_check_chunk(resp.json(), backend)).strip(), backend
             except (httpx.HTTPError, ValueError, LLMError) as e:
                 last_err = e
                 logger.warning(f"[LLM] {backend.label} failed (attempt {attempt + 1}): {_describe(e)}")
