@@ -4,6 +4,8 @@ import re
 import sys
 import types
 
+import pytest
+
 sys.modules.setdefault("config", types.SimpleNamespace(WHISPER_MODEL_SIZE="small", WHISPER_DEVICE="cpu", WHISPER_COMPUTE_TYPE="int8",
                                                        DEFAULT_TTS_VOICE="zh-TW-HsiaoChenNeural", DATA_DIR="/tmp"))
 import transcript_translate as tt  # noqa: E402
@@ -433,3 +435,36 @@ def test_courtesy_titles():
     # 「李先生」→「Mr. Li」（重放剩下的夾中文之一）
     assert tt.postfix("李先生下個月去曼谷", "Next month 李先生 will visit Bangkok.", "en") == "Next month Mr. Li will visit Bangkok."
     assert tt.postfix("請林小姐確認", "Ask Lin小姐 to confirm", "en") == "Ask Ms. Lin to confirm"
+
+
+@pytest.mark.parametrize("src,want", [
+    ("攤位費2萬5千元", "攤位費25000元"),        # 原本 20,005,000 (萬後接數字先吃掉 5 再乘千)
+    ("預算3萬5", "預算35000"),                  # 口語「三萬五」；原本 30,005
+    ("名額3百人", "名額300人"), ("2百5十人", "250人"), ("2百50人", "250人"), ("3百零5人", "305人"),
+    ("庫存1千2百台", "庫存1200台"), ("1千200台", "1200台"), ("5千3百元", "5300元"), ("1千2", "1200"),
+    ("3萬零5百", "30500"), ("3萬零5", "30005"), ("3萬5千2百", "35200"), ("12萬5千", "125000"),
+    ("5百萬", "5000000"), ("3百5十萬元", "3500000元"), ("3千萬", "30000000"),
+    ("1億2千萬", "120000000"), ("1億2千3百萬", "123000000"), ("2億5", "250000000"),
+    # 原本就對的不變
+    ("5萬3135円", "53135円"), ("1萬5000元", "15000元"), ("15萬", "150,000"), ("1.5萬", "15,000"), ("2千", "2,000"),
+    ("第1三個", "第13個"), ("加裝十0只", "加裝10只"), ("第3季", "第3季"), ("300台", "300台"), ("12,500", "12,500"),
+    # 看不懂的原樣 (之後數值對不上會保留原文，不會送錯的數字)
+    ("15百台", "15百台"), ("5百5百", "5百5百"),
+])
+def test_prepare_source_composite_numbers(src, want):
+    # N2（11-24）：即時稿 ITN 半套轉換的數字（阿拉伯數字＋萬千百）要換成正確的完整數字
+    assert tt.prepare_source(src, "en") == want
+
+
+def test_composite_numbers_pass_number_check():
+    # 換對之後，正確的英文譯文通過數值檢查 (原本「3百人」→「300 people」被當成數值不符、保留原文)
+    for src, tr in [("名額3百人", "300 people"), ("攤位費2萬5千元", "booth fee 25,000 yuan"), ("預算3萬5", "budget 35,000"),
+                    ("庫存1千2百台", "1,200 units in stock"), ("5百萬", "5 million")]:
+        assert tt.numbers_ok(tt.prepare_source(src, "en"), tr), src
+    # 錯的數字仍擋下
+    assert not tt.numbers_ok(tt.prepare_source("攤位費2萬5千元", "en"), "booth fee 20,005,000 yuan")
+
+
+def test_wan_composite_not_followed_by_unit():
+    # 「2萬3萬」原本變成 200,030,000；萬後接數字再接單位的交給 _CN_COMPOSITE_RE
+    assert "200,030,000" not in tt.prepare_source("2萬3萬", "en")

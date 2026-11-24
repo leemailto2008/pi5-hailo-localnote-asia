@@ -129,7 +129,8 @@ _NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?:\.\d+)?(?!\d)|\d+(?:
                      re.I)
 _CN_SCALED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)")
 # 「5萬3135円」「1萬5000元」= 53,135／15,000：萬後面直接接 1–4 位數字 (11-22 full8 日文翻英「5萬3135円」被換成「50,0003135」、數值對不上保留原文)
-_CN_WAN_COMPOSITE_RE = re.compile(r"(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,])")
+# 後面接的不能是單位 (N2：「2萬3萬」原本變成 200,030,000；「2萬5千」由 _CN_COMPOSITE_RE 先處理)
+_CN_WAN_COMPOSITE_RE = re.compile(r"(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,十百千萬万億亿])")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
@@ -217,12 +218,74 @@ def fix_mixed_numbers(text: str) -> str:
     return _MIXED_NUM_RE.sub(repl, text)
 
 
+# 阿拉伯數字和萬／千／百混寫的一串 (即時稿 ITN 半套轉換)：「2萬5千」「1千2百」「3百」「2百50」「3萬零5百」「5百萬」「3萬5」。
+# N2（11-24）：原本「萬後接數字」把「2萬5千」讀成 2萬5＝20,005 再乘千 → 送模型的原文變成「20,005,000」(錯的數字，而且數值檢查照樣通過)；
+# 「3萬5」(三萬五＝35,000) 也被讀成 30,005。看不懂的 (係數不是 1 位數、單位順序不對、尾數位數對不上) 原樣保留。
+_UNIT_VAL = {"十": 10, "百": 100, "千": 1000, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "亿": 10 ** 8}
+_CN_COMPOSITE_RE = re.compile(r"(?<![\d.,])\d+\s*[十百千萬万億亿](?:零?\d+\s*[十百千萬万億亿]|[萬万億亿]){0,12}(?:零?\d+)?(?![\d.,])")
+_COMPOSITE_TOKEN_RE = re.compile(r"零?(\d*)\s*([十百千萬万億亿])")
+
+
+def _composite_value(run: str) -> Optional[int]:
+    """「2萬5千3百」→ 25300、「3萬5」→ 35000、「1千200」→ 1200、「3萬零5百」→ 30500、「5百萬」→ 5000000、「1億2千萬」→ 120000000；
+    看不懂 → None。
+    只有一個萬／千／億、後面沒有尾數 (「15萬」「2千」) 也回 None，交給 _CN_SCALED_RE (可帶小數)；單獨的「8十」「3百」要換。"""
+    run = run.replace(" ", "")
+    tokens, pos = [], 0
+    for m in _COMPOSITE_TOKEN_RE.finditer(run):
+        if m.start() != pos:
+            return None
+        tokens.append((m.group(1), m.group(2)))
+        pos = m.end()
+    rest = run[pos:]
+    if len(tokens) == 1 and not rest and tokens[0][1] not in "十百":
+        return None
+    total, section, last_small, last_big = 0, 0, 10 ** 5, 10 ** 13
+    for n, u in tokens:
+        unit = _UNIT_VAL[u]
+        if not n:                                # 「5百萬」「1億2千萬」：萬／億前面沒有數字，乘前面的整節
+            if unit < 10 ** 4 or not section or unit >= last_big:
+                return None
+            total += section * unit
+            section, last_small, last_big = 0, 10 ** 5, unit
+            continue
+        v = int(n)
+        if unit < 10 ** 4:                       # 十百千：係數 1 位數、同一節裡由大到小
+            if v > 9 or unit >= last_small:
+                return None
+            section += v * unit
+            last_small = unit
+        else:                                    # 萬億：前面整節 (含這個數字) 乘上去
+            if unit >= last_big or v > 9999 or (section and v > 9):
+                return None
+            total += (section + v) * unit
+            section, last_small, last_big = 0, 10 ** 5, unit
+    if rest:
+        zero = rest.startswith("零")
+        digits = rest.lstrip("零")
+        last_unit = _UNIT_VAL[tokens[-1][1]]
+        if last_unit >= 10 ** 4 and section:
+            return None
+        lower = last_small if section else last_big   # 尾數接在哪個單位後面
+        width = len(str(lower)) - 1                   # 萬後面 4 位、千後面 3 位、百後面 2 位、十後面 1 位
+        if zero or len(digits) == width:              # 「3萬零5」「5萬3135」「1千200」：照數字加
+            if int(digits) >= lower:
+                return None
+            section += int(digits)
+        elif len(digits) == 1 and lower >= 100:        # 「3萬5」「1千2」「2百5」：口語省略後面的單位 (三萬五＝35,000)
+            section += int(digits) * lower // 10
+        else:
+            return None
+    return total + section
+
+
 def prepare_source(text: str, target: str) -> str:
     """送模型前的原文，數字先換成目標語言的寫法 (模型自己換算常錯)：
     中翻英「200萬」→「2,000,000」、「1.5億」→「150,000,000」；英翻中「11 billion」→「110億」、「200 million」→「2億」、
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
     text = fix_mixed_numbers(text)
     if target == "en":
+        text = _CN_COMPOSITE_RE.sub(lambda m: (lambda v: m.group(0) if v is None else str(v))(_composite_value(m.group(0))), text)
         text = _CN_WAN_COMPOSITE_RE.sub(lambda m: str(int(m.group(1)) * 10 ** 4 + int(m.group(3))), text)
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))

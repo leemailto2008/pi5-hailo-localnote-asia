@@ -59,6 +59,38 @@ def test_prepare_en_keeps_exact_value(i, nd, unit):
     assert tt.number_values(tt.prepare_source(f"預算{num}{unit}元", "en")) == [float(want)]
 
 
+def half_itn(n: int) -> str:
+    """整數寫成即時稿 ITN 半套轉換的樣子：35200 → 「3萬5千2百」、120000000 → 「1億2千萬」、30500 → 「3萬零5百」。"""
+    def sec(v: int) -> str:
+        out, zero = "", False
+        for unit, u in (("千", 1000), ("百", 100), ("十", 10), ("", 1)):
+            d = v // u % 10
+            if d:
+                out, zero = out + ("零" if zero else "") + str(d) + unit, False
+            elif out:
+                zero = True
+        return out
+    parts, rest = [], n
+    for unit, u in (("億", 10 ** 8), ("萬", 10 ** 4)):
+        if rest >= u:
+            parts.append(sec(rest // u) + unit)
+            rest %= u
+            if rest and rest < u // 10:
+                parts.append("零")
+    if rest:
+        parts.append(sec(rest))
+    return "".join(parts)
+
+
+@CFG
+@given(st.integers(10, 99_9999_9999), st.sampled_from(["元", "台", "人", "。", ""]))
+def test_prepare_en_half_itn_composite_exact(n, tail):
+    # N2（11-24）：「2萬5千」原本變成 20,005,000；半套轉換的寫法換成完整數字後數值要完全一樣
+    src = "預算" + half_itn(n) + tail
+    vals = tt.number_values(tt.prepare_source(src, "en"))
+    assert vals == [float(n)], (src, tt.prepare_source(src, "en"))
+
+
 @CFG
 @given(st.integers(1, 99999), st.sampled_from(["million", "billion"]))
 def test_prepare_zh_thousands_scaled_keeps_value(k, word):
