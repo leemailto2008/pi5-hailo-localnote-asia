@@ -370,3 +370,71 @@ def test_sv_worker_child_idle_exit_under_windows(windows_child, windows_select, 
         assert w._call("load", None, 60)["ok"] is True                # 自動重啟
     finally:
         w.shutdown()
+
+
+# --------------------------------------------------------------------------- N3 突變測試補的邊界
+
+
+def test_select_pipes_env_on_windows(monkeypatch):
+    """在 Windows (os.name == "nt") 上：預設不 select；PI5_STT_SELECT_PIPES=1 仍可強制 select。"""
+    with monkeypatch.context() as m:
+        m.setattr(sw.os, "name", "nt")
+        m.delenv("PI5_STT_SELECT_PIPES", raising=False)
+        default = sw._select_pipes_from_env()
+        m.setenv("PI5_STT_SELECT_PIPES", "1")
+        forced = sw._select_pipes_from_env()
+    assert (default, forced) == (False, True)
+
+
+def test_short_deadline_still_reads(read_mode):
+    """剩不到 1 秒的 deadline 也要等資料，不能直接當逾時。"""
+    r, wfd = os.pipe()
+    f = os.fdopen(wfd, "wb")
+
+    def later():
+        time.sleep(0.1)
+        sw._write_frame(f, {"ok": True})
+    t = threading.Thread(target=later)
+    t.start()
+    try:
+        assert sw._read_frame(r, time.monotonic() + 0.8) == {"ok": True}
+    finally:
+        t.join(5)
+        f.close()
+        os.close(r)
+
+
+def test_expired_deadline_is_timeout(read_mode):
+    """deadline 已經過了：TimeoutError（不能把負的逾時交給 select → ValueError）。"""
+    r, wfd = os.pipe()
+    try:
+        with pytest.raises(TimeoutError):
+            sw._read_frame(r, time.monotonic() - 0.5)
+    finally:
+        os.close(wfd)
+        os.close(r)
+
+
+def test_thread_read_propagates_os_error():
+    """背景執行緒讀取時的 OSError（例如 fd 已關、或讀到只能寫的一端）要拋給呼叫端。"""
+    r, wfd = os.pipe()
+    os.close(r)
+    try:
+        with pytest.raises(OSError):
+            sw._read_chunk_with_timeout(wfd, 4, 2.0)      # 寫端不能讀：EBADF
+    finally:
+        os.close(wfd)
+
+
+def test_inbox_thread_mode_reports_read_error():
+    """常駐收訊框的執行緒讀到錯誤 (不是 EOF)：get 拋出同一個錯誤，之後也一樣 (不卡住)。"""
+    r, wfd = os.pipe()
+    os.close(r)
+    try:
+        inbox = sw._FrameInbox(wfd, use_select=False)     # 寫端不能讀
+        with pytest.raises(OSError):
+            inbox.get(5)
+        with pytest.raises(OSError):
+            inbox.get(0.1)
+    finally:
+        os.close(wfd)
