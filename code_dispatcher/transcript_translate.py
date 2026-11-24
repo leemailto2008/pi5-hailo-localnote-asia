@@ -484,6 +484,10 @@ _COMMON_SURNAMES = set(
 
 def fix_name_zh_titles(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """只換原文真的有「X經理」而且 X 的拼音就是譯文那個名字的：「Project经理」(專案經理) 不會變成「Manager Project」。"""
+    # 模型把「課長」寫成同音的「校长」(11-25 重放：「劉課長」→「Liu校长」2 處)：原文有課長、沒有校長才換回課長
+    if translation and target == "en" and ("課長" in (src or "") or "课长" in (src or "")) \
+            and "校長" not in (src or "") and "校长" not in (src or ""):
+        translation = translation.replace("校长", "课长").replace("校長", "課長")
     if not translation or target != "en" or not _NAME_ZH_TITLE_RE.search(translation):
         return translation
     try:

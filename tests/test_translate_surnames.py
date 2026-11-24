@@ -41,3 +41,16 @@ def test_romanize_titled_names_uses_surname_reading(src, translation, expect):
 def test_surname_pinyin_helper():
     assert tt._surname_pinyin("曾") == "Zeng" and tt._surname_pinyin("覃") == "Qin"
     assert tt._surname_pinyin("蔡") == "Cai"
+
+
+def test_section_chief_written_as_principal_is_fixed():
+    # 11-25 重放：「劉課長」被模型寫成同音的「校长」→「Liu校长」
+    out = tt.fix_name_zh_titles("文宣請劉課長,週一前交初稿", "Please have Liu校长 review the draft by Monday.", "en")
+    assert out == "Please have Section Chief Liu review the draft by Monday."
+
+
+def test_real_principal_is_kept():
+    # 原文真的有「校長」就不換
+    src = "請劉課長和王校長一起開會"
+    out = tt.fix_name_zh_titles(src, "Please have Liu课长 and Wang校长 meet.", "en")
+    assert "校长" in out and "Section Chief Liu" in out
