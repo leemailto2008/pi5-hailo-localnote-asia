@@ -276,3 +276,25 @@ def test_translated_segment_has_no_kept_field(monkeypatch):
         return {"done": {0: "The budget is 800,000 yuan."}}
     tr = _run_one(monkeypatch, fake_flat)
     assert "kept" not in tr.dump()["segments"][0]
+
+
+def test_kept_reason_stopped_when_batch_interrupted(monkeypatch):
+    """N4：翻到一半 should_stop 變真（_translate_flat 回 stopped）：沒翻完的段記 "stopped"，不是 "rejected"
+    （"rejected" 會讓人以為是模型沒回或沒通過數值檢查，正是 94e0181 想分清楚的事）。"""
+    stop = {"v": False}
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        stop["v"] = True
+        return {"done": {0: "First."}, "stopped": True}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario():
+        tr = lt.LiveTranslator("en", should_stop=lambda: stop["v"])
+        tr.add("第一段。")
+        tr.add("第二段。")
+        tr.close()
+        await asyncio.wait_for(tr.run(), 2)
+        return tr
+    tr = asyncio.run(scenario())
+    segs = tr.dump()["segments"]
+    assert "kept" not in segs[0] and segs[1]["kept"] == "stopped"

@@ -123,7 +123,8 @@ class LiveTranslator:
         self._added: List[float] = []
         self.latencies: List[float] = []
         self.kept = 0          # 沒翻成 (數值對不上、模型沒回)：顯示原文
-        self.kept_reason: Dict[int, str] = {}   # 段號 → "llm_error"（整批請求失敗）／"rejected"（模型沒回這段或沒通過數值等檢查）
+        # 段號 → "llm_error"（整批請求失敗）／"rejected"（模型沒回這段或沒通過數值等檢查）／"stopped"（翻到一半被停掉）
+        self.kept_reason: Dict[int, str] = {}
         self.requests = 0
         self.llm_calls = 0     # 含單句重翻
         self._event = asyncio.Event()
@@ -226,10 +227,11 @@ class LiveTranslator:
                 res = await tt._translate_flat(units, tgt, None, interrupted, use_cpu=False, one_chunk=True)
                 got = res["done"]
                 self.llm_calls += res.get("llm_calls", 0)
+                stopped = bool(res.get("stopped"))
             except tt.LLMError as e:
                 logger.warning("[LiveTranslate] 第 %d–%d 段翻譯失敗，顯示原文：%s", idxs[0] + 1, idxs[-1] + 1, e)
                 got = {}
-                batch_failed = True
+                batch_failed, stopped = True, False
             else:
                 batch_failed = False
             if not self._go.is_set() and not self._should_stop():
@@ -243,7 +245,8 @@ class LiveTranslator:
                 else:
                     self.out[i] = self.src[i]
                     self.kept += 1
-                    self.kept_reason[i] = "llm_error" if batch_failed else "rejected"
+                    # 翻到一半被停掉 (should_stop) 的段記 "stopped"：不是模型沒回、也不是沒通過檢查 (N4)
+                    self.kept_reason[i] = "llm_error" if batch_failed else "stopped" if stopped else "rejected"
                 self.targets[i] = tgt
                 self.latencies.append(now - self._added[i])
             done = idxs[-1] + 1
