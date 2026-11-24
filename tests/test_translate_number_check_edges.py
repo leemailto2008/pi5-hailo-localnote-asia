@@ -122,3 +122,22 @@ def test_fix_numerals_does_not_show_100_fen_zhi():
 @pytest.mark.parametrize("s,i,want", [("1X2", 1, False), ("1X5", 2, False), ("1,2", 1, True), ("1.2", 1, True)])
 def test_in_number_more(s, i, want):
     assert tt._in_number(s, i) is want
+
+
+@pytest.mark.parametrize("src", ["10万 億", "5萬 千人", "30萬 億元"])
+def test_no_double_scaling_across_space(src):
+    # N7 fuzz：「10万 億」原本換成「100,000 億」，number_values 再乘一次億 → 1e13（憑空生出的數值）
+    vals = tt.number_values(tt.prepare_source(src, "en"))
+    assert max(vals) <= max(tt.number_values(src) + [0]) * 10 ** 4
+
+
+@pytest.mark.parametrize("src", ["0万十", "100,000,000〇%", "一０億台", "0萬0〇月", "1億〇%", "0億一%", "0十0〇月", "0萬0一人"])
+def test_garbled_runs_stable(src):
+    # N7 fuzz：數字旁邊還緊接數字／國字／單位時是一串亂碼：處理一次和處理兩次讀到的數值要一樣（不會被拆開重算）
+    p = tt.prepare_source(src, "en")
+    assert tt.number_values(tt.prepare_source(p, "en")) == tt.number_values(p), (src, p)
+
+
+@pytest.mark.parametrize("src,want", [("３萬５千元", "35000元"), ("一０個", "10個"), ("營收１,５００萬", "營收15,000,000")])
+def test_fullwidth_digits_normalised(src, want):
+    assert tt.prepare_source(src, "en") == want

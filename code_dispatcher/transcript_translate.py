@@ -129,11 +129,11 @@ _NUM_RE = re.compile(r"(\d{1,3}(?:[,\u00a0\u202f ]\d{3})+(?:\.\d+)?(?!\d)|\d+(?:
                      re.I)
 # 千分位「1,500萬」要整個吃進來、不從數字中間開始 (N3：原本「12,000萬」→「12,0」、「1,500萬元」→「1,5,000,000元」，紀要常這樣寫)；
 # 單位後面緊接數字、或前面緊接數字／單位的不換 (「1.5萬3千」原本變成「1,500.03」：整串看不懂就原樣保留)
-_CN_SCALED_RE = re.compile(r"(?<![\d.,十百千萬万億亿])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)(?!\d)")
+_CN_SCALED_RE = re.compile(r"(?<![\d.,十百千萬万億亿零〇一二兩两三四五六七八九])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(千|萬|万|億|亿)(?![\d十百千萬万億亿零〇一二兩两三四五六七八九])(?!\s+[十百千萬万億亿])")
 # 「5萬3135円」「1萬5000元」= 53,135／15,000：萬後面直接接 1–4 位數字 (11-22 full8 日文翻英「5萬3135円」被換成「50,0003135」、數值對不上保留原文)
 # N2：混寫的一串先由 _CN_COMPOSITE_RE 處理 (「2萬5千」「2萬3萬」)，這裡只剩「3萬52」這種 (_composite_value 回 _DEFER)；
 # 前面不能緊接數字、小數點、千分位、單位 (「1.5萬52」不從 5 開始換)
-_CN_WAN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿])(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,])")
+_CN_WAN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿])(\d+)\s*(萬|万)\s*(\d{1,4})(?![\d.,零〇一二兩两三四五六七八九])")
 
 
 def _scaled(num: str, unit: Optional[str]) -> float:
@@ -201,9 +201,9 @@ _EN_SCALED_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d
 # 即時稿 (SenseVoice ITN) 偶爾把阿拉伯數字和國字數字混寫：「加裝十0只警示燈」=10、「二十5」=25、「第1三個議題」=13、
 # 「第一7二個」=172、「第1八十四個」=184 (11-21 W11 240 分即時翻譯 31 段保留原文有 12 段是這種，W15 剩「第1三個」：數值比對看不懂)
 # 後面要接量詞或單位才換：日文「第3四半期」(第 3 季) 的「3四」不是 34
-# 後面可以接萬千百億 (N5：原本負向 lookahead 擋掉，量詞清單裡的萬千百億永遠用不到；「二十5萬」沒換成「25萬」，
+# 前面不能緊接千分位逗號／小數點 (N7 fuzz：「100,000,000〇%」的「000〇」被當成混寫)。後面可以接萬千百億 (N5：原本負向 lookahead 擋掉，量詞清單裡的萬千百億永遠用不到；「二十5萬」沒換成「25萬」，
 # 送模型的原文變成「二十50,000」)
-_MIXED_NUM_RE = re.compile("(?<![0-9零〇一二三四五六七八九十百千萬億兩])[0-9零〇一二三四五六七八九十]+(?![0-9零〇一二三四五六七八九十兩])"
+_MIXED_NUM_RE = re.compile("(?<![0-9零〇一二三四五六七八九十百千萬億兩,.])[0-9零〇一二三四五六七八九十]+(?![0-9零〇一二三四五六七八九十兩])"
                            "(?=[個个位台臺人輪轮只隻件條条日號号月年天週周次場场名家款項项輛辆張张支組组萬万千百億亿元%％倍])")
 _CN_ONE_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
@@ -232,9 +232,9 @@ def fix_mixed_numbers(text: str) -> str:
 
 # 阿拉伯數字和萬／千／百混寫的一串 (即時稿 ITN 半套轉換)：「2萬5千」「1千2百」「3百」「2百50」「3萬零5百」「5百萬」「3萬5」。
 # N2（11-24）：原本「萬後接數字」把「2萬5千」讀成 2萬5＝20,005 再乘千 → 送模型的原文變成「20,005,000」(錯的數字，而且數值檢查照樣通過)；
-# 「3萬5」(三萬五＝35,000) 也被讀成 30,005。看不懂的 (係數不是 1 位數、單位順序不對、尾數位數對不上) 原樣保留。
+# 「3萬5」(三萬五＝35,000) 也被讀成 30,005。後面緊接國字數字的 (「0十0〇」，N7 fuzz) 是一串更長的亂碼，不換。看不懂的 (係數不是 1 位數、單位順序不對、尾數位數對不上) 原樣保留。
 _UNIT_VAL = {"十": 10, "百": 100, "千": 1000, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "亿": 10 ** 8}
-_CN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿])\d+\s*[十百千萬万億亿](?:零?\d+\s*[十百千萬万億亿]|[萬万億亿]){0,12}(?:零?\d+)?(?![\d.,十百千萬万億亿])")
+_CN_COMPOSITE_RE = re.compile(r"(?<![\d.,十百千萬万億亿零〇一二兩两三四五六七八九])\d+\s*[十百千萬万億亿](?:零?\d+\s*[十百千萬万億亿]|[萬万億亿]){0,12}(?:零?\d+)?(?![\d.,十百千萬万億亿零〇一二兩两三四五六七八九])(?!\s+[十百千萬万億亿])")
 _COMPOSITE_TOKEN_RE = re.compile(r"(零?)(\d*)\s*([十百千萬万億亿])")
 
 
@@ -300,11 +300,14 @@ def _composite_value(run: str) -> Any:
     return total + section
 
 
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")   # N7 fuzz：「一０億」的全形 ０ 混寫規則看不到
+
+
 def prepare_source(text: str, target: str) -> str:
     """送模型前的原文，數字先換成目標語言的寫法 (模型自己換算常錯)：
     中翻英「200萬」→「2,000,000」、「1.5億」→「150,000,000」；英翻中「11 billion」→「110億」、「200 million」→「2億」、
     「2.5 million」→「250萬」 (11-19 自測：法→中「11 billion」→「十億」、「200 million」→「二百萬」)。"""
-    text = fix_mixed_numbers(text)
+    text = fix_mixed_numbers(text.translate(_FULLWIDTH_DIGITS))
     if target == "en":
         def repl(m: "re.Match") -> str:
             v = _scaled(m.group(1), m.group(2))
@@ -313,13 +316,24 @@ def prepare_source(text: str, target: str) -> str:
         def plain(t: str) -> str:
             t = _CN_WAN_COMPOSITE_RE.sub(lambda m: str(int(m.group(1)) * 10 ** 4 + int(m.group(3))), t)
             return _CN_SCALED_RE.sub(repl, t)
-        # 混寫的一串整個換；看不懂的整串原樣保留 (不讓後面的規則只換其中一段：「3百5萬」原本會變成「3百50,000」)
-        out, last = [], 0
+        # 混寫的一串整個換；看不懂的整串原樣保留 (不讓後面的規則只換其中一段：「3百5萬」原本會變成「3百50,000」)：
+        # 看不懂的先換成一個私用區字元佔位，整句一起跑原本的規則 (_DEFER 的「15萬」「3萬52」也在整句裡換，前後文才看得到；
+        # N7 fuzz：「10万 億」單獨換成「100,000」後接「 億」，number_values 再乘一次億＝1e13)，最後再換回來
+        out, kept, last = [], [], 0
         for m in _CN_COMPOSITE_RE.finditer(text):
             v = _composite_value(m.group(0))
-            out += [plain(text[last:m.start()]), plain(m.group(0)) if v is _DEFER else m.group(0) if v is None else str(v)]
+            out.append(text[last:m.start()])
+            if v is _DEFER:
+                out.append(m.group(0))
+            elif v is None:
+                out.append(chr(0xE000 + len(kept)))
+                kept.append(m.group(0))
+            else:
+                out.append(str(v))
             last = m.end()
-        return "".join(out) + plain(text[last:])
+        out.append(text[last:])
+        return re.sub("[\ue000-\uf8ff]", lambda m: kept[ord(m.group(0)) - 0xE000] if ord(m.group(0)) - 0xE000 < len(kept)
+                      else m.group(0), plain("".join(out)))
 
     def repl_zh(m: "re.Match") -> str:
         # 用 Decimal 從原字串算，不能用 :g (只留 6 位有效數字：「12.345678 million」會變「1234.57萬」，
