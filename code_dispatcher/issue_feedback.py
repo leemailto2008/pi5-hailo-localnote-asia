@@ -40,7 +40,8 @@ _ID_RE = re.compile(r"^\d{8}_\d{6}_[A-Za-z0-9-]{1,40}_[0-9a-f]{4}$")
 
 
 def valid_id(report_id: str) -> bool:
-    return bool(_ID_RE.match(report_id or ""))
+    # fullmatch：re.match＋「$」會讓結尾多一個換行的 id 也算合法 (N8)
+    return bool(_ID_RE.fullmatch(report_id or ""))
 
 
 def new_id(now: Optional[float] = None) -> str:
@@ -79,9 +80,17 @@ def cut_audio(src: str, dst: str, minutes: int) -> Optional[str]:
 def save(report: Dict[str, Any], log_text: str, transcript: Optional[str] = None,
          audio_src: Optional[str] = None, audio_minutes: int = 5) -> str:
     """寫一筆回報，回傳 id。report 會補上 id、附件結果。"""
-    rid = new_id()
-    folder = os.path.join(FEEDBACK_DIR, rid)
-    os.makedirs(folder, exist_ok=True)
+    # 同一秒、同一個 4 碼亂數 (1／65536) 時不能寫進已經存在的資料夾、蓋掉別筆回報 (N8)：換一個 id 再試
+    os.makedirs(FEEDBACK_DIR, exist_ok=True)
+    for attempt in range(5):
+        rid = new_id()
+        folder = os.path.join(FEEDBACK_DIR, rid)
+        try:
+            os.mkdir(folder)
+            break
+        except FileExistsError:
+            if attempt == 4:
+                raise
     try:
         attachments: Dict[str, Any] = {}
         with open(os.path.join(folder, "service.log"), "w", encoding="utf-8") as f:
