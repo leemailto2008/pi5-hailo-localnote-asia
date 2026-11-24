@@ -18,15 +18,26 @@ PARTIAL = {"engine": "x", "phase": "diarize", "transcript": "好", "speakers": 0
 
 def _child(tmp_path, lines, linger_s):
     script = tmp_path / "fake_child.py"
+    flag = tmp_path / "printed.flag"
     body = "".join(f"print({json.dumps(json.dumps(obj, ensure_ascii=False))}, flush=True)\n" for obj in lines)
-    # 子行程一律用 UTF-8 輸出（Pi 預設就是；Windows 預設 cp950，主行程用 UTF-8 讀會讀不到中文）
-    script.write_text("import sys, time\nsys.stdout.reconfigure(encoding='utf-8')\n" + body + f"time.sleep({linger_s})\n", encoding="utf-8")
-    return [sys.executable, str(script)]
+    # 子行程一律用 UTF-8 輸出（Pi 預設就是；Windows 預設 cp950，主行程用 UTF-8 讀會讀不到中文）。
+    # 印完才建 flag：停止時機看 flag，不看牆鐘（11-24 Windows 記憶體吃緊時子行程啟動 > 0.8 s，偶發「還沒印就停」）
+    script.write_text("import sys, time\nsys.stdout.reconfigure(encoding='utf-8')\n" + body
+                      + f"open({str(flag)!r}, 'w').close()\ntime.sleep({linger_s})\n", encoding="utf-8")
+    return [sys.executable, str(script)], flag
 
 
-def _run(cmd, stop_after_s):
-    t0 = time.monotonic()
-    return asyncio.run(rt.run_in_subprocess("x.ogg", should_stop=lambda: time.monotonic() - t0 >= stop_after_s, cmd=cmd))
+def _run(child, stop: bool):
+    """stop=True：子行程印完（flag 出現）0.3 s 後才回 should_stop=True，模擬「已交出內容、還在結束時開始錄音」。"""
+    cmd, flag = child
+    seen = {}
+
+    def should_stop():
+        if not stop or not flag.exists():
+            return False
+        seen.setdefault("t", time.monotonic())
+        return time.monotonic() - seen["t"] >= 0.3
+    return asyncio.run(rt.run_in_subprocess("x.ogg", should_stop=should_stop, cmd=cmd))
 
 
 @pytest.fixture(autouse=True)
@@ -36,15 +47,15 @@ def _fast_poll(monkeypatch):
 
 
 def test_result_already_received_is_kept(tmp_path):
-    out = _run(_child(tmp_path, [{"partial": PARTIAL}, {"result": RESULT}], linger_s=5), stop_after_s=0.8)
+    out = _run(_child(tmp_path, [{"partial": PARTIAL}, {"result": RESULT}], linger_s=5), stop=True)
     assert out == RESULT
 
 
 def test_stop_before_result_still_returns_partial(tmp_path):
-    out = _run(_child(tmp_path, [{"partial": PARTIAL}], linger_s=5), stop_after_s=0.8)
+    out = _run(_child(tmp_path, [{"partial": PARTIAL}], linger_s=5), stop=True)
     assert out["stopped"] is True and out["transcript"] == "好"
 
 
 def test_no_stop_returns_result(tmp_path):
-    out = _run(_child(tmp_path, [{"result": RESULT}], linger_s=0), stop_after_s=999)
+    out = _run(_child(tmp_path, [{"result": RESULT}], linger_s=0), stop=False)
     assert out == RESULT
