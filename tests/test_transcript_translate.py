@@ -468,3 +468,20 @@ def test_composite_numbers_pass_number_check():
 def test_wan_composite_not_followed_by_unit():
     # 「2萬3萬」原本變成 200,030,000；萬後接數字再接單位的交給 _CN_COMPOSITE_RE
     assert "200,030,000" not in tt.prepare_source("2萬3萬", "en")
+
+
+def test_retry_prompt_asks_to_keep_numbers(monkeypatch):
+    """11-24 .228：批次翻漏數字後，用同一個提示重翻會得到一字不差的輸出；重翻改用「數字照原樣保留」的提示，批次提示不變。"""
+    prompts = []
+
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return "1| I suggest keeping the trial order price at the new price."          # 批次：漏了 50
+        return "1| I suggest signing a trial order for 50 units first."                    # 重翻：補回來
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt._translate_flat(["我建議先簽50臺的試單。"], "en", None, lambda: False, False))
+    assert res["done"][0] == "I suggest signing a trial order for 50 units first."
+    assert prompts[0].startswith("Translate into English:\n")
+    assert prompts[1].startswith("Translate into English. Keep every number exactly as written:\n")
+    assert tt.build_prompt([(0, "預算80萬")], "zh", retry=True).startswith("翻成繁體中文，數字照原樣保留：")

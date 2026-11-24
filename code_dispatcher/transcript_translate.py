@@ -585,9 +585,16 @@ def group_chunks(units: Sequence[Tuple[int, str]], limit: Optional[int] = None) 
     return chunks
 
 
-def build_prompt(chunk: Sequence[Tuple[int, str]], target: str) -> str:
+def build_prompt(chunk: Sequence[Tuple[int, str]], target: str, retry: bool = False) -> str:
+    """retry=True：單獨重翻沒過檢查的那段，提示多一句「數字照原樣保留」。
+    11-24 .228 Hailo qwen3:1.7b：「我建議先簽50臺的試單…」「…11月7日的週會…」用同一個提示重翻，輸出跟第一次一字不差
+    （數字漏掉／11月7日翻成 11th day），批次加重翻 2 次都白費、只能保留原文；加這句後 2 句 × 3 次全部翻對。
+    批次提示不變：已經翻得好的段不受影響。"""
     lines = "\n".join(f"{n}| {prepare_source(u, target)}" for n, (_i, u) in enumerate(chunk, 1))
-    head = "Translate into English:" if target == "en" else "翻成繁體中文："
+    if target == "en":
+        head = "Translate into English. Keep every number exactly as written:" if retry else "Translate into English:"
+    else:
+        head = "翻成繁體中文，數字照原樣保留：" if retry else "翻成繁體中文："
     return f"{head}\n{lines}"
 
 
@@ -719,7 +726,7 @@ async def _translate_flat(flat: Sequence[str], target: str,
                 continue
             # 對不上的單位、翻英文還夾中文字 (11-19 GS3 30 分 246 行有 2 行留下「组长」)、或數值對不上：單獨重翻一次
             stats["llm_calls"] += 1
-            one = await _complete(build_prompt([(idx, src)], target), target, _num_predict([(idx, src)], target),
+            one = await _complete(build_prompt([(idx, src)], target, retry=True), target, _num_predict([(idx, src)], target),
                                   hailo_only=hailo_only, cpu_first=cpu_first, should_stop=should_stop)
             if one is None:
                 return False
