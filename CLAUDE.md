@@ -47,7 +47,7 @@
 - **累積 3～5 個 commit 就自動 push（2026-10-30 使用者指定）：**
   - 本機累積 3～5 個已驗證的 commit 時，不必再問，自己找空檔推上 GitHub (origin) 與 GitLab (gitlab)。
   - 空檔：沒有在錄音、也沒有在跑會用到電腦的測試時。
-  - 2026-11-03 起用 Desktop Commander MCP 在 repo 根目錄（Windows 為 F:\14_prj_raspi5_localnote_asia）直接跑 `git push origin main`、`git push gitlab main`（先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
+  - 2026-11-03 起用 Desktop Commander MCP 在 repo 根目錄（Windows 為 F:\14_prj_raspi5_localnote_asia）直接跑 `git push origin main`、GitLab 改走 `git push relay main`（11-24 起，見第 2 節；先設 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，出現帳密提示就停下來問）；不必再搶畫面開 Git GUI。
   - 推完回報推了哪些 commit、兩邊是否都成功。
 - **No Placeholders:** 嚴禁留下 `// TODO` 或未完成區塊，程式碼產出必須完整且可執行 (Production-ready)。
 - **Error Handling:** 顯式錯誤處理 (Explicit Error Handling)，嚴禁使用 bare `try: ... except: pass`。
@@ -62,7 +62,7 @@
 - **GitLab (主倉庫 / Remote: gitlab):**
   - URL: `http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-hailo-localnote-asia.git`
   - 授權身分: `andrew.lee`
-  - 推送指令: `git push gitlab main`
+  - 推送指令（2026-11-24 起，Andrew 同意）：**經 Mac 中繼站** `git push relay main`（remote relay＝`andrew@100.64.0.3:git/pi5-hailo-localnote-asia.git`，中繼站轉推 GitLab；`remote.gitlab.pushurl` 設成 `NO-PUSH-use-relay` 防呆）。拉照舊 `git fetch gitlab`。
 - **GitHub (Remote: origin):**
   - URL: `https://alntu2@github.com/leemailto2008/pi5-hailo-localnote-asia.git`
   - 授權身分: `alntu2` (Windows Credential Manager / PAT)
@@ -72,7 +72,9 @@
   - `gitlab-legacy`: `http://andrew.lee@gitlab.mytekcentral.com:8081/andrew.lee/pi5-llm-localnote.git`
 - **一鍵雙推規範：**
   - 提交訊息遵循 Conventional Commits（`feat:`, `fix:`, `docs:`, `chore:`）。
-  - 驗收完成後執行：`git push gitlab main && git push origin main`。
+  - 驗收完成後：`git fetch gitlab` → `git push relay main` → 約 10 秒後確認 `git rev-parse gitlab/main` 等於剛推的 sha → 才 `git push origin main`（GitHub 不能比 GitLab 新；Mac 沒有 GitHub 認證，GitHub 照舊 PC 直推）。
+  - relay 規則：一次推一個 branch（本機名不同寫 `本機名:GitLab名`）；不准 `-f`／`--force-with-lease`／刪 branch／`--all`／`--mirror`／`--tags`；以前不推 GitLab 的 branch 也不推 relay。
+    推了 1 分鐘 GitLab 還沒收到就告訴 dr，不要自己直推 GitLab；relay 掛了要急推，先問 dr 或 Andrew，同意才暫時 `git config --unset remote.gitlab.pushurl`，推完設回去。
 
 ---
 
