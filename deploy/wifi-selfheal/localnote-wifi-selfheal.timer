@@ -1,0 +1,11 @@
+# 每 2 分鐘檢查一次家用 Wi-Fi（開機 3 分鐘後開始）——尚未安裝，見 localnote-wifi-selfheal.service 檔頭。
+[Unit]
+Description=Run LocalNote Wi-Fi self-heal every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

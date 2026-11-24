@@ -1,0 +1,15 @@
+# 家用 Wi-Fi 自救（一次性執行；由 .timer 觸發）——尚未安裝，等 Andrew 決定（11-24 早報待決 7）。
+# Install（.228 先試）：
+#   sudo install -m 755 deploy/wifi-selfheal/localnote-wifi-selfheal.sh /usr/local/bin/
+#   sudo cp deploy/wifi-selfheal/localnote-wifi-selfheal.service deploy/wifi-selfheal/localnote-wifi-selfheal.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now localnote-wifi-selfheal.timer
+#   看紀錄：journalctl -t localnote-wifi-selfheal
+# Uninstall：sudo systemctl disable --now localnote-wifi-selfheal.timer && sudo rm /etc/systemd/system/localnote-wifi-selfheal.* /usr/local/bin/localnote-wifi-selfheal.sh
+[Unit]
+Description=LocalNote home Wi-Fi self-heal (skip while recording or in hotspot mode)
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/localnote-wifi-selfheal.sh
+Nice=10
