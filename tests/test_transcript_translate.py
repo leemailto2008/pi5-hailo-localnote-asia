@@ -339,18 +339,18 @@ def test_residual_chinese_picks_cleanest_usable(monkeypatch):
     async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
         rows = re.findall(r"^(\d+)\| (.*)$", prompt, re.M)
         if len(rows) > 1:
-            return "\n".join(f"{n}| There is an exhibition in New竹 with booth fee价格 today" for n, _t in rows)
-        return "1| There is an exhibition in New竹 with a booth fee today"
+            return "\n".join(f"{n}| There is an exhibition in Hsinchu with booth费 fee价格 today" for n, _t in rows)
+        return "1| There is an exhibition in Hsinchu with a booth费 today"
     monkeypatch.setattr(tt, "_complete", complete)
     res = asyncio.run(tt._translate_flat(["新竹有一場展覽，攤位費報價。", "今天開會。"], "en", None, lambda: False, False))
-    assert res["done"][0] == "There is an exhibition in New竹 with a booth fee today"
+    assert res["done"][0] == "There is an exhibition in Hsinchu with a booth费 today"
 
 
 def test_romanize_titled_names():
     # 11-21 W17／W20：「Team Lead蔡」每場 1–3 次；只轉職稱後面、原文裡有的中文人名
     assert tt.postfix("負責人是蔡組長。", "The responsible person is Captain蔡.", "en") == "The responsible person is Team Lead Cai."
     assert tt.postfix("請焦文軒經理負責", "Please have Manager焦文軒 handle it", "en") == "Please have Manager Jiao Wenxuan handle it"
-    assert tt.postfix("新竹展覽", "attend the new竹 exhibition", "en") == "attend the new竹 exhibition"   # 地名不轉
+    assert tt.postfix("新竹展覽", "attend the new竹 exhibition", "en") == "attend the Hsinchu exhibition"   # 地名不轉拼音 (N2：改成官方英譯，見 test_fix_place_names)
     assert tt.postfix("吳副理", "Ms.王 said", "en") == "Ms.王 said"                                   # 原文沒有的字不轉
     assert tt.postfix("蔡組長", "蔡組長", "zh") == "蔡組長"                                           # 翻中文不動
     assert tt.postfix("負責人是蔡組長。", "The responsible person is Team Lead蔡 (Cai). Next", "en") == "The responsible person is Team Lead Cai. Next"
@@ -543,3 +543,48 @@ def test_prepare_zh_scale_boundary():
   + [(f"3萬52{c}", f"3萬52{c}") for c in "十百千萬万億亿"])
 def test_prepare_source_composite_boundaries(src, want):
     assert tt.prepare_source(src, "en") == want
+
+
+def test_fix_place_names():
+    # N2（11-24 .228 中→英即時翻譯 276 段夾中文 2 段都是「New竹」：小模型把「新」翻成 New、留下「竹」）
+    f = lambda src, tr: tt.postfix(src, tr, "en")
+    assert f("十月二十一日在新竹有一場展覽，攤位費三十萬元。", "There is an exhibition in New竹 on October 21, booth fee 300,000 yuan.") \
+        == "There is an exhibition in Hsinchu on October 21, booth fee 300,000 yuan."
+    assert f("新竹展覽", "attend the new 竹 exhibition") == "attend the Hsinchu exhibition"     # 中間一個空白
+    assert f("新竹展覽", "attend the 新竹exhibition") == "attend the Hsinchu exhibition"       # 整個留中文：補空白
+    assert f("新竹市政府", "the 新竹市 government") == "the Hsinchu City government"           # 市／縣一起換
+    assert f("臺中的華新機電", "华新 in 台中") == "华新 in Taichung"                             # 臺／台；不是地名的中文不動
+    assert f("在桃园", "in 桃園") == "in Taoyuan"                                               # 原文簡體
+    assert f("今天開會", "New竹 thing") == "New竹 thing"                                         # 原文沒有這個地名：不動
+    assert f("在新竹", "in Hsinchu") == "in Hsinchu"                                             # 已經對的不動
+    assert f("在新竹", "a new idea竹") == "a new idea竹"                                         # 前面的英文字不是「新」的翻譯／拼音：不吃
+    assert tt.postfix("在新竹", "在新竹", "zh") == "在新竹"                                      # 翻中文不動
+
+
+def test_fix_place_names_half_translated_heads():
+    # 只翻一半時，前面的英文字要是第一個字的翻譯 (New) 或拼音／英譯開頭；其他英文字不吃
+    f = lambda src, tr: tt.fix_place_names(src, tr, "en")
+    assert f("在新竹", "in Xin竹") == "in Hsinchu"
+    assert f("在新竹", "in Hsin竹 Science Park") == "in Hsinchu Science Park"
+    assert f("在台中", "in Tai中") == "in Taichung"
+    assert f("在新竹", "in the 竹 area") == "in the 竹 area"
+    assert f("在新竹", "the竹 area") == "the竹 area"
+    assert f("在新北", "in New北") == "in New Taipei"
+    assert f("在台北", "in New北") == "in New北"                    # 原文是台北，不是新北
+    assert f("在平台中選擇", "select in 平台中") == "select in 平台中"   # 「平台中」不是台中
+    assert f("買三台中型機台", "buy three 台中 machines") == "buy three 台中 machines"
+    assert f("在平台中選擇，台中的客戶", "select in 平台中, 台中 customers") == "select in 平Taichung, Taichung customers"  # 原文另有真的台中：都換（已知限制）
+
+
+def test_place_name_residue_no_longer_needs_retry(monkeypatch):
+    # 「New竹」postfix 後就是乾淨英文：不再額外單獨重翻 (Hailo 4.5 tok/s，每次重翻多等好幾秒)
+    calls = []
+
+    async def complete(prompt, target, num_predict, *, hailo_only, cpu_first, should_stop):
+        calls.append(prompt)
+        return "1| There is an exhibition in New竹 today"
+    monkeypatch.setattr(tt, "_complete", complete)
+    res = asyncio.run(tt._translate_flat(["今天在新竹有一場展覽。"], "en", None, lambda: False, False))
+    assert res["done"][0] == "There is an exhibition in Hsinchu today"
+    assert len(calls) == 1
+

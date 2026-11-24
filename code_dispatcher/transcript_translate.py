@@ -557,12 +557,78 @@ def fix_common_zh_words(translation: Optional[str], target: str) -> Optional[str
     return out
 
 
+# 臺灣縣市名的英文 (官方英譯)：小模型把「新竹」的「新」翻成 New、留下「竹」(11-24 .228 中→英即時翻譯 276 段夾中文 2 段都是「New竹」；
+# 週末 11,979 句真實譯文夾中文剩的 43 句有 37 句是它)。只在原文有這個地名、而且譯文還留著這個地名的中文 (整個或半個) 時才換。
+# 地名英譯 (Hsinchu 還是 Xinzhu) 待 Andrew 決定；這裡用縣市政府與外交部的官方拼法。
+_PLACE_EN = {"新竹": "Hsinchu", "台北": "Taipei", "新北": "New Taipei", "桃園": "Taoyuan", "台中": "Taichung", "台南": "Tainan",
+             "高雄": "Kaohsiung", "基隆": "Keelung", "苗栗": "Miaoli", "彰化": "Changhua", "南投": "Nantou", "雲林": "Yunlin",
+             "嘉義": "Chiayi", "屏東": "Pingtung", "宜蘭": "Yilan", "花蓮": "Hualien", "台東": "Taitung", "澎湖": "Penghu",
+             "金門": "Kinmen", "馬祖": "Matsu"}
+# 原文、譯文可能寫成臺／台、繁／簡：原文先統一成上表的寫法再找；譯文裡的中文用上表寫法與它的臺、簡體寫法比對
+_PLACE_SIMP = {"園": "园", "雲": "云", "義": "义", "東": "东", "蘭": "兰", "蓮": "莲", "門": "门", "馬": "马"}
+_PLACE_NORM = str.maketrans({"臺": "台", **{v: k for k, v in _PLACE_SIMP.items()}})
+_PLACE_SUFFIX_EN = {"市": " City", "縣": " County", "县": " County"}
+
+
+def _place_re(zh: str) -> "re.Pattern[str]":
+    variants = {zh, zh.replace("台", "臺"), zh.translate(str.maketrans(_PLACE_SIMP))}
+    whole = "|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True))
+    tail = "|".join(sorted({re.escape(v[1:]) for v in variants}))
+    # 整個留中文；或只翻一半：英文字緊接剩下的中文字 (New竹)，「新」常被翻成 New，允許中間一個空白 (new 竹)。
+    # 前面那個英文字是不是第一個字的翻譯／拼音，由 fix_place_names 判斷
+    return re.compile(r"(?:" + whole + r"|(?<![A-Za-z])(?P<head>[A-Za-z]+ ?)(?:" + tail + r"))(?P<suffix>[市縣县])?")
+
+
+_PLACE_RES = {zh: _place_re(zh) for zh in _PLACE_EN}
+# 原文裡「台」前面是這些字時是別的詞 (平台中、舞台、三台中、每台)，不是地名
+_NOT_PLACE_BEFORE_TAI = set("平舞後后前櫃柜講讲陽阳月電电吧站燈灯一二兩两三四五六七八九十百千幾几多每整這这那哪0123456789")
+
+
+def _src_has_place(src_n: str, zh: str) -> bool:
+    i = src_n.find(zh)
+    while i >= 0:
+        if not (zh[0] == "台" and i > 0 and src_n[i - 1] in _NOT_PLACE_BEFORE_TAI):
+            return True
+        i = src_n.find(zh, i + 1)
+    return False
+
+
+def fix_place_names(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    """英文譯文裡留下的臺灣縣市中文名換成英文：整個留中文 (「in 新竹」)，或只翻了一半 (「New竹」「new 竹」：「新」被翻成 New)。
+    後面緊接「市／縣」一起換 (Hsinchu City)。原文沒有這個地名就不動。"""
+    if not translation or target != "en" or not _CJK_RE.search(translation):
+        return translation
+    src_n = (src or "").translate(_PLACE_NORM)
+    lm, rm = "\x01", "\x02"
+    out = translation
+    for zh, en in _PLACE_EN.items():
+        if not _src_has_place(src_n, zh):
+            continue
+        py = _surname_pinyin(zh[0]).lower()
+
+        def repl(m: "re.Match[str]", zh: str = zh, en: str = en, py: str = py) -> str:
+            raw = m.group("head")
+            if raw is not None:
+                # 只翻了一半：前面的英文字要是第一個字的翻譯 (新 → New，可隔一個空白) 或緊接的拼音／英譯開頭
+                # (Xin竹、Hsin竹、Tai中)；其他英文字 (「idea竹」「the 竹」) 不吃
+                head = raw.strip().lower()
+                if not ((zh[0] == "新" and head == "new") or (raw == raw.strip() and len(head) >= 2 and
+                                                               (head == py or en.lower().replace(" ", "").startswith(head)))):
+                    return m.group(0)
+            return lm + en + _PLACE_SUFFIX_EN.get(m.group("suffix") or "", "") + rm
+        out = _PLACE_RES[zh].sub(repl, out)
+    if lm not in out:
+        return translation
+    out = re.sub(r"(?<=[A-Za-z0-9])" + lm, " ", out).replace(lm, "")
+    return re.sub(rm + r"(?=[A-Za-z0-9])", " ", out).replace(rm, "")
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
-    姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)。"""
+    姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
-    return fix_weekdays(fix_common_zh_words(out, target), target)
+    return fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
