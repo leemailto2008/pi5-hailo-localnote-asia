@@ -132,8 +132,11 @@ def test_bt_status_stops_when_recording_starts_mid_refresh(monkeypatch):
         rec["on"] = True                       # 第一個 bluetoothctl 跑完時錄音開始
         return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
     monkeypatch.setattr(main_mod.subprocess, "run", fake_run)
-    import bluetooth_manager
-    monkeypatch.setattr(bluetooth_manager, "get_full_bt_status", lambda: "")
+    # 不真的 import bluetooth_manager：它用 pty（termios）驅動 bluetoothctl，Windows 沒有 termios（11-24 Windows 全套才發現）
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "bluetooth_manager",
+                        types.SimpleNamespace(get_full_bt_status=lambda: "", load_bt_config=lambda: {}))
     st = main_mod.get_bt_status()
     assert len(calls) == 1 and calls[0][:3] == ["bluetoothctl", "devices", "Connected"]
     assert st["state_hash"] == "recording"
