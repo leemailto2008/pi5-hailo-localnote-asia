@@ -167,7 +167,7 @@
 - **高精度稿辨識切段（2026-11-13，e19a919）:** 辨識在停頓處切 4–9.5 s 整段做（與即時稿相同），字依時間分回 VAD 句子給分說話人；VAD 句子（約 3 s）上下文太短，cer_num 0.05 → 0.03–0.04。`PI5_REFINE_ASR_SEGMENT=vad` 切回。
 - **Windows pytest:** 預設暫存資料夾壞掉時，加 `--basetemp=.cc_scratch\pt_tmp_<時間>`（11-23 起 tests/ 在 Windows 可完整收集，不用 `--ignore`）。
   **PC 記憶體排班（11-23 dr）：** 這台 PC 同時跑讀卡器 co-sim 等 agent，可用 RAM 掉到約 2.1 GB 時 Claude Code 會停掉工作；PC 上跑 pytest／重放前一律用
-  `bash .cc_scratch/tmp/with_l1_lock.sh "<做什麼>" <分鐘> <指令…>`（呼叫共用的 l1lock.py 原子拿 `R:\Temp\l1_exclusive.lock`、檢查 RAM ≥ 2.3 GB，拿不到就不跑），不要手寫判斷鎖的指令（11-24 手寫沒加引號、跑進 co-sim 的時段）。
+  `bash .cc_scratch/tmp/with_l1_lock.sh "<做什麼>" <分鐘> <指令…>`（呼叫統一鎖工具 `F:\62_prj_my6601_cosim\tools\l1_lock.py --take／--release localnote` 拿 `R:\Temp\l1_exclusive.lock`、檢查 RAM ≥ 2.3 GB，拿不到就不跑；不自己判斷或刪別人的鎖），不要手寫判斷鎖的指令（11-24 手寫沒加引號、跑進 co-sim 的時段）。
 - **PC → Pi 傳大檔:** scp 原樣傳 7 MB tar 會卡住，加 `-C`（壓縮）約 1 分鐘傳完。
 
 ### ⚠️ [重點十] 即時翻譯與譯文後處理 (2026-11-20～22 實測，細節見 `claude_context/BIG_CHANGE_STATUS.md` #59、#60)
