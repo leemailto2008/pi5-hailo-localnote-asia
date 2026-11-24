@@ -170,7 +170,8 @@ def number_values(text: str, words: bool = False) -> List[float]:
     return out
 
 
-_EN_KM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)([KkM])(?![A-Za-z])")
+# 千分位「1,500K」要整個吃進來 (N5：原本從逗號後面開始比對，讀成 1,500 與 500K＝500,000，翻對的「1,500K」被當成數值不符)
+_EN_KM_RE = re.compile(r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)([KkM])(?![A-Za-z])")
 
 
 _DOT_THOUSANDS_RE = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{3})+(?![\d.])")
@@ -180,7 +181,13 @@ def numbers_ok(src: str, translation: str) -> bool:
     """原文出現過的每個數值，譯文裡至少出現一次 (重複次數不比：西文「un 74%…un 74%」譯文只寫一次也是對的)。
     句點後剛好 3 位數的「400.000」兩種讀法都可以：西／德文的千分位 (400000) 或小數 (400.0) (11-19 full2：西文「400.000 viviendas」)。"""
     have = set(number_values(translation, words=True))
-    alt = {round(float(m.group(0)), 6): float(m.group(0).replace(".", "")) for m in _DOT_THOUSANDS_RE.finditer(src or "")}
+    # 千分位讀法：這一串讀出來的每個數 (「400.000」→ 400.0；「1.234.567」→ 1.234、567) 都對應到整串的千分位數值。
+    # N5：原本 float("1.234.567") → ValueError，即時翻譯的背景工作整個停掉 (西／德文會議後面都不翻)
+    alt = {}
+    for m in _DOT_THOUSANDS_RE.finditer(src or ""):
+        full = float(m.group(0).replace(".", ""))
+        for v in number_values(m.group(0)):
+            alt[v] = full
     return all(v in have or (v in alt and alt[v] in have) for v in number_values(src))
 
 
@@ -191,7 +198,9 @@ _EN_SCALED_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d
 # 即時稿 (SenseVoice ITN) 偶爾把阿拉伯數字和國字數字混寫：「加裝十0只警示燈」=10、「二十5」=25、「第1三個議題」=13、
 # 「第一7二個」=172、「第1八十四個」=184 (11-21 W11 240 分即時翻譯 31 段保留原文有 12 段是這種，W15 剩「第1三個」：數值比對看不懂)
 # 後面要接量詞或單位才換：日文「第3四半期」(第 3 季) 的「3四」不是 34
-_MIXED_NUM_RE = re.compile("(?<![0-9零〇一二三四五六七八九十百千萬億兩])[0-9零〇一二三四五六七八九十]+(?![0-9零〇一二三四五六七八九十百千萬億兩])"
+# 後面可以接萬千百億 (N5：原本負向 lookahead 擋掉，量詞清單裡的萬千百億永遠用不到；「二十5萬」沒換成「25萬」，
+# 送模型的原文變成「二十50,000」)
+_MIXED_NUM_RE = re.compile("(?<![0-9零〇一二三四五六七八九十百千萬億兩])[0-9零〇一二三四五六七八九十]+(?![0-9零〇一二三四五六七八九十兩])"
                            "(?=[個个位台臺人輪轮只隻件條条日號号月年天週周次場场名家款項项輛辆張张支組组萬万千百億亿元%％倍])")
 _CN_ONE_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 

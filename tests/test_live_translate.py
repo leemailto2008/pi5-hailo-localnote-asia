@@ -298,3 +298,30 @@ def test_kept_reason_stopped_when_batch_interrupted(monkeypatch):
     tr = asyncio.run(scenario())
     segs = tr.dump()["segments"]
     assert "kept" not in segs[0] and segs[1]["kept"] == "stopped"
+
+
+
+def test_unexpected_error_in_one_batch_does_not_stop_translation(monkeypatch):
+    """N5：一批出現意外錯誤 (原本「1.234.567」的 ValueError) 只影響這一批，後面的段落照常翻。"""
+    calls = []
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        calls.append(list(units))
+        if len(calls) == 1:
+            raise ValueError("boom")
+        return {"done": {k: f"T{k}" for k in range(len(units))}}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+    monkeypatch.setattr(lt, "BATCH_CHARS", 1)
+
+    async def scenario():
+        tr = lt.LiveTranslator("en")
+        task = asyncio.create_task(tr.run())
+        tr.add("第一段。")
+        await asyncio.sleep(0.05)
+        tr.add("第二段。")
+        tr.close()
+        await asyncio.wait_for(task, 2)
+        return tr
+    tr = asyncio.run(scenario())
+    assert tr.out[0] == "第一段。" and tr.out[1] == "T0" and tr.kept == 1
+    assert tr.dump()["segments"][0]["kept"] == "error"

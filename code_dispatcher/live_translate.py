@@ -124,6 +124,7 @@ class LiveTranslator:
         self.latencies: List[float] = []
         self.kept = 0          # 沒翻成 (數值對不上、模型沒回)：顯示原文
         # 段號 → "llm_error"（整批請求失敗）／"rejected"（模型沒回這段或沒通過數值等檢查）／"stopped"（翻到一半被停掉）
+        # ／"error"（後處理等意外錯誤）
         self.kept_reason: Dict[int, str] = {}
         self.requests = 0
         self.llm_calls = 0     # 含單句重翻
@@ -231,9 +232,15 @@ class LiveTranslator:
             except tt.LLMError as e:
                 logger.warning("[LiveTranslate] 第 %d–%d 段翻譯失敗，顯示原文：%s", idxs[0] + 1, idxs[-1] + 1, e)
                 got = {}
-                batch_failed, stopped = True, False
+                batch_failed, stopped = "llm_error", False
+            except Exception:
+                # 後處理／數值檢查的意外錯誤只影響這一批：顯示原文、繼續翻後面的段落 (N5：「1.234.567」的 ValueError
+                # 原本讓整個背景工作結束，這場會議後面都不翻)
+                logger.exception("[LiveTranslate] 第 %d–%d 段翻譯出錯，顯示原文", idxs[0] + 1, idxs[-1] + 1)
+                got = {}
+                batch_failed, stopped = "error", False
             else:
-                batch_failed = False
+                batch_failed = None
             if not self._go.is_set() and not self._should_stop():
                 self.requests -= 1
                 continue
@@ -246,7 +253,7 @@ class LiveTranslator:
                     self.out[i] = self.src[i]
                     self.kept += 1
                     # 翻到一半被停掉 (should_stop) 的段記 "stopped"：不是模型沒回、也不是沒通過檢查 (N4)
-                    self.kept_reason[i] = "llm_error" if batch_failed else "stopped" if stopped else "rejected"
+                    self.kept_reason[i] = batch_failed or ("stopped" if stopped else "rejected")
                 self.targets[i] = tgt
                 self.latencies.append(now - self._added[i])
             done = idxs[-1] + 1
