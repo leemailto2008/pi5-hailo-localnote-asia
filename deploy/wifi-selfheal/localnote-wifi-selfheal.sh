@@ -18,8 +18,15 @@ state=$(curl -s -m 5 "$API/api/status" 2>/dev/null | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("state",""))
 except Exception: print("")' 2>/dev/null)
 if [ "$state" = "recording" ]; then echo "skip: recording"; exit 0; fi
+# API 在本機 (127.0.0.1)，Wi-Fi 斷了也連得到：服務在跑卻沒回應 (可能正在錄音、忙) 時不知道是不是錄音中，不動 Wi-Fi (N12)。
+# 服務沒在跑就照常自救。
+if [ -z "$state" ] && systemctl is-active --quiet pi5-dispatcher-api.service 2>/dev/null; then
+  echo "skip: api not answering (service active)"; exit 0
+fi
 
-active_ap=$(nmcli -t -f NAME,TYPE,DEVICE con show --active 2>/dev/null | while IFS=: read -r name type dev; do
+# NAME 放最後：nmcli -t 把名稱裡的「:」寫成「\:」，放最後才不會被 IFS=: 切開；讀完再把「\:」換回「:」(N12，同 fae8bfa)
+active_ap=$(nmcli -t -f TYPE,DEVICE,NAME con show --active 2>/dev/null | while IFS=: read -r type dev name; do
+  name=${name//\\:/:}
   [ "$type" = "802-11-wireless" ] || continue
   mode=$(nmcli -g 802-11-wireless.mode con show "$name" 2>/dev/null)
   [ "$mode" = "ap" ] && { echo "$name"; break; }
@@ -36,7 +43,8 @@ n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE"
 log "fail $n: gateway '${gw:-none}' unreachable"
 
 # 家用 Wi-Fi 設定：autoconnect=yes、不是 AP 的 wifi 連線，取第一個
-sta=$(nmcli -t -f NAME,TYPE,AUTOCONNECT con show 2>/dev/null | while IFS=: read -r name type auto; do
+sta=$(nmcli -t -f TYPE,AUTOCONNECT,NAME con show 2>/dev/null | while IFS=: read -r type auto name; do
+  name=${name//\\:/:}
   [ "$type" = "802-11-wireless" ] && [ "$auto" = "yes" ] || continue
   [ "$(nmcli -g 802-11-wireless.mode con show "$name" 2>/dev/null)" = "ap" ] && continue
   echo "$name"; break
