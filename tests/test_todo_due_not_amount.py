@@ -53,3 +53,22 @@ def test_version_number_is_not_a_due_date(text):
 @pytest.mark.parametrize("text,want", [("3.15前交", ["3.15"]), ("在3/15前", ["3/15"]), ("TV 3/15上市", ["3/15"])])
 def test_dates_still_found_near_letters(text, want):
     assert [m.group(0) for m in su._TIME_RE.finditer(text)] == want
+
+
+@pytest.mark.parametrize("text", ["請吳副理1.5天內完成", "工期2.5年", "每3.5週檢查一次", "會議1.5小時", "休息10-15分鐘", "抽查2.3次", "第3-4季"])
+def test_durations_are_not_due_dates(text):
+    # N10 fuzz：「1.5天」被讀成 1/5 填進待辦表的期限欄（數量／時長不是日期）
+    assert [m.group(0) for m in su._TIME_RE.finditer(text)] == []
+
+
+def test_pipe_in_transcript_does_not_break_todo_table():
+    # N10 fuzz：逐字稿裡的「|」原樣放進待辦表的格子，表格欄位錯開，再處理一次結果又變
+    rows = su.transcript_todo_rows("待辦事項是請吳副理10月7日前完成|報告。")
+    assert all(r.count("|") == 4 for r in rows), rows
+
+
+
+def test_transcript_todo_does_not_glue_separate_numbers():
+    # N10 fuzz：事項從逐字稿取時把空白全部拿掉，「0 0」變成憑空的「00」
+    for r in su.transcript_todo_rows("教育訓練：請吳副理八月十五日0 0。") + su.transcript_todo_rows("請王經理下週三前準備3 5台樣品。"):
+        assert "00" not in r and "35" not in r, r

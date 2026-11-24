@@ -1366,3 +1366,33 @@ def test_line_repeat_start_block_copy():
     one = "## Summary\n" + body[0] + "\n" + body[1] + "\n\n## Decisions\n" + body[0] + "\n- 其他決議寫完了\n"
     assert line_repeat_start(one) is None                     # 只重複一行
     assert line_repeat_start("| 確認 | - | - |\n" * 5) is None   # 短行重複不算
+
+
+def test_clean_keeps_missing_note_in_every_section():
+    # N10 fuzz：「（模型輸出長度不足，此段未產生…）」在三段各一次，原本跨段去重只留第一段，待辦／決議變成空的，
+    # 之後 ensure_sections 又補成別的內容（做兩次結果不一樣）
+    from summary_utils import SECTION_MISSING_NOTE, clean_summary_markdown, ensure_sections
+    x = ensure_sections("")
+    assert clean_summary_markdown(x).count(SECTION_MISSING_NOTE) == 3
+    assert ensure_sections(clean_summary_markdown(x)) == x
+    md = "## 摘要\n- 無\n\n## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 無 | - | - |\n\n## 決議\n- 無"
+    assert clean_summary_markdown(md).count("- 無") == 2              # 摘要、決議各自的「無」不是重複
+
+
+def test_cut_off_final_bullet_only_compares_same_section():
+    # N10 fuzz：決議最後一條「工安：許經理1」剛好是摘要某條（「工安：許經理1完成」）的前綴，原本被當成截斷拿掉；
+    # 重複迴圈截斷的是同一段裡的前一條，跨段不比
+    from summary_utils import clean_summary_markdown
+    md = "## 摘要\n- 教育訓練：吳副理1\n- 工安：許經理1完成\n\n## 決議\n- 工安：許經理1"
+    assert clean_summary_markdown(md).endswith("- 工安：許經理1")
+    loop = "## 決議\n- 產線加一傭一站查\n- 產線加一"                   # 同一段的截斷照舊拿掉
+    assert clean_summary_markdown(loop) == "## 決議\n- 產線加一傭一站查"
+
+
+def test_merge_body_todos_stable_after_second_pass():
+    from summary_utils import merge_body_todos
+    md = ("## 摘要\n\n\n## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 教育訓練：吳副理1 | 吳副理 | - |\n"
+          "| 教育訓練：吳副理10 | 吳副理 | - |\n\n## 決議\n")
+    tr = "。決議教育訓練：許經理1。決議教育訓練：請許經理1.5"
+    twice = merge_body_todos(merge_body_todos(md, tr), tr)
+    assert merge_body_todos(twice, tr) == twice

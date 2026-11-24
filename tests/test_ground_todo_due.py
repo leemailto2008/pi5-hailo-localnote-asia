@@ -55,3 +55,19 @@ def test_bare_week_still_not_grounded():
     assert not su._grounded("週前", su._ground_norm("週五之前交"), due=True)
     # 「今天」會議裡到處都有 (「今天的週會」)：「今天前」不靠去掉「前」來對
     assert not su._grounded("今天前", su._ground_norm("今天的週會有三個議題"), due=True)
+
+
+def test_ground_todo_table_stable_after_second_pass():
+    # N10 fuzz：負責人欄寫了逐字稿沒講過的人 → 改成「-」；這一欄不是模型留空的，不從事項欄補 (S19 的規則)。
+    # 再呼叫一次時它已經是空的，會補上；第二次之後不再變
+    md = "## 摘要\n\n## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 教育訓練：許經理1 | 吳副理 | - |\n\n## 決議\n"
+    once = su.ground_todo_table(md, "教育訓練：許經理1")
+    assert "| 吳副理 |" not in once and "| - |" in once
+    twice = su.ground_todo_table(once, "教育訓練：許經理1")
+    assert su.ground_todo_table(twice, "教育訓練：許經理1") == twice
+
+def test_ground_todo_table_drops_rows_that_become_identical():
+    # N10 fuzz：兩列只差在期限，期限都不在逐字稿 → 兩列都變「| X | - | - |」；同一次就只留一列
+    md = "## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 送樣品 | 吳副理 | 1 |\n| 送樣品 | 吳副理 | 2 |\n"
+    out = su.ground_todo_table(md, "請準備送樣品")
+    assert out.count("| 送樣品 |") == 1, out

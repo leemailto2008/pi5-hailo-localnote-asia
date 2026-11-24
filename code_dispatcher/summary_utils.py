@@ -229,7 +229,10 @@ def _drop_cut_off_final_bullet(text: str) -> str:
     tail = _BULLET_RE.sub("", lines[-1]).strip()
     if len(tail) < 3:
         return text
-    earlier = [_BULLET_RE.sub("", l).strip() for l in lines[:-1] if l.lstrip().startswith(("-", "*", "•"))]
+    # 只跟同一段的條目比 (N10 fuzz：決議最後一條「工安：許經理1」剛好是摘要「工安：許經理1完成」的前綴，被當成截斷拿掉；
+    # 重複迴圈截斷的是同一段裡前面那條)
+    start = max((i for i, l in enumerate(lines[:-1]) if l.strip().startswith("## ")), default=-1) + 1
+    earlier = [_BULLET_RE.sub("", l).strip() for l in lines[start:-1] if l.lstrip().startswith(("-", "*", "•"))]
     return "\n".join(lines[:-1]) if any(len(b) > len(tail) and b.startswith(tail) for b in earlier) else text
 
 
@@ -279,7 +282,8 @@ def clean_summary_markdown(md: str, max_items: Optional[Dict[str, int]] = None) 
             s = line = _DECISION_LABEL_RE.sub("- ", s)       # 「- 決議：8月26日前完成報到」：段名已是決議 (138 份紀要 11 份)
         if is_item and section in ("摘要", "決議") and _LABEL_ECHO_RE.search(s):
             s = line = _drop_label_echo(s)
-        if is_item or is_row:
+        # 跨段去重 (重複迴圈)；但「無」「此段未產生」是每段自己的佔位，不是重複 (N10 fuzz：三段都沒產生時只留第一段的說明)
+        if (is_item or is_row) and s not in _SECTION_PLACEHOLDERS:
             if s in seen:
                 continue
             seen.add(s)
@@ -599,7 +603,9 @@ def _grounded(cell: str, tr_norm: str, due: bool = False) -> bool:
 
 def ground_todo_table(md: str, transcript: str) -> str:
     """待辦表每列的負責人、時間欄若在逐字稿中找不到，改成「-」 (多人時只留找得到的人)；事項欄與其他段落不動。
-    空的負責人／時間欄先從事項欄補 (_fill_todo_cells)，補上的也一樣要在逐字稿裡找得到。"""
+    空的負責人／時間欄先從事項欄補 (_fill_todo_cells)，補上的也一樣要在逐字稿裡找得到。
+    只補模型本來就留空的欄：模型寫了、但逐字稿沒講過而改成「-」的不補 (N10：所以再呼叫一次可能會補上，
+    兩次結果不一定相同，第二次之後就不再變)。"""
     if not md or not transcript or "## 待辦" not in md:
         return md
     md = _fill_en_due_from_transcript(_fill_en_owner_from_transcript(_snap_en_todo_cells(_fill_todo_cells(md), transcript), transcript),
@@ -629,7 +635,24 @@ def ground_todo_table(md: str, transcript: str) -> str:
                     cols[i] = "、".join(kept) if kept and len(parts) > 1 else "-"
                 line = "| " + " | ".join(cols) + " |"
         out.append(line)
-    return _drop_same_task_rows(_drop_ownerless_duplicate_rows(_drop_empty_item_rows("\n".join(out))))
+    return _drop_exact_duplicate_rows(_drop_same_task_rows(_drop_ownerless_duplicate_rows(_drop_empty_item_rows("\n".join(out)))))
+
+
+def _drop_exact_duplicate_rows(md: str) -> str:
+    """對照逐字稿後變成一模一樣的待辦列 (兩列負責人、期限都被改成「-」) 只留第一列 (N10 fuzz：原本要再整理一次才去掉，
+    做兩次結果不一樣)。"""
+    out, seen, section = [], set(), None
+    for line in md.splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            section = s[3:].strip()
+        if section == "待辦" and s.startswith("|") and not _is_sep(s):
+            key = tuple(c.strip() for c in s.strip("|").split("|"))
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(line)
+    return "\n".join(out)
 
 
 # 事項只有議題名稱或段落名稱、不是動作 (11-05 3 分鐘 e2e：「| 招募方面 | 王經理 | - |」「| 決議 | - | - |」)
@@ -1170,6 +1193,7 @@ def line_repeat_start(text: str) -> Optional[int]:
 
 
 SECTION_MISSING_NOTE = "（模型輸出長度不足，此段未產生，請參考逐字稿）"
+_SECTION_PLACEHOLDERS = frozenset({"- 無", "- None", "- 无", f"- {SECTION_MISSING_NOTE}"})
 
 # 逐字稿中明講的「決議是…」(STT 端 fix_meeting_terms 已把 決意/捷一… 改回「決議」)。
 # 只取到下一個標點或「待辦」為止，30 字內沒有斷點的長串不取 (多半是 STT 連成一片的錯字)。
@@ -1368,7 +1392,7 @@ _OWNER_RE = re.compile(r"(?:負責人(?:是|為)?\s*)?(" + _NAME_CHAR + r"{1,3}(
 # 「3/15」「3.15」「10-7」：月 1–12、日 1–31，前後不接數字、後面不接數量單位；前面不接「第」「V」「版本」(N4：「V3.5」「版本3.12」是版本號) (S18 fuzz：「訂購2.5萬個零件」的期限被填成「2.5」、
 # 「預算追加1.5億」→「1.5」、「招募3-5人」→「3-5」)
 _TIME_RE = re.compile(r"((?:1[0-2]|0?[1-9])\s*月\s*(?:3[01]|[12]\d|0?[1-9])\s*日|"
-                      r"(?:十[一二]?|[一二三四五六七八九]|1[0-2]|0?[1-9])\s*月\s*(?:三十一?|二?十[一二三四五六七八九]?|[一二三四五六七八九])\s*[日號]|(?<![\d.第Vv])(?<!版本)(?<!版本\s)(?:1[0-2]|0?[1-9])[./-](?:3[01]|[12]\d|0?[1-9])(?!\.?\d|\s*(?:萬|万|億|亿|千|百|%|％|個|个|噸|吨|元|台|臺|人|公斤|件|倍|部|支|套|名|位|家|項|条|條|成|版|million|billion|thousand))(?:日)?|\d{1,2}\s*日前|(?<!上)(?<!上\s)下?週[一二三四五六日]|月底|下週|明天|今天(?![就先到開這說講的有是])|年底)")
+                      r"(?:十[一二]?|[一二三四五六七八九]|1[0-2]|0?[1-9])\s*月\s*(?:三十一?|二?十[一二三四五六七八九]?|[一二三四五六七八九])\s*[日號]|(?<![\d.第Vv])(?<!版本)(?<!版本\s)(?:1[0-2]|0?[1-9])[./-](?:3[01]|[12]\d|0?[1-9])(?!\.?\d|\s*(?:萬|万|億|亿|千|百|%|％|個|个|噸|吨|元|台|臺|人|公斤|件|倍|部|支|套|名|位|家|項|条|條|成|版|天|年|週|周|小時|小时|分|秒|次|季|個月|个月|million|billion|thousand))(?:日)?|\d{1,2}\s*日前|(?<!上)(?<!上\s)下?週[一二三四五六日]|月底|下週|明天|今天(?![就先到開這說講的有是])|年底)")
 _DECISION_RE = re.compile(r"決定|決議|定案|確定|通過|同意|維持|改為|改成|暫停|取消"
                           r"|\b(?:decided|decision|agreed|approved|confirmed|keep the|go with|postponed?|cancel(?:l?ed)?|switch(?:ed)? to"
                           r"|sign a|signed an?|trial order|release (?:the )?fix|released)\b",
@@ -1420,6 +1444,12 @@ def _clean_action(item: str) -> str:
     """事項去掉 STT 插進來的書名號／引號 (「李協理《市安排回測是》」) 與殘留的「前」。"""
     item = re.sub(r"[《》〈〉「」『』]", "", item or "").strip()
     return _ACTION_LEAD_RE.sub("", re.sub(r"(?<=.{2})前$", "", item)).strip() or item
+
+
+def _drop_cjk_spaces(text: str) -> str:
+    """去掉中文之間的空白；兩邊都是英文字母／數字的空白留著 (N10 fuzz：原本全部拿掉，「0 0」變成憑空的「00」、「3 5人」變「35人」)。"""
+    return re.sub(r"\s+", lambda m: " " if re.match(r"[A-Za-z0-9]", m.string[m.end():m.end() + 1] or "")
+                  and re.match(r"[A-Za-z0-9]", m.string[m.start() - 1:m.start()] or "") else "", text)
 
 
 def _cut_item(text: str, n: int = 20) -> str:
@@ -2071,7 +2101,7 @@ def _body_action(text: str) -> str:
     m = _body_due(text)
     if m:
         text = re.sub(r"(?:在|於)?\s*\0\s*(?:之前|以前|前)?", "", text[:m.start()] + "\0" + text[m.end():])
-    text = re.sub(r"^(?:負責|主持|主吃)(?=希望|並|然後|在|於)", "", re.sub(r"\s+", "", text))
+    text = re.sub(r"^(?:負責|主持|主吃)(?=希望|並|然後|在|於)", "", _drop_cjk_spaces(text))
     text = re.sub(r"^(?:負)+(?!責)", "", text)        # 「負責」聽壞成「負負請交初稿」「負回覆客戶」
     # 下一個議題沒斷句、編號也聽壞 (「送到財務部第11個已提是公啊」「交初稿第11」)；句尾語氣詞 (「完成報到好」)
     # 「第」也漏掉、或編號多唸一個字時 (「回覆客戶七個一提是招募」「第六十一一個議題」，5 分鐘 e2e)
@@ -2116,7 +2146,7 @@ def _transcript_todos(transcript: str, max_rows: int = 12) -> List[tuple]:
             segs = [x for x in re.split(r"並|然後", prv) if _body_due(x)] or [prv]
             item = _body_action(segs[-1])
         elif mt is not None:
-            a = _body_action(after) if mt.start() >= mo.end() else _body_action(re.sub(r"\s+", "", after))
+            a = _body_action(after) if mt.start() >= mo.end() else _body_action(_drop_cjk_spaces(after))
             if _BODY_BARE_RE.match(a) and before:   # 「下週會再安排四場面試由王經理主持」
                 m0 = _body_due(before)       # 「面試了12位候選人下週會再安排六場面試」：從時間後面取，前一句的尾巴不要
                 lead = before[m0.end():] if m0 is not None and len(before[m0.end():].strip()) >= 2 else before
@@ -2140,7 +2170,8 @@ def _transcript_todos(transcript: str, max_rows: int = 12) -> List[tuple]:
         when = mt.group(1).replace(" ", "")
         if re.match(r"\s*(?:之前|以前|前)", src[mt.end():]) and not when.endswith("前"):
             when += "前"          # 與模型寫的「10月7日前」「週五前」一致
-        rows.append((_cut_item(item), owner, when, f"{prv}{c}{nxt}"))
+        # 格子裡的「|」會讓待辦表欄位錯開 (N10 fuzz)：換成全形「｜」
+        rows.append((_cut_item(item).replace("|", "｜"), owner.replace("|", "｜"), when.replace("|", "｜"), f"{prv}{c}{nxt}"))
         if len(rows) >= max_rows:
             break
     return rows
