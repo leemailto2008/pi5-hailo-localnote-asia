@@ -623,12 +623,40 @@ def fix_place_names(src: str, translation: Optional[str], target: str) -> Option
     return re.sub(rm + r"(?=[A-Za-z0-9])", " ", out).replace(rm, "")
 
 
+def _place_word_re(en: str) -> "re.Pattern[str]":
+    return re.compile(r"(?<![A-Za-z])" + re.escape(en) + r"(?![A-Za-z])")
+
+
+def fix_wrong_place(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    """小模型把原文的縣市換成另一個縣市 (11-25 .228 藍牙 30 分：「新竹的聯華精密」→「Lianghua Precision in Taichung」)。
+    只在原文剛好一個縣市、譯文沒有它的英文、譯文剛好出現一次別的縣市英文時，換成原文那個。"""
+    if not translation or target != "en":
+        return translation
+    src_n = (src or "").translate(_PLACE_NORM)
+    in_src = [zh for zh in _PLACE_EN if _src_has_place(src_n, zh)]
+    if len(in_src) != 1:
+        return translation
+    want = _PLACE_EN[in_src[0]]
+    if _place_word_re(want).search(translation):
+        return translation
+    # 長的先比、比到的位置遮掉 (New Taipei 不要再被算成 Taipei)
+    masked, wrong = translation, []
+    for en in sorted(set(_PLACE_EN.values()), key=len, reverse=True):
+        pat = _place_word_re(en)
+        wrong += [en] * len(pat.findall(masked))
+        masked = pat.sub("#" * len(en), masked)
+    if len(wrong) != 1:
+        return translation
+    return _place_word_re(wrong[0]).sub(want, translation, count=1)
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
-    return fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
+    out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
+    return fix_wrong_place(src, out, target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:

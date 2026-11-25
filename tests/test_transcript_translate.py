@@ -588,3 +588,16 @@ def test_place_name_residue_no_longer_needs_retry(monkeypatch):
     assert res["done"][0] == "There is an exhibition in Hsinchu today"
     assert len(calls) == 1
 
+
+
+def test_fix_wrong_place():
+    # 11-25 .228 藍牙 30 分：「新竹」被模型換成另一個縣市
+    assert tt.fix_wrong_place("新竹的聯華精密希望在2月28日前拿到200臺樣品。",
+                              "Lianghua Precision in Taichung hopes to receive 200 samples.", "en") \
+        == "Lianghua Precision in Hsinchu hopes to receive 200 samples."
+    # 原文有這個縣市 / 原文兩個縣市 / 譯文已正確 / New Taipei 不當成 Taipei：都不動
+    assert tt.fix_wrong_place("台北和新竹", "Taipei and Taichung", "en") == "Taipei and Taichung"
+    assert tt.fix_wrong_place("新竹的展覽", "The exhibition in Hsinchu", "en") == "The exhibition in Hsinchu"
+    assert tt.fix_wrong_place("新北的工廠", "The factory in New Taipei", "en") == "The factory in New Taipei"
+    assert tt.fix_wrong_place("新竹的展覽", "The exhibition in Taipei and Taichung", "en") == "The exhibition in Taipei and Taichung"
+    assert tt.fix_wrong_place("今天開會", "Meeting in Taichung", "en") == "Meeting in Taichung"
