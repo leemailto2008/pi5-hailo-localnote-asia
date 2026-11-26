@@ -69,7 +69,7 @@ def script_of(text: str) -> str:
 
 # --force native：標籤 → Whisper 語言碼（Whisper-Small 沒有粵語／台語，用 zh）
 NATIVE = {"ja": "ja", "ko": "ko", "yue": "zh", "nan": "zh", "vi": "vi", "th": "th", "id": "id", "es": "es", "fr": "fr",
-          "de": "de", "zh_en": "zh", "zh_accent": "zh", "zh": "zh", "en": "en"}
+          "de": "de", "zh_en": "zh", "zh_accent": "zh", "zh": "zh", "en": "en", "ms": "ms", "ar": "ar"}
 
 
 def lang_tag(path: str) -> str:
