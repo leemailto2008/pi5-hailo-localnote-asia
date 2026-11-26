@@ -236,6 +236,15 @@ def _drop_cut_off_final_bullet(text: str) -> str:
     return "\n".join(lines[:-1]) if any(len(b) > len(tail) and b.startswith(tail) for b in earlier) else text
 
 
+# 條列裡的短迴圈：同一段 2–40 字 (須含文字) 連續 4 次以上只留一次。generation_loop_start 要 10 次才停止生成，
+# 11-26 馬來文 6 分紀要「Decision made: 2024-2025, 30-35 years, 27th, 30 years, 30 years, …」重複 7 次沒擋到
+_ITEM_LOOP_RE = re.compile(r"(.{2,40}?)\1{3,}")
+
+
+def collapse_item_loops(s: str) -> str:
+    return _ITEM_LOOP_RE.sub(lambda m: m.group(1) if any(ch.isalpha() for ch in m.group(1)) else m.group(0), s)
+
+
 def clean_summary_markdown(md: str, max_items: Optional[Dict[str, int]] = None) -> str:
     """LLM 紀要後處理：轉台灣繁體、移除重複行 (小模型偶發重複迴圈直到 num_predict 用盡)，並限制摘要/決議點數。"""
     limits = max_items or {"摘要": 5, "決議": 3}
@@ -254,6 +263,10 @@ def clean_summary_markdown(md: str, max_items: Optional[Dict[str, int]] = None) 
             continue
         is_item = s.startswith(("-", "*", "•")) or re.match(r"^\d+[\.、)]", s) is not None
         is_row = s.startswith("|") and not set(s) <= set("|-: ")
+        if is_item or is_row:
+            collapsed = collapse_item_loops(s)
+            if collapsed != s:
+                s = line = collapsed
         if is_item and re.match(r"^[-*•]\s*no (?:additional|other|further|specific|more)\b", s, re.I):
             continue            # 「- No additional decisions made」：英文紀要的填充句
         if is_item and _CLOSING_FILLER_RE.search(s):     # 「…主持面試，今天就到這裡」：結尾客套話不是內容
