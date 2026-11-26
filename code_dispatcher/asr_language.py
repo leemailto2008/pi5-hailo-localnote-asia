@@ -2,11 +2,11 @@
 """
 asr_language.py — 語音語系設定（2026-11-20 使用者要求可選）。
 
-選項：auto（自動偵測，原本的做法）、zh、en、fr、es（11-20 使用者決定；印地語、阿拉伯文先不做）。網頁選、存在 DATA_DIR/asr_language.json，下一場錄音生效。
+選項：auto（自動偵測，原本的做法）、zh、en、fr、es（11-20 使用者決定）、ms、ar（11-26 使用者加馬來文、阿拉伯文）。網頁選、存在 DATA_DIR/asr_language.json，下一場錄音生效。
   - auto：即時稿照引擎開關 (SenseVoice／Whisper)；SenseVoice 遇到不支援的語言時用 Whisper 比對後改用 (sv_lang_guard)。
   - zh／en：SenseVoice 支援；即時稿照引擎開關，SenseVoice 與 Whisper 都固定這個語言 (不自動偵測、不做外語比對)；
     高精度稿 SenseVoice 固定這個語言。
-  - fr／es：SenseVoiceSmall 只認得中／英／粵／日／韓 → 即時稿一律改用 Hailo Whisper (固定語言)，
+  - fr／es／ms／ar：SenseVoiceSmall 只認得中／英／粵／日／韓 → 即時稿一律改用 Hailo Whisper (固定語言)，
     高精度稿整份用 Whisper 即時稿的文字 (refine_transcript.apply_whisper_live，force=True)，分說話人照舊。
   - 翻譯：即時翻譯選「自動」時，語系 zh 翻英文、其他語系翻中文 (live_translate.target_for)。
 """
@@ -20,11 +20,12 @@ from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-ASR_LANG_CHOICES = ("auto", "zh", "en", "fr", "es")
+ASR_LANG_CHOICES = ("auto", "zh", "en", "fr", "es", "ms", "ar")
 ASR_LANG_DEFAULT = "auto"
 SV_SUPPORTED = frozenset({"auto", "zh", "en"})     # SenseVoiceSmall 可固定的語言 (另有 yue／ja／ko，目前選單沒列)
 ASR_LANG_PATH = os.path.join(DATA_DIR, "asr_language.json")
-LABELS = {"auto": "自動偵測", "zh": "中文 (zh)", "en": "英文 (en)", "fr": "法文 (fr)", "es": "西班牙文 (es)"}   # 網頁顯示：名稱後加語言代碼 (11-20 使用者)
+LABELS = {"auto": "自動偵測", "zh": "中文 (zh)", "en": "英文 (en)", "fr": "法文 (fr)", "es": "西班牙文 (es)",
+          "ms": "馬來文 (ms)", "ar": "阿拉伯文 (ar)"}   # 網頁顯示：名稱後加語言代碼 (11-20 使用者)
 
 
 def load_asr_language() -> str:

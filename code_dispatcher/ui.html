@@ -292,12 +292,14 @@ window.__lnErrors = []; window.__lnToasts = [];
               <label for="asrLangSel" style="font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;" id="asrLangLabel">
                 🗣️ 語音語系
               </label>
-              <select id="asrLangSel" title="會議講的語言；選定後即時稿、高精度稿、即時翻譯都照它，不再自動偵測。法文、西班牙文 SenseVoice 不支援，改用 Hailo Whisper；下一場錄音生效" style="font:inherit;font-size:13px">
+              <select id="asrLangSel" title="會議講的語言；選定後即時稿、高精度稿、即時翻譯都照它，不再自動偵測。法文、西班牙文、馬來文、阿拉伯文 SenseVoice 不支援，改用 Hailo Whisper；下一場錄音生效" style="font:inherit;font-size:13px">
                 <option value="auto">自動偵測</option>
                 <option value="zh">中文 (zh)</option>
                 <option value="en">英文 (en)</option>
                 <option value="fr">法文 (fr)</option>
                 <option value="es">西班牙文 (es)</option>
+                <option value="ms">馬來文 (ms)</option>
+                <option value="ar">阿拉伯文 (ar)</option>
               </select>
             </div>
             <div class="row" style="margin-top:6px;padding:6px 10px;background:var(--set-bg);border-radius:8px;justify-content:space-between;align-items:center;">

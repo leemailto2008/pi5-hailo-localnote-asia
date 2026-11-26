@@ -1608,7 +1608,7 @@ async def get_feedback_zip(report_id: str) -> FileResponse:
 
 
 class AsrLanguageRequest(BaseModel):
-    language: str = Field(..., description="auto = 自動偵測；zh／en = SenseVoice 或 Whisper 固定語言；fr／es = SenseVoice 不支援，即時稿與高精度稿用 Whisper")
+    language: str = Field(..., description="auto = 自動偵測；zh／en = SenseVoice 或 Whisper 固定語言；fr／es／ms／ar = SenseVoice 不支援，即時稿與高精度稿用 Whisper")
 
 
 def _asr_language_config() -> Dict[str, Any]:
