@@ -38,7 +38,8 @@ _SENT_END_RE = re.compile(r"(?<=[。！？!?；;])|(?<=[.](?=\s))")
 _CJK_RE = re.compile(r"[一-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 _NON_EN_LATIN_RE = re.compile(r"[À-ɏḀ-ỿ]")     # 帶附加符號的拉丁字母：德、法、西、越…
-_OTHER_SCRIPT_RE = re.compile(r"[฀-๿぀-ヿ가-힯Ѐ-ӿ]")   # 泰、假名、韓、俄
+_OTHER_SCRIPT_RE = re.compile(r"[฀-๿぀-ヿ가-힯Ѐ-ӿ\u0600-\u06ff]")   # 泰、假名、韓、俄、阿拉伯 (11-26 語音語系加 ar)
+_ARABIC_RE = re.compile(r"[\u0600-\u06ff]")
 _KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
 
 
@@ -98,6 +99,8 @@ def untranslated_left(translation: str, target: str) -> bool:
     (11-19 自測：en_short 3 行、德文那份 8 行模型原樣回英文，原本被當成翻好了)。"""
     if target == "en":
         return bool(_CJK_RE.search(translation))
+    if len(_ARABIC_RE.findall(translation)) >= 3:
+        return True     # 翻中文還留著阿拉伯字母 (11-26 阿拉伯文即時翻譯結尾「…提供給使用者ما ن推ب」)
     cjk, latin = len(_CJK_RE.findall(translation)), len(_LATIN_RE.findall(translation))
     if cjk == 0:
         return latin >= 4   # 「AfD」「IBM」這種縮寫翻中文本來就保留

@@ -28,3 +28,12 @@ def test_numbers_ok_after_prepare_zh(src, tr):
 def test_prepare_zh_converts_scale_words():
     assert tt.prepare_source("RM1.2 bilion dan 5 juta", "zh") == "RM12億 dan 500萬"
     assert tt.prepare_source("٣٫٥", "zh") == "3.5"
+
+
+def test_arabic_left_in_zh_translation_is_untranslated():
+    assert tt.untranslated_left("這項服務的目標是提供給使用者ما ن推ب", "zh")
+    assert not tt.untranslated_left("這項服務的目標是提供給使用者", "zh")
+
+
+def test_arabic_with_english_words_is_not_english():
+    assert not tt.in_target_language("هذا النخفاد the fastest in the production process and the use of the waste", "en")
