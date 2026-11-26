@@ -121,7 +121,10 @@ _CN_SCALE = {"千": 10 ** 3, "萬": 10 ** 4, "万": 10 ** 4, "億": 10 ** 8, "�
 _EN_SCALE = {"thousand": 10 ** 3, "million": 10 ** 6, "millions": 10 ** 6, "billion": 10 ** 9, "billions": 10 ** 9,
              "millón": 10 ** 6, "millon": 10 ** 6, "millones": 10 ** 6, "milliard": 10 ** 9, "milliards": 10 ** 9,
              "millionen": 10 ** 6, "milliarde": 10 ** 9, "milliarden": 10 ** 9,
-             "juta": 10 ** 6, "miliar": 10 ** 9}
+             "juta": 10 ** 6, "miliar": 10 ** 9,
+             # 馬來文、阿拉伯文 (11-26 語音語系加 ms／ar)：「1.2 bilion」「5 ribu」「3 مليون」
+             "ribu": 10 ** 3, "bilion": 10 ** 9, "trilion": 10 ** 12,
+             "ألف": 10 ** 3, "آلاف": 10 ** 3, "مليون": 10 ** 6, "ملايين": 10 ** 6, "مليار": 10 ** 9, "مليارات": 10 ** 9}
 _SCALE_WORDS = "|".join(sorted(_EN_SCALE, key=len, reverse=True))
 # 千分位：逗號、或空格／不換行空格 (法文「105 000 hectares」)
 # 千分位後面可以接小數「1,234.5」(S18 fuzz：原本讀成 1234 與 5 兩個數)
@@ -161,7 +164,7 @@ def number_values(text: str, words: bool = False) -> List[float]:
     """文字裡的數值 (換算萬／億／million…，去掉千分位)；「9月」的月份不算 (翻成英文會變成 September)。
     words=True 另外收英文數字詞 (one…twenty、thirty…ninety)：只用在譯文那邊 (11-19 中翻英「1輪」→「one round」被當成數字遺漏)；
     原文那邊不收，「one of the」「no one」不該要求譯文出現 1。"""
-    text = text or ""
+    text = (text or "").translate(_FULLWIDTH_DIGITS)
     out = []
     for m in _NUM_RE.finditer(text):
         if not m.group(2) and text[m.end():m.end() + 1] == "月":
@@ -197,7 +200,7 @@ def numbers_ok(src: str, translation: str) -> bool:
 
 
 # 千分位「1,500 million」要整個吃進來 (S18 fuzz：原本只換「500 million」→「1,5億」，應為 15億)；不從數字中間開始比對
-_EN_SCALED_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(million|billion)\b", re.I)
+_EN_SCALED_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(million|billion|juta|bilion|مليون|ملايين|مليار|مليارات)\b", re.I)
 
 
 # 即時稿 (SenseVoice ITN) 偶爾把阿拉伯數字和國字數字混寫：「加裝十0只警示燈」=10、「二十5」=25、「第1三個議題」=13、
@@ -303,6 +306,8 @@ def _composite_value(run: str) -> Any:
 
 
 _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")   # N7 fuzz：「一０億」的全形 ０ 混寫規則看不到
+# 阿拉伯文數字 (٠–٩、波斯 ۰–۹)、阿拉伯小數點 ٫、千分位 ٬ (11-26 語音語系加 ar：「٣٫٥」原本讀成 3 與 5 兩個數，翻對也保留原文)
+_FULLWIDTH_DIGITS.update(str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫٬", "01234567890123456789.,"))
 
 
 def prepare_source(text: str, target: str) -> str:
