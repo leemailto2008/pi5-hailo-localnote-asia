@@ -18,7 +18,7 @@ def test_engine_and_languages():
     assert al.whisper_language("auto") is None and al.whisper_language("es") == "es"
     assert set(al.ASR_LANG_CHOICES) == {"auto", "zh", "en", "fr", "es", "ms", "ar"}
     assert al.live_engine_for("sensevoice", "ar") == "whisper" and al.live_engine_for("sensevoice", "ms") == "whisper"
-    assert al.whisper_language("ar") == "ar" and al.whisper_language("ms") == "ms" and al.sv_language("ar") == "auto"
+    assert al.whisper_language("ar") == "ar" and al.whisper_language("ms") == "id" and al.sv_language("ar") == "auto"
     assert set(al.LABELS) == set(al.ASR_LANG_CHOICES)
 
 

@@ -58,9 +58,14 @@ def sv_language(lang: str) -> str:
     return lang if lang in ("zh", "en") else "auto"
 
 
+# 馬來文用印尼文 (id) 解：Whisper-Small 的 ms 常把馬來語輸出成英文。11-26 .228 實測 7 段 (新聞、訪談、podcast 各 3 分)：
+# 英文輸出 28–34% → 20–31%、馬來常用字 1–6% → 5–10%，印尼專用字 ≤ 1.7% (仍是馬來文寫法)，慢約 10% (RTF 0.37)
+WHISPER_DECODE_AS = {"ms": "id"}
+
+
 def whisper_language(lang: str) -> Optional[str]:
-    """Hailo Whisper 的 language (ISO-639-1)；auto 回 None (自動偵測)。"""
-    return None if lang == "auto" else lang
+    """Hailo Whisper 的 language (ISO-639-1)；auto 回 None (自動偵測)；馬來文用 id 解 (WHISPER_DECODE_AS)。"""
+    return None if lang == "auto" else WHISPER_DECODE_AS.get(lang, lang)
 
 
 def live_engine_for(engine: str, lang: str) -> str:
