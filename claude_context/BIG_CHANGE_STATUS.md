@@ -13,6 +13,9 @@
 - 數值比對（bec6b88）：阿拉伯數字 ٠–٩、小數點 ٫、千分位 ٬；ribu／bilion／trilion、ألف／مليون／مليار。阿拉伯字母算外語（430dae7）。
 - 已知限制：ar／ms 紀要一般水準（ASR 把 12 trillion 寫成 million、小模型幻覺「P.A.TNAA」）；紀要語言照舊依 detect_language（ar／ms 出英文紀要）。
 - .229：14:18 更新到 14c5178（Andrew 開口）。
+- swap_growth 超標（數位 30 78／68、藍牙 30 124）：**同環境 A/B，0211cda 與 430dae7 都是 93 MB，其他指標相同** → 不是今天修改造成。
+  監控檔（`.cc_scratch/swapab/swap_timing.py`）：增量全在錄音結束那 1 分鐘，RAM avail 仍 ≥ 4.1 GB，uvicorn RSS 同時下降（自己的冷頁換到 zram0，swappiness 60）。
+  .228 當時已開機 2 天（11-24 起），前幾天同測項 0–58 MB。門檻 64 要不要改（例如看結束總量）等 Andrew 決定。
 
 ## 11-20 晚～週末（#60）：週末計畫 W1–W6（Andrew 11-23 回來 review；早報草稿 .cc_scratch/loop/monday_report_draft.md）
 **週末定稿摘要（11-23 07:20）**
