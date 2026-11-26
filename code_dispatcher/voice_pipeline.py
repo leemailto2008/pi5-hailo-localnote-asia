@@ -184,6 +184,9 @@ def clean_hallucination_repetitions(text: str) -> str:
 
 _WORD_LOOP_RE = re.compile(r"((?:[A-Za-z']+[\s,]+){2,6}?)\1{2,}")     # 2~6 個字的片語連續 3 次 (「yes yes yes」不算)
 _LETTER_RUN_RE = re.compile(r"([A-Za-z])\1{3,}", re.IGNORECASE)
+# 2~10 個詞 (任何文字，以空白分隔，可帶句號) 的片語連續 3 次以上：只留一次。collapse_phrase_loops 的片語不能含空白，
+# _WORD_LOOP_RE 不認句號且只用在整段丟掉：11-26 .229 馬來文 Issue「I have a lot of questions.」×3、阿拉伯文「و فيه شي」×4 都留在逐字稿
+_MULTIWORD_LOOP_RE = re.compile(r"(?<!\S)((?:\S+\s+){1,9}?\S+)(?:\s+\1(?=\s|$)){2,}")
 # 夾在中文之間、全小寫、4 個詞以上的英文片語 (沒有大寫詞或數字詞以外的專有名詞)：解碼幻覺，例如
 # 「…，w to stop the time for 3 hours，…」(2026-11-09 3 分鐘 digital E2E 逐字稿)。中英夾雜的正常用法多半是單詞、
 # 專有名詞或大寫句首 (ERP、Friday、Q3)，不會命中。推測 (未以真人逐字稿驗證)：真人說的全小寫英文長句也會被一併拿掉。
@@ -208,6 +211,7 @@ def clean_stt_segment(text: str) -> str:
     if not _CJK_RE.search(text) and _WORD_LOOP_RE.search(text + " "):
         return ""
     text = _LETTER_RUN_RE.sub("", text)
+    text = _MULTIWORD_LOOP_RE.sub(lambda m: m.group(1) if any(c.isalpha() for c in m.group(1)) else m.group(0), text)
     if _CJK_RE.search(text):
         text = re.sub(r"\s+(?=[，,、。！？!?])", "", _CJK_ISLAND_EN_RE.sub("", text))
     return collapse_phrase_loops(text).strip()

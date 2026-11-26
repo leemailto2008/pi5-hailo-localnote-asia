@@ -35,3 +35,20 @@ import voice_pipeline as vp  # noqa: E402
 ])
 def test_clean_stt_segment(raw, clean):
     assert vp.clean_stt_segment(raw) == clean
+
+
+# 11-26 .229 Issue（馬來文／阿拉伯文經藍牙、SCO 到達 79–84%）：多詞片語連續 3 次以上只留一次
+@pytest.mark.parametrize("raw,want", [
+    ("I have a lot of questions. I have a lot of questions. I have a lot of questions. And I can be so best",
+     "I have a lot of questions. And I can be so best"),
+    ("و فيه شي و فيه شي و فيه شي و فيه شي", "و فيه شي"),
+    ("Dewa vocal. Dewa vocal. Dewa vocal. Perasaannya gimana mas waktu", "Dewa vocal. Perasaannya gimana mas waktu"),
+])
+def test_multiword_loop_collapsed(raw, want):
+    assert vp.clean_stt_segment(raw) == want
+
+
+@pytest.mark.parametrize("raw", ["We need to check, we need to check the budget", "1 2 1 2 1 2", "bisa bisa bisa",
+                                 "好的 好的 好的"])
+def test_multiword_normal_kept(raw):
+    assert vp.clean_stt_segment(raw) == raw
