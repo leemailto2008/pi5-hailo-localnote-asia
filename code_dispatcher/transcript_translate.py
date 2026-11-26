@@ -30,6 +30,8 @@ CHUNK_CHARS = 360         # 每個請求的原文字數上限：Hailo qwen3:1.7b
 FIRST_CHUNK_CHARS = 120   # 第一個請求的原文字數上限 (先讓網頁出現第一段)
 REQUEST_TIMEOUT_SEC = 180.0
 POLL_SEC = 0.5            # 檢查「開始錄音了沒」的間隔
+LOOP_CHECK_TOKENS = 8     # 每幾個 token 檢查一次重複迴圈
+LOOP_TAIL_TOKENS = 64     # 只看最後幾個 token (迴圈單位最長 20 字 × 4 次)
 
 _LABEL_RE = re.compile(r"^(說話人(\d+)[：:]|Speaker\s*(\d+)\s*[:：])\s*")
 _SENT_END_RE = re.compile(r"(?<=[。！？!?；;])|(?<=[.](?=\s))")
@@ -655,9 +657,30 @@ def fix_wrong_place(src: str, translation: Optional[str], target: str) -> Option
     return _place_word_re(wrong[0]).sub(want, translation, count=1)
 
 
+# 模型重複迴圈：同一段 2–20 字 (含標點) 連續出現 4 次以上。11-26 阿拉伯文 6 分即時翻譯 52 段有 5 段：
+# 「詩、與、詩、與…」「這種情況，這種情況，…」寫滿 num_predict，翻譯延遲 p50 116 s
+_REPEAT_LOOP_RE = re.compile(r"(.{2,20}?)\1{3,}", re.S)
+
+
+def _loop_unit(m: "re.Match") -> bool:
+    return any(ch.isalpha() for ch in m.group(1))   # 「……」「----」純符號、「,000,000,000,000」數字的重複不算
+
+
+def has_repeat_loop(text: str) -> bool:
+    return any(_loop_unit(m) for m in _REPEAT_LOOP_RE.finditer(text or ""))
+
+
+def collapse_repeats(text: Optional[str]) -> Optional[str]:
+    """連續重複 4 次以上的片段只留一次 (「這種情況，這種情況，這種情況，這種情況」→「這種情況，」)。"""
+    if not text:
+        return text
+    return _REPEAT_LOOP_RE.sub(lambda m: m.group(1) if _loop_unit(m) else m.group(0), text)
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
-    """模型輸出的固定修正：數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
+    """模型輸出的固定修正：重複迴圈 (collapse_repeats)、數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
+    translation = collapse_repeats(translation)
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
@@ -799,6 +822,10 @@ async def _complete(prompt: str, target: str, num_predict: int, *, hailo_only: b
         async with contextlib.aclosing(stream):
             async for token, _done, _backend in stream:
                 parts.append(token)
+                # 陷入重複迴圈就停 (關掉串流，模型隨即停止生成)：後面只會一直重複，postfix 會把重複收成一次
+                if len(parts) % LOOP_CHECK_TOKENS == 0 and has_repeat_loop("".join(parts[-LOOP_TAIL_TOKENS:])):
+                    logger.info("[Translate] 譯文陷入重複迴圈，%d token 時停止", len(parts))
+                    break
         return "".join(parts)
 
     task = asyncio.ensure_future(consume())
