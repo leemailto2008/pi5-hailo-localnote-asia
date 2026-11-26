@@ -1,6 +1,19 @@
 # BIG_CHANGE_STATUS.md — 大改三項循環狀態（2026-11-10 起）
 （互動鎖已停用：claude.ai 雲端每小時排程 trig_01XfezGs1zV3uroLZy1NZm4D 於 2026-11-20 經使用者同意由 dr 停用，.228 只剩 CLI localnote 使用，不需再錯開。舊內容：互動 session 進行中，至 2026-11-21 09:00（台北；11-20 03:1x CLI 續期（夜間 loop 中）；11-19 15:0x CLI 續期；11-18 09:05 CLI 續期；11-17 09:45 使用者改用 Claude CLI 在本機工作，交接文件 to_claude_cli.md；CLI 工作時每輪續期這行；過期代表沒人在做，每小時排程接手））
 
+## 11-26（#61）：語音語系加馬來文 (ms)、阿拉伯文 (ar)（Andrew demo 後要求；.228 數位直送，不出聲）
+- 測資：YouTube 新聞／訪談／podcast 各取 3 分，`.cc_scratch/foreign_audio/fetch_ar_ms.py`、`fetch_ms2.py` → `wav16k/ar__*`（4 段）、`ms__*`（7 段），來源在 `sources.jsonl`。
+- 選單（fa9b8ee）：跟 fr／es 一樣 SenseVoice 不支援 → 即時稿、高精度稿用 Hailo Whisper-Small 固定語言。
+- ar：固定 ar 與自動偵測結果相同，內容可讀，RTF 0.32–0.46。**ms：Whisper 的 ms 常輸出英文 → 送 Whisper 時改用 id（07c073b）**：
+  7 段英文輸出 28–34% → 20–31%、馬來常用字 1–6% → 5–10%，印尼專用字 ≤ 1.7%。存的語系仍是 ms。
+- 量測工具陷阱：`tools/whisper_lang_survey.py --force native` 原本沒有 ar／ms 對照 → 預設 zh，輸出中英亂碼像產品壞掉（5210343 修）。
+- 即時翻譯翻中文的重複迴圈（b46b91c）：ar 52 段有 5 段「這種情況，這種情況…」寫滿 num_predict。串流每 8 token 檢查、偵測到就停；postfix 收成一次。
+  ar 翻完 29/47→40/44、延遲 p50 99→22 s、max 143→54 s；ms 19→27/48、p50 172→95 s（仍落後：馬來文夾英文字多，Hailo 上限）。
+- 紀要條列迴圈（b652886）：「30 years, 30 years…」7 次（generation_loop_start 要 10 次）。replay 107 場改 2（含 11-19 越南文 Hà×N），變差 0。
+- 數值比對（bec6b88）：阿拉伯數字 ٠–٩、小數點 ٫、千分位 ٬；ribu／bilion／trilion、ألف／مليون／مليار。阿拉伯字母算外語（430dae7）。
+- 已知限制：ar／ms 紀要一般水準（ASR 把 12 trillion 寫成 million、小模型幻覺「P.A.TNAA」）；紀要語言照舊依 detect_language（ar／ms 出英文紀要）。
+- .229：14:18 更新到 14c5178（Andrew 開口）。
+
 ## 11-20 晚～週末（#60）：週末計畫 W1–W6（Andrew 11-23 回來 review；早報草稿 .cc_scratch/loop/monday_report_draft.md）
 **週末定稿摘要（11-23 07:20）**
 - 週末在 .228 跑 46 輪（W1–W46）都 PASS：數位 5／30／60／120／240、英文、法、西、藍牙 30／60、GS3 30／60、podcast、Whisper 即時稿、會後翻譯 7 語言。
