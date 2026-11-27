@@ -752,9 +752,11 @@ def collapse_repeats(text: Optional[str]) -> Optional[str]:
 # 「停機2小時」的「時」不算鐘點：要數字緊接點／時，或「8:00」「8 pm」
 _SRC_CLOCK_RE = re.compile(r"[0-9零一二兩两三四五六七八九十]\s*[點点時时](?![間间段])|\d[:：]\d|\d\s*[AaPp]\.?[Mm]|o'clock")
 _SRC_YEAR_RE = re.compile(r"年|(?<!\d)(?:19|20)\d\d(?!\d)|[零〇一二三四五六七八九]{4}")
-_ADDED_CLOCK_RE = re.compile(r"\bat (?:\d{1,2}:\d{2})(?:\s*[AaPp]\.?[Mm]\.?(?![A-Za-z]))?")
+# 「PM.」的句點是句尾的，不吃 (P19：原本「at 9:00 PM.」→「in the evening」句點不見)；「p.m.」整個吃
+_AMPM = r"(?:[AaPp]\.[Mm]\.|[AaPp][Mm])(?![A-Za-z])"
+_ADDED_CLOCK_RE = re.compile(r"\bat (?:\d{1,2}:\d{2})(?:\s*" + _AMPM + ")?")
 # 同樣是編造、寫成「for HH:MM AM／PM」(要有 AM／PM，才不會動到比數或時長)
-_ADDED_CLOCK_FOR_RE = re.compile(r"\bfor \d{1,2}:\d{2}\s*[AaPp]\.?[Mm]\.?(?![A-Za-z])")
+_ADDED_CLOCK_FOR_RE = re.compile(r"\bfor \d{1,2}:\d{2}\s*" + _AMPM)
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
 _ADDED_YEAR_RE = re.compile(rf"\b((?:{_MONTHS}) \d{{1,2}}(?:st|nd|rd|th)?|\d{{1,2}}(?:st|nd|rd|th)? (?:{_MONTHS}))"
                             r",? (?:19|20)\d\d(?![\d,]*\d)")
