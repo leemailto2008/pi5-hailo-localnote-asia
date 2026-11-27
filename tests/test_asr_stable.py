@@ -79,3 +79,16 @@ def test_missing_day_not_added_to_quantities(s):
                                     ("6月12，日前", "6月12日前")])
 def test_missing_day_still_added(s, want):
     assert want in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+_Q = ["1,200台", "3.5%", "2,500萬元", "10-15人", "3-5日內", "12.8萬", "0.5個百分點", "第3季", "Q3", "300台", "1.234元", "50/50",
+      "3:2", "24小時", "7-11", "3月1,000台", "需要2-3日", "約1.5日", "5折", "1.5倍"]
+
+
+@pytest.mark.parametrize("q", _Q)
+@pytest.mark.parametrize("ctx", ["預計{q}", "{q}，請吳副理處理", "這次{q}的", "第二個議題是預算{q}完成"])
+def test_quantities_keep_digit_sequence(q, ctx):
+    # P23：數量的阿拉伯數字序列整理前後一樣（不拆、不併、不生出、不吃掉）；日期整理（6. 04. 日→6月4日）不在這裡
+    import re
+    s = ctx.format(q=q)
+    assert re.findall(r"\d+", fix_meeting_terms(s)) == re.findall(r"\d+", s), fix_meeting_terms(s)
