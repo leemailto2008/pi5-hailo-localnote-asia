@@ -41,3 +41,14 @@ def test_invented_for_clock_removed():
         "The formal switch is scheduled for the evening on December 17, with a 3-hour downtime."
     assert tt.drop_invented_time("晚上檢查，抓兩小時。", "Check in the evening, booked for 2:00 hours.", "en") == \
         "Check in the evening, booked for 2:00 hours."
+
+
+@pytest.mark.parametrize("src,tr", [
+    ("3月21日要出貨兩千零二十五台。", "On March 21, 2025 units will ship."),     # 國字寫的數量剛好像年份
+    ("3月21日要出貨二〇二五台。", "On March 21, 2025 units will ship."),
+    ("3月21日要出貨兩千零二十四箱。", "Ship on March 21, 2024 boxes."),
+])
+def test_year_like_quantity_from_cn_numerals_kept(src, tr):
+    # P18 審查 01afbbd：原文的國字數量（兩千零二十五台）在 prepare_source 後還是國字，numbers_ok 看不到，
+    # 「March 21, 2025」的 2025 被當成編出來的年份拿掉，數量整個不見、而且還通過檢查
+    assert tt.drop_invented_time(src, tr, "en") == tr

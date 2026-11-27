@@ -229,3 +229,18 @@ def test_fix_numerals_lone_zero_is_a_word(src, tr, want):
     # P13：「零件」的「零」後面接量詞「件」，原本被換成 0（「10家0件供應商」：生出原文沒有的數字 0）。單獨一個「零／〇」不換
     import transcript_translate as tt
     assert tt.fix_numerals(src, tr, "zh") == want
+
+
+@pytest.mark.parametrize("tr,want", [("台北一零一零件", "台北101零件"), ("三零二零星", "302零星"), ("台北一零一", "台北101"),
+                                     ("編號三零零", "編號300"), ("三零二室", "302室")])
+def test_digit_run_leaves_trailing_zero_word(tr, want):
+    # P18 fuzz：逐字念的號碼後面緊接「零件」「零星」時，最後那個零是下一個詞的（原本「台北1010件」生出 1010）
+    import transcript_translate as tt
+    assert tt.cn_numerals_to_digits(tr) == want
+
+
+@pytest.mark.parametrize("tr,want", [("歸零三零二室", "歸零302室"), ("歸零三人", "歸零3人"), ("零三零二室", "0302室")])
+def test_digit_run_leading_zero_word(tr, want):
+    # P18 fuzz：「歸零」的零接著號碼時不是號碼的一部分（原本「歸0302室」）
+    import transcript_translate as tt
+    assert tt.cn_numerals_to_digits(tr) == want

@@ -392,10 +392,21 @@ _CN_UNIT = {"十": 10, "百": 100, "千": 1000}
 # 「百分之」的「百」不是 100 (N5：「百分之30」原本換成「100分之30」，fix_numerals 會把它當成修好的譯文顯示)
 # 「季」：「Q1」常翻成「第一季」(P13)
 _CN_NUM_RE = re.compile(r"[零〇一二兩两三四五六七八九十百千]+(?!(?<=百)分之)(?=[月日號号輪轮人位名台臺個个天週周年次場场小分秒萬万億亿%％倍款件條条家點点組组項项輛辆張张支季])")
-# 逐字念的號碼 (「台北一零一」「三零二室」)：3 個字以上、中間有「零／〇」的一串國字數字，後面不接量詞也換 (P13)。
-# 「零件」「零星」「歸零」只有一個字，「一一」沒有零，都不算
-_CN_DIGIT_RUN_RE = re.compile(r"(?<![零〇一二三四五六七八九十百千萬万億亿])(?=[一二三四五六七八九零〇]*[零〇])"
-                              r"[一二三四五六七八九零〇]{3,}(?![零〇一二三四五六七八九十百千萬万億亿])")
+# 逐字念的號碼 (「台北一零一」「三零二室」)：一整串國字數字 (前後不接十百千萬億)，開頭的「零」前面是中文字 (歸零)、結尾的「零」後面是中文字 (零件、零星)
+# 時那個零是旁邊的詞的，先去掉；剩下 3 個字以上、中間有零才換 (P13、P18)
+_CN_DIGIT_RUN_RE = re.compile(r"(?<![十百千萬万億亿])[零〇一二三四五六七八九]{3,}(?![十百千萬万億亿])")
+
+
+def _digit_run(m: "re.Match") -> str:
+    g, s0, e0 = m.group(0), m.start(), m.end()
+    head = tail = ""
+    if g[0] in "零〇" and s0 > 0 and _CJK_RE.match(m.string[s0 - 1]):
+        head, g = g[0], g[1:]
+    if g and g[-1] in "零〇" and e0 < len(m.string) and _CJK_RE.match(m.string[e0]):
+        tail, g = g[-1], g[:-1]
+    if len(g) < 3 or not any(c in "零〇" for c in g):
+        return m.group(0)
+    return head + "".join(str(_CN_DIGIT[c]) for c in g) + tail
 
 
 def _cn_to_int(s: str) -> Optional[int]:
@@ -421,14 +432,21 @@ def cn_numerals_to_digits(text: str) -> str:
     def repl(m: "re.Match") -> str:
         if m.group(0) in ("零", "〇"):      # 單獨一個「零」是一般用詞 (「零件」「零售」)，不是數字 0 (P13：「十家零件」→「10家0件」)
             return m.group(0)
-        v = _cn_to_int(m.group(0))
-        return m.group(0) if v is None else str(v)
+        g, head, tail = m.group(0), "", ""
+        if len(g) >= 2 and g[-1] in "零〇" and m.string[m.end():m.end() + 1] == "件":
+            g, tail = g[:-1], g[-1]          # 「一零一零件」＝一零一＋零件 (P18 fuzz：原本「1010件」)
+        if len(g) >= 2 and g[0] in "零〇" and m.start() > 0 and _CJK_RE.match(m.string[m.start() - 1]):
+            g, head = g[1:], g[0]            # 「歸零三人」＝歸零＋三人
+        if not g or g in ("零", "〇"):
+            return m.group(0)
+        v = _cn_to_int(g)
+        return m.group(0) if v is None else head + str(v) + tail
 
     def repl_pct(m: "re.Match") -> str:
         v = _cn_to_int(m.group(1))
         return m.group(0) if v is None else f"{v}%"
     out = _CN_NUM_RE.sub(repl, _CN_PERCENT_RE.sub(repl_pct, text))
-    return _CN_DIGIT_RUN_RE.sub(lambda m: "".join(str(_CN_DIGIT[c]) for c in m.group(0)), out)
+    return _CN_DIGIT_RUN_RE.sub(_digit_run, out)
 
 
 def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[str]:
@@ -750,7 +768,11 @@ def drop_invented_time(src: str, translation: Optional[str], target: str) -> Opt
         out = _ADDED_CLOCK_RE.sub("in the evening", out)
         out = _ADDED_CLOCK_FOR_RE.sub("for the evening", out)   # 「scheduled for 12:13 PM on December 13th」
     if re.search(r"月[^，。,]{0,4}[日號号]", src) and not _SRC_YEAR_RE.search(src):
-        out = _ADDED_YEAR_RE.sub(r"\1", out)
+        # 原文用國字寫的數量剛好像年份 (「出貨兩千零二十五台」→「March 21, 2025 units」)：prepare_source 後還是國字，
+        # numbers_ok 看不到，拿掉就整個不見 (P18)。原文換成阿拉伯數字後有這個數就不拿
+        src_vals = set(number_values(cn_numerals_to_digits(src)))
+        src_vals |= {float(v) for v in map(_cn_to_int, re.findall(r"[零〇一二兩两三四五六七八九十百千]{2,}", src)) if v is not None}
+        out = _ADDED_YEAR_RE.sub(lambda m: m.group(1) if float(m.group(0)[-4:]) not in src_vals else m.group(0), out)
     return out
 
 

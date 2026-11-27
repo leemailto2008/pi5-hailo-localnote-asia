@@ -36,6 +36,6 @@ def test_fix_numerals_no_new_numbers(src, tr):
     elif out != tr:
         assert tt.numbers_ok(prepared, out), (src, tr, out)
         assert _vals(out) <= _vals(prepared) | _vals(tt.cn_numerals_to_digits(tr)), (src, tr, out)
-        assert "0" not in out.replace("10", "").replace("101", "").replace("302", "").replace("2026", "") \
-            or "0" in prepared, (src, tr, out)               # 「零件」「零售」的零不會變成 0
+        # 「零件」「零售」「零星」「歸零」的零不會變成 0（P18：原本用「沒有 0」粗略判斷，「百分之六十輪」的 60% 被誤判）
+        assert not any(w in out for w in ("0件", "0售", "0星", "歸0")), (src, tr, out)
     assert tt.fix_numerals(src, out, "zh") == out
