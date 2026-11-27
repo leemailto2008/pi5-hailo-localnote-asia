@@ -187,3 +187,23 @@ def test_driver_initialize_self_test_shutdown(kld, monkeypatch, hotspot):
     assert all(not p.led.is_lit and p.led.history for p in d.standard_pairs)   # 追逐測試後全部熄滅
     d.shutdown()
     assert all(p.led.closed for p in d.standard_pairs) and d._running is False
+
+
+@pytest.mark.parametrize("exc", ["timeout", "oserror"])
+def test_toggle_falls_back_to_24ghz_when_5ghz_hangs(hotspot, kld, monkeypatch, exc):
+    """11-27：5 GHz 的 nmcli up 逾時 (國家碼、驅動卡住) 原本直接拋出，不試 2.4 GHz (同 hotspot_controller P1)。"""
+    band = []
+
+    def run(cmd, **kw):
+        hotspot["cmds"].append(cmd)
+        if "modify" in cmd:
+            band.append(cmd[cmd.index("802-11-wireless.band") + 1])
+        if cmd[:4] == ["sudo", "nmcli", "connection", "up"]:
+            if band[-1] == "a":
+                raise kld.subprocess.TimeoutExpired(cmd, 25) if exc == "timeout" else OSError("busy")
+            hotspot["ap"] = True
+        return _R("ok")
+    monkeypatch.setattr(kld.subprocess, "run", run)
+    hotspot["pair"]._execute_toggle_workflow()
+    assert band == ["a", "bg"] and hotspot["pair"].led.is_lit
+    assert ["sudo", "nft", "-f", "/etc/nftables.hotspot_guard.nft"] in hotspot["cmds"]

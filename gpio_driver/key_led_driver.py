@@ -263,11 +263,15 @@ class HotspotKeyLedPair:
                 # 2. Bring up AP：先 5 GHz ch36、失敗再 2.4 GHz ch6 (同 hotspot_controller.AP_BANDS；11-27 熱點改 5G，
                 #    2.4 GHz 熱點會和藍牙耳麥搶頻道，.229 SCO 到達只剩 62–84%)
                 for band, channel in (("a", "36"), ("bg", "6")):
-                    subprocess.run([
-                        "sudo", "nmcli", "connection", "modify", "Pi5-Hotspot",
-                        "802-11-wireless.band", band, "802-11-wireless.channel", channel
-                    ], capture_output=True, timeout=10)
-                    res = subprocess.run(["sudo", "nmcli", "connection", "up", "Pi5-Hotspot"], capture_output=True, text=True, timeout=25)
+                    # 逾時 (國家碼、驅動卡住) 當成這個頻段失敗、試下一個 (原本 TimeoutExpired 直接拋出，不試 2.4 GHz)
+                    try:
+                        subprocess.run([
+                            "sudo", "nmcli", "connection", "modify", "Pi5-Hotspot",
+                            "802-11-wireless.band", band, "802-11-wireless.channel", channel
+                        ], capture_output=True, timeout=10)
+                        res = subprocess.run(["sudo", "nmcli", "connection", "up", "Pi5-Hotspot"], capture_output=True, text=True, timeout=25)
+                    except (subprocess.TimeoutExpired, OSError) as e:
+                        res = subprocess.CompletedProcess(["nmcli", "connection", "up", "Pi5-Hotspot"], 124, "", f"timeout/error: {e}")
                     logger.info(f"[nmcli up Pi5-Hotspot band={band} ch={channel}] code={res.returncode}, out={res.stdout.strip()}, err={res.stderr.strip()}")
                     if res.returncode == 0:
                         break
