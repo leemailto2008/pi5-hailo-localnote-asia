@@ -93,3 +93,24 @@ def test_postfix_names_titles_places(src, toks, sep):
         assert _vals(out, True) <= _vals(tr, True) | _vals(src), (src, tr, out)
         if tt.numbers_ok(src, tr):
             assert tt.numbers_ok(src, out), (src, tr, out)
+
+
+# P20：拿掉編造的鐘點／年份（drop_invented_time）放進 postfix fuzz
+ZH3 = st.sampled_from(["6月15日", "晚上", "3月21號", "切換", "出貨", "兩千零二十三台", "2023", "八點", "停機2小時", "今年", "，", "。",
+                       "二〇二三", "時間", "多一點", "預算 300 萬"])
+EN3 = st.sampled_from(["June 15", "15th June", "March 21, 2023", "March 21 2023", "at 22:00", "at 9:00 PM", "at 9:00 p.m.",
+                       "for 12:13 PM", "for 2:00 hours", "in the evening", "2023 units", "2,023 units", "2 hours", "300 million",
+                       "3 million", ".", ",", "the switch", "today"])
+
+
+@CFG
+@given(st.lists(ZH3, max_size=10).map("".join), st.lists(EN3, max_size=10).map(" and ".join))   # 「2023 300 million」會被讀成空白千分位，用 and 隔開
+def test_postfix_invented_time_keeps_numbers(src, tr):
+    out = tt.postfix(src, tr, "en")
+    out = out if out is not None else tr
+    assert _vals(out, True) <= _vals(tr, True) | _vals(src), (src, tr, out)
+    prepared = tt.prepare_source(src, "en")
+    if tt.numbers_ok(prepared, tr):
+        assert tt.numbers_ok(prepared, out), (src, tr, out)
+    again = tt.postfix(src, out, "en")
+    assert (again if again is not None else out) == out, (src, tr, out, again)
