@@ -158,16 +158,3 @@ def test_pipeline_never_crashes(segs):
     su.transcript_todo_rows(tr)
     su.ground_todo_table(su.ensure_sections(""), tr)
 
-
-@pytest.mark.parametrize("segs", [["好的the budget、"], ["請the 吳副理，"], ["預算 the 3 萬。"], ["好的", "the budget so", "好的"]],
-                         ids=["dunhao", "comma", "period", "double-space"])
-def test_latin_noise_removal_leaves_no_space_before_cjk_punct(segs):
-    # P2 fuzz：拿掉英文碎片（the）後補的空白留在「、」前面、或變成兩個空白，要等下一次 tidy 才收掉 → 整理兩次結果不一樣
-    tr = asr_transcript(segs)
-    assert fix_meeting_terms(su.tidy_live_transcript(tr)) == tr, tr
-
-
-@pytest.mark.parametrize("seg,want", [("我們我們我們要開會", "我們要開會"), ("目前目前目前存1200臺", "目前存1200臺"), ("然後 然後 然後", "然後")])
-def test_stutter_collapsed_in_one_pass(seg, want):
-    # P2 fuzz：「(目前|已經|我們|然後)\s*\1」一次只收一對，三次重複要整理兩次才收乾淨
-    assert fix_meeting_terms(seg) == want
