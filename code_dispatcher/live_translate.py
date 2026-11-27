@@ -130,6 +130,7 @@ class LiveTranslator:
         self.llm_calls = 0     # 含單句重翻
         self._event = asyncio.Event()
         self._closed = False
+        self._done = 0                  # run() 處理到第幾段 (pending() 用)
         self._go = asyncio.Event()      # 清掉時暫停送新請求 (pause／resume)
         self._go.set()
         self._on_update = on_update
@@ -156,6 +157,15 @@ class LiveTranslator:
     def close(self) -> None:
         self._closed = True
         self._event.set()
+
+    def pending(self) -> bool:
+        """還有段落沒翻 (含正在翻的那批)。"""
+        return self._done < len(self.src)
+
+    def yield_to(self, other_pending: Callable[[], bool]) -> None:
+        """other_pending() 成立時不送新請求 (上一場的尾端讓路給新會議)；原本的 NPU 忙碌條件照舊。"""
+        busy = self._npu_busy
+        self._npu_busy = lambda: busy() or other_pending()
 
     @property
     def closed(self) -> bool:
@@ -256,7 +266,7 @@ class LiveTranslator:
                     self.kept_reason[i] = batch_failed or ("stopped" if stopped else "rejected")
                 self.targets[i] = tgt
                 self.latencies.append(now - self._added[i])
-            done = idxs[-1] + 1
+            done = self._done = idxs[-1] + 1
             if self._on_update is not None:
                 try:
                     await self._on_update(self)

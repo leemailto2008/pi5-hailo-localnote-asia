@@ -325,3 +325,38 @@ def test_unexpected_error_in_one_batch_does_not_stop_translation(monkeypatch):
     tr = asyncio.run(scenario())
     assert tr.out[0] == "第一段。" and tr.out[1] == "T0" and tr.kept == 1
     assert tr.dump()["segments"][0]["kept"] == "error"
+
+
+def test_previous_tail_yields_to_new_meeting(monkeypatch):
+    """11-27 .228：上一場尾端和新會議搶 Hailo，新會議延遲約 200 s。新會議有段落等著翻時，尾端不送新請求；新會議翻完才接著翻。"""
+    import meeting_minutes as mm
+    order = []
+
+    async def fake_flat(units, target, on_progress, should_stop, use_cpu, one_chunk=False):
+        order.extend(units)
+        await asyncio.sleep(0.02)
+        return {"done": {k: "x" for k, _u in enumerate(units)}}
+    monkeypatch.setattr(lt.tt, "_translate_flat", fake_flat)
+
+    async def scenario():
+        m = mm.MeetingJobManager.__new__(mm.MeetingJobManager)
+        old = lt.LiveTranslator("en")
+        old.add("舊尾段")
+        old.close()
+        old.pause()
+        m._live_tr, m._live_tr_task = old, asyncio.create_task(old.run())
+        old_task = m._live_tr_task
+        await asyncio.sleep(0.01)
+        new = lt.LiveTranslator("en")
+        new.add("新一段")
+        m._stop_live_translate(keep_tail=True)
+        m._live_tr = new                       # 新會議的翻譯器 (還沒開始跑：有段落等著)
+        await asyncio.sleep(0.4)
+        assert order == [] and new.pending()   # 尾端讓路
+        new.close()
+        await asyncio.wait_for(new.run(), 3)
+        await asyncio.wait_for(old_task, 3)
+        return new, old
+
+    new, old = asyncio.run(scenario())
+    assert order == ["新一段", "舊尾段"] and old.out == {0: "x"} and not new.pending() and not old.pending()

@@ -2045,12 +2045,15 @@ class MeetingJobManager:
 
     def _stop_live_translate(self, keep_tail: bool = False) -> None:
         """keep_tail=True (下一場錄音開始)：上一場已錄完、只剩紀要後補翻的尾端段落時，讓它在背景翻完並存檔，
+        但新會議有段落等著翻時不送新請求 (11-27 .228：法文剩 27 段接著開馬來文，尾端占著 Hailo 180 s，
+        新會議第 2 段起延遲約 190–210 s)，
         最多 LIVE_TR_TAIL_MAX_S 秒 (11-21 W14：60 分紀要出來 24 s 後就開下一場，最後 4 段沒翻到)；
         其他情況 (取消錄音) 照舊停掉。"""
         task = getattr(self, "_live_tr_task", None)
         tr = getattr(self, "_live_tr", None)
         if task is not None and not task.done():
             if keep_tail and tr is not None and tr.closed:
+                tr.yield_to(lambda: self._newer_live_tr_pending(tr))
                 tr.resume()
                 tails = self.__dict__.setdefault("_live_tr_tails", set())
                 tails.add(task)
@@ -2060,6 +2063,10 @@ class MeetingJobManager:
                 task.cancel()
         self._live_tr_task = None
         self._live_tr = None
+
+    def _newer_live_tr_pending(self, tail: "LiveTranslator") -> bool:
+        cur = getattr(self, "_live_tr", None)
+        return cur is not None and cur is not tail and cur.pending()
 
     async def _translate_foreign_minutes_lines(self, raw_markdown: str, minutes_lang: str) -> str:
         """英文紀要裡夾著的外語條目 (法文會議常見) 翻成英文 (transcript_translate.english_minutes_lines，只用 Hailo)；
