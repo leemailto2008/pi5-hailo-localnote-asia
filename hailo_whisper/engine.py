@@ -417,7 +417,7 @@ _MISC2_FIX = [
     (re.compile(r"(?<=[二兩三四五六\d])\s*為\s*(?=工程)"), "位"),
     (re.compile(r"行\s*[交消宵](?=\s*活動)"), "行銷"),
     (re.compile(r"同\s*之(?=\s*所有)"), "通知"),
-    (re.compile(r"(目前|已經|我們|然後)\s*\1"), r"\1"),                 # 「目前目前存1200臺」(5 分鐘 e2e)
+    (re.compile(r"(目前|已經|我們|然後)(?:\s*\1)+"), r"\1"),         # 「目前目前存1200臺」(5 分鐘 e2e)；連續幾次都收成一次 (P2 fuzz)
     # 11-05 10／30 分鐘 e2e：「倉儲管理系 系統上線」(30 處)、「待辦事項十個部門週四前把名單」(是各部門，17)、
     # 「待辦事項是黃專的週三回報」(黃專員，11)、「完成全'附訊／全原埠／全元赴…」(全員複訓，約 60)
     (re.compile(r"(?:系\s+)+系統"), "系統"),                       # 「rp系 系 系-上限」→ 三個「系」也收成一個
@@ -569,9 +569,13 @@ def _fix_latin_in_cjk(text: str) -> str:
         if out == words:
             return m.group(0)
         changed = [w for w in out if w not in _EN_NUMBERS.values()]
-        joined = "".join(w if w in _EN_NUMBERS.values() else f" {w} " for w in out).strip()
+        # 每個英文字前後補空白再接起來會出現兩個空白 (「budget  so」，P2 fuzz)：收成一個
+        joined = re.sub(r" {2,}", " ", "".join(w if w in _EN_NUMBERS.values() else f" {w} " for w in out).strip())
         return joined if not changed else f" {joined} "
-    return _LATIN_BEFORE_DIGIT_RE.sub("", _LATIN_IN_CJK_RE.sub(sub, text))
+    # 補的空白緊貼全形標點時拿掉 (P2 fuzz：「好的the budget、」→「好的 budget 、」，要等下一次 tidy_live_transcript 才收掉，
+    # 整理兩次結果不一樣；tidy 對「空白＋、」本來就收成「、」)
+    out = _LATIN_BEFORE_DIGIT_RE.sub("", _LATIN_IN_CJK_RE.sub(sub, text))
+    return re.sub(r"[ \t]+(?=[，、。！？；：])|(?<=[，、。！？；：])[ \t]+", "", out) if out != text else out
 
 
 # 英文會議的逐字稿裡，Whisper 偶爾用全形標點斷句（「Okay，let's start」「safety，last week」，11-03 英文 e2e 13 段有 7 處）。
