@@ -74,3 +74,13 @@ def test_dedupe_segments_bullet_dot_and_short_keys():
     import summary_utils as su
     assert su.collapse_item_loops("• 預算審核，人力規劃，預算審核，預算審核") == "• 預算審核，人力規劃"
     assert su.collapse_item_loops("- tax, fee, tax, tax") == "- tax, fee, tax, tax"        # 不到 4 個字不收
+
+
+def test_clean_summary_decision_label_loop_stable_in_one_pass():
+    # P9 fuzz（main 5945d2e 上失敗）：「- 決議：」開頭的交替重複第一次沒收（標籤擋住第一段），之後 _DECISION_LABEL_RE
+    # 拿掉標籤，第二次才收——整理一次和兩次不一樣。P7 c576271 讓第一段的標籤不算進比對後，一次就收好
+    import summary_utils as su
+    md = "## 決議\n- 決議：22% norm, 22% norm, 22% norm, 22% norm, 22% gain, 22% norm, 22% norm\n"
+    out = su.clean_summary_markdown(md)
+    assert out == "## 決議\n- 22% norm, 22% gain"
+    assert su.clean_summary_markdown(out) == out

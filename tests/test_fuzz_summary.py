@@ -197,3 +197,29 @@ def test_english_minutes(summ, rows, tr):
     out = _chain(md, t)
     _check_no_new_numbers(out, md, t)
     _check_stable(lambda m: _chain(m, t), md, out)
+
+
+# P9（2026-11-27 localnote@mac）：模型重複迴圈的條目（同一段連續重複、交替重複）放進整份紀要，走 clean_summary_markdown
+LOOP_SEG = st.sampled_from(["22% norm", "22% gain", "25% tax", "預算審核", "人力規劃", "Q3 出貨 1,200 台", "3.5 億", "待確認",
+                            "吳副理負責", "第 2 季"])
+LOOP_LEAD = st.sampled_from(["- ", "* ", "1. ", "- 決議：", "- Owner: ", "- 22:30 "])
+
+
+@st.composite
+def looped_item(draw):
+    segs = draw(st.lists(LOOP_SEG, min_size=2, max_size=12))
+    sep = draw(st.sampled_from([", ", "，", "、"]))
+    return draw(LOOP_LEAD) + sep.join(segs) + draw(st.sampled_from(["", "。", "."]))
+
+
+@CFG
+@given(minutes(), st.lists(looped_item(), min_size=1, max_size=3), st.sampled_from(["摘要", "決議"]))
+def test_looped_items_in_whole_minutes(md, loops, where):
+    md2 = md.replace(f"## {where}\n", f"## {where}\n" + "\n".join(loops) + "\n", 1) if f"## {where}\n" in md \
+        else md + f"\n\n## {where}\n" + "\n".join(loops)
+    out = su.clean_summary_markdown(md2)
+    _check_no_new_numbers(out, md2)
+    assert su.clean_summary_markdown(out) == out, (md2, out)
+    for ln in out.splitlines():                       # 收完之後同一行不會還有同一段 4 字以上出現 3 次
+        keys = [k.strip(" 。.").lower() for k in su._ITEM_SEG_RE.split(ln)[0::2]]
+        assert not any(len(k) >= 4 and keys.count(k) >= 3 for k in keys[1:]), (md2, ln)
