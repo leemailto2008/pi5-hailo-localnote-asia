@@ -10,6 +10,7 @@ import os
 import re
 import time
 import subprocess
+import sys
 import argparse
 import logging
 _log = logging.getLogger(__name__)
@@ -37,6 +38,19 @@ def has_connected_stations() -> bool:
         if os.path.exists(lp) and os.path.getsize(lp) > 0:
             return True
     return False
+
+def hotspot_active():
+    """熱點設定檔現在有沒有啟用；nmcli 讀不到回 None (不知道)。"""
+    try:
+        res = subprocess.run(["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError) as e:
+        _log.warning("[Watchdog] cannot read active connections: %s", e)
+        return None
+    if res.returncode != 0:
+        return None
+    return AP_PROFILE in res.stdout.splitlines()
+
 
 def check_keepalive_flag() -> bool:
     """Check if Web UI or user sent a keepalive signal within the last 60 seconds."""
@@ -118,12 +132,24 @@ def run_watchdog(timeout_sec: int = 180):
     # Wait 10 seconds for initial AP stabilization
     time.sleep(10)
 
+    seen_ap, gone = False, 0
     while True:
+        # 熱點已經被別的方式關掉 (網頁／按鍵切回、手動 nmcli) 就結束。11-27 .228：切回家用 Wi-Fi 後 iw station dump
+        # 列的是家用路由器，被當成「有人連著熱點」→ 看門狗永遠不結束，行程一直留著
+        active = hotspot_active()
+        if active:
+            seen_ap, gone = True, 0
+        elif active is False and seen_ap:
+            gone += 1
+            if gone >= 2:       # 連續兩次 (約 10 s) 都不在，避免切換頻段的瞬間誤判
+                print("[Watchdog] Hotspot is no longer active. Watchdog exits.")
+                return
+
         elapsed = time.time() - start_time
         remaining = timeout_sec - elapsed
 
         # Check if connected or keepalive active
-        has_client = has_connected_stations()
+        has_client = active is not False and has_connected_stations()   # 不在熱點模式時 station dump 是上游路由器
         has_alive = check_keepalive_flag()
 
         if has_client or has_alive:
@@ -141,6 +167,7 @@ def run_watchdog(timeout_sec: int = 180):
         time.sleep(5)
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(line_buffering=True)     # 輸出接到服務的 journal：不逐行送出的話整段都看不到
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=int, default=180, help="Timeout in seconds before auto-reverting")
     parser.add_argument("--revert", action="store_true", help="Immediately revert to STA")

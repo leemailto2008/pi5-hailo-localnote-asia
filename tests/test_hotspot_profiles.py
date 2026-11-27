@@ -140,3 +140,55 @@ def test_bring_up_ap_stops_at_first_success(monkeypatch):
     monkeypatch.setattr(hc.subprocess, "run", lambda cmd, **_k: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
     assert hc.bring_up_ap().returncode == 0
     assert [c for c in calls if "modify" in c][-1][-3] == "a" and sum("up" in c for c in calls) == 1
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def time(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+        assert self.t < 3600, "watchdog 沒有結束"
+
+
+def _run_watchdog(monkeypatch, states, clients):
+    """states：每一輪 hotspot_active() 的回傳（用完沿用最後一個）。回傳 (有沒有呼叫 revert, 經過秒數)。"""
+    clk, reverted, seq = _Clock(), [], list(states)
+    monkeypatch.setattr(hw, "time", clk)
+    monkeypatch.setattr(hw, "hotspot_active", lambda: seq.pop(0) if len(seq) > 1 else seq[0])
+    monkeypatch.setattr(hw, "has_connected_stations", lambda: clients)
+    monkeypatch.setattr(hw, "check_keepalive_flag", lambda: False)
+    monkeypatch.setattr(hw, "revert_to_sta", lambda: reverted.append(1))
+    hw.run_watchdog(180)
+    return bool(reverted), clk.t
+
+
+def test_watchdog_exits_when_hotspot_closed_elsewhere(monkeypatch):
+    """11-27：切回家用 Wi-Fi 後 station dump 列的是路由器 (clients=True)，看門狗原本永遠不結束。"""
+    reverted, elapsed = _run_watchdog(monkeypatch, [True, True, False], clients=True)
+    assert not reverted and elapsed < 60
+
+
+def test_watchdog_reverts_without_clients(monkeypatch):
+    reverted, elapsed = _run_watchdog(monkeypatch, [True], clients=False)
+    assert reverted and 180 <= elapsed <= 200
+
+
+def test_watchdog_never_saw_ap_still_reverts(monkeypatch):
+    """熱點一直沒起來：路由器不算熱點客戶端，逾時照常復歸。"""
+    reverted, _ = _run_watchdog(monkeypatch, [False], clients=True)
+    assert reverted
+
+
+def test_watchdog_single_glitch_does_not_exit(monkeypatch):
+    reverted, elapsed = _run_watchdog(monkeypatch, [True, False, True], clients=False)
+    assert reverted and elapsed >= 180
+
+
+@pytest.mark.parametrize("rc,out,want", [(0, "Pi5-Hotspot\nlo\n", True), (0, "home\nlo\n", False), (8, "", None)])
+def test_hotspot_active_parsing(monkeypatch, rc, out, want):
+    monkeypatch.setattr(hw.subprocess, "run", lambda cmd, **kw: _R(out, rc))
+    assert hw.hotspot_active() is want
