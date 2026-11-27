@@ -99,6 +99,8 @@ def untranslated_left(translation: str, target: str) -> bool:
     (11-19 自測：en_short 3 行、德文那份 8 行模型原樣回英文，原本被當成翻好了)。"""
     if target == "en":
         return bool(_CJK_RE.search(translation))
+    if japanese_left(translation) or prompt_leaked(translation):
+        return True     # 翻中文大半還是日文、或把翻譯提示詞抄出來 (11-27 .229 日文／阿拉伯文 Issue)
     if len(_ARABIC_RE.findall(translation)) >= 3:
         return True     # 翻中文還留著阿拉伯字母 (11-26 阿拉伯文即時翻譯結尾「…提供給使用者ما ن推ب」)
     cjk, latin = len(_CJK_RE.findall(translation)), len(_LATIN_RE.findall(translation))
@@ -108,11 +110,29 @@ def untranslated_left(translation: str, target: str) -> bool:
     return latin >= 12 and latin > 4 * cjk   # 人名多的「Ijasa Jokowi再度接受Forensik驗證」(20 對 6) 不算
 
 
+# 模型把翻譯提示詞抄進譯文 (11-27 .229 阿拉伯文：「…請提供正確的句子以便翻譯。台灣繁體中文，數字照原樣保留：」)
+_PROMPT_LEAK_RE = re.compile(r"數字照原樣保留|翻成繁體中文：|原文未提供正確的|請提供正確的句子")
+
+
+def prompt_leaked(translation: str) -> bool:
+    return bool(_PROMPT_LEAK_RE.search(translation or ""))
+
+
+_HIRAGANA_RE = re.compile(r"[ぁ-ゟ]")
+
+
+def japanese_left(translation: str) -> bool:
+    """中文譯文裡大半還是日文：看平假名 (日文語法一定用到)，只夾片假名名稱 (「ポケモン」) 的中文譯文不算。"""
+    hira = len(_HIRAGANA_RE.findall(translation or ""))
+    return hira >= 3 and hira >= 0.12 * (len(_KANA_RE.findall(translation)) + len(_CJK_RE.findall(translation)))
+
+
 def mostly_translated(translation: str, target: str) -> bool:
     """沒翻乾淨的譯文還能不能用：翻英文時中文字只佔少數 (「Complete全员 training」可用)；整句還是中文 (模型改寫成簡體中文、
-    11-19 GS3 完整逐字稿中翻英 4 句「已经安装了8个警示灯…」) 不能用，保留原文。翻中文沒有此限制。"""
+    11-19 GS3 完整逐字稿中翻英 4 句「已经安装了8个警示灯…」) 不能用，保留原文。
+    翻中文：大半還是日文、或抄出提示詞的不能用 (11-27 .229：原本一律可用，「夾中文最少」反而挑中日文最多的那個)。"""
     if target != "en":
-        return True
+        return not (japanese_left(translation) or prompt_leaked(translation))
     cjk = len(_CJK_RE.findall(translation))
     return cjk <= 0.3 * (cjk + len(_LATIN_RE.findall(translation)))
 
@@ -674,11 +694,15 @@ def has_repeat_loop(text: str) -> bool:
     return any(_loop_unit(m) for m in _REPEAT_LOOP_RE.finditer(text or ""))
 
 
+# 一長串句點 (11-27 .229 阿拉伯文即時翻譯「．．．．．．．．…」上百個)：_loop_unit 要含文字所以收不到
+_DOT_RUN_RE = re.compile(r"([．.·・。])\1{5,}")
+
+
 def collapse_repeats(text: Optional[str]) -> Optional[str]:
     """連續重複 4 次以上的片段只留一次 (「這種情況，這種情況，這種情況，這種情況」→「這種情況，」)。"""
     if not text:
         return text
-    return _REPEAT_LOOP_RE.sub(lambda m: m.group(1) if _loop_unit(m) else m.group(0), text)
+    return _DOT_RUN_RE.sub("……", _REPEAT_LOOP_RE.sub(lambda m: m.group(1) if _loop_unit(m) else m.group(0), text))
 
 
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
