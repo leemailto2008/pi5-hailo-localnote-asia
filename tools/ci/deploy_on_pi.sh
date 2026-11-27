@@ -56,6 +56,12 @@ for i in $(seq 1 60); do curl -sf -m 2 http://127.0.0.1/health >/dev/null && { o
 sleep 5
 if [ "$ok" = 1 ] && ! journalctl -u "$SVC" --since "$T0" --no-pager | grep -q -E "Traceback|ImportError|ModuleNotFoundError|SyntaxError"; then
   echo "[deploy] OK → $DST (backup $BK)"
+  # gpio_driver (實體按鍵／LED 服務) 不在部署範圍：和盒上版本不同時提醒，需要時手動更新並重啟 pi5-gpio-keyled
+  # (11-27：.228 按鍵程式停在 10-14 版、按下去仍開 2.4 GHz 熱點，部署時看不出來)
+  GPIO_DST=${LN_GPIO_DIR:-/home/pi/gpio_driver}/key_led_driver.py
+  if [ -f "$SRC/gpio_driver/key_led_driver.py" ] && [ -f "$GPIO_DST" ]       && ! diff -q --strip-trailing-cr "$SRC/gpio_driver/key_led_driver.py" "$GPIO_DST" >/dev/null 2>&1; then
+    echo "[deploy] 注意：$GPIO_DST 和這版不同（gpio_driver 不會自動部署）"
+  fi
   ls -1dt "$DST"/.deploy_backup/* 2>/dev/null | tail -n +11 | xargs -r rm -rf    # 保留最近 10 份備份
   exit 0
 fi

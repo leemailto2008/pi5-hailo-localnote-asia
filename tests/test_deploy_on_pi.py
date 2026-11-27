@@ -240,3 +240,17 @@ def test_waits_before_reading_journal(env):
     i_journal = next(i for i, l in enumerate(log) if l.startswith("journalctl"))
     i_health = max(i for i, l in enumerate(log) if l.startswith("curl") and "/health" in l)
     assert i_health < i_sleep < i_journal
+
+
+@pytest.mark.parametrize("box,warn", [("KEY = 1\n", True), ("KEY = 2\r\n", False)])
+def test_warns_when_gpio_driver_differs(env, box, warn):
+    """11-27：gpio_driver 不自動部署；盒上版本不同要提醒（只差 CRLF 不算），但不改盒上檔案。"""
+    (env["src"] / "gpio_driver").mkdir()
+    (env["src"] / "gpio_driver" / "key_led_driver.py").write_text("KEY = 2\n", encoding="utf-8")
+    gpio = env["tmp"] / "gpio"
+    gpio.mkdir()
+    (gpio / "key_led_driver.py").write_bytes(box.encode())
+    env["env"]["LN_GPIO_DIR"] = str(gpio)
+    r = _deploy(env)
+    assert r.returncode == 0 and ("gpio_driver 不會自動部署" in r.stdout) is warn
+    assert (gpio / "key_led_driver.py").read_bytes() == box.encode()
