@@ -575,7 +575,8 @@ def _fix_latin_in_cjk(text: str) -> str:
     # 補的空白緊貼全形標點時拿掉 (P2 fuzz：「好的the budget、」→「好的 budget 、」，要等下一次 tidy_live_transcript 才收掉，
     # 整理兩次結果不一樣；tidy 對「空白＋、」本來就收成「、」)
     out = _LATIN_BEFORE_DIGIT_RE.sub("", _LATIN_IN_CJK_RE.sub(sub, text))
-    return re.sub(r"[ \t]+(?=[，、。！？；：])|(?<=[，、。！？；：])[ \t]+", "", out) if out != text else out
+    # 英文碎片只會出現在中文字或「，。、」旁邊 (_LATIN_IN_CJK_RE)，所以只看這三個標點
+    return re.sub(r"[ \t]+(?=[，、。])|(?<=[，、。])[ \t]+", "", out) if out != text else out
 
 
 # 英文會議的逐字稿裡，Whisper 偶爾用全形標點斷句（「Okay，let's start」「safety，last week」，11-03 英文 e2e 13 段有 7 處）。

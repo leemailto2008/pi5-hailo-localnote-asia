@@ -223,3 +223,24 @@ def test_bring_up_ap_all_timeout_returns_failure(monkeypatch):
     monkeypatch.setattr(hc.subprocess, "run", fake_run)
     res = hc.bring_up_ap()
     assert res.returncode != 0 and "timeout" in res.stderr
+
+
+def test_bring_up_ap_exact_commands_and_timeouts(monkeypatch):
+    """P3：nmcli 指令內容與逾時（modify 10 s、up 25 s）；全部逾時時 returncode 124、stderr 帶原因。"""
+    import subprocess
+    import hotspot_controller as hc
+    calls = []
+
+    def fake_run(cmd, **k):
+        calls.append((cmd, k.get("timeout")))
+        if "up" in cmd:
+            raise subprocess.TimeoutExpired(cmd, k.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    res = hc.bring_up_ap()
+    assert calls[0] == (["sudo", "nmcli", "connection", "modify", hc.AP_PROFILE, "802-11-wireless.band", "a",
+                         "802-11-wireless.channel", "36"], 10)
+    assert calls[1] == (["sudo", "nmcli", "connection", "up", hc.AP_PROFILE], 25)
+    assert len(calls) == 4 and calls[2][0][6] == "bg"
+    assert res.returncode == 124 and res.args == ["nmcli", "connection", "up", hc.AP_PROFILE]
+    assert res.stderr.startswith("timeout/error: ") and "timed out" in res.stderr
