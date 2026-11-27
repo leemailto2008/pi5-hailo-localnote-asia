@@ -18,3 +18,15 @@ def test_normal_lines_kept(s):
 
 def test_row_loop_collapsed():
     assert su.collapse_item_loops("| 準備報告準備報告準備報告準備報告 | 王 | - |") == "| 準備報告 | 王 | - |"
+
+
+def test_alternating_segments_deduped():
+    """11-27 法文紀要：兩個片段交替重複。"""
+    s = "- **Agreed**: 250–300 million in July, 22% gain, 25% tax, 22% norm, 22% gain, 22% norm, 22% gain, 22% norm, 22% norm"
+    assert su.collapse_item_loops(s) == "- **Agreed**: 250–300 million in July, 22% gain, 25% tax, 22% norm"
+
+
+@pytest.mark.parametrize("s", ["- 王經理負責教育訓練，李經理負責教育訓練", "- 出貨 1,000,000 台、1,000 台、1,000 台",
+                               "- 同意，同意，下週再議", "| 事項 | 王經理 | 11月28日 |"])
+def test_segment_normal_lines_kept(s):
+    assert su.collapse_item_loops(s) == s

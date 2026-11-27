@@ -241,8 +241,30 @@ def _drop_cut_off_final_bullet(text: str) -> str:
 _ITEM_LOOP_RE = re.compile(r"(.{2,40}?)\1{3,}")
 
 
+# 逗號分隔的片段交替重複 (11-27 法文 6 分紀要「22% norm, 22% gain, 25% tax, 22% norm, 22% gain, 22% norm, …」)：
+# 不是連續同一段，_ITEM_LOOP_RE 抓不到。千分位的「,」後面沒有空白，不會被當分隔
+_ITEM_SEG_RE = re.compile(r"(, |，|、)")
+
+
+def _dedupe_segments(s: str) -> str:
+    """同一行裡某個片段 (含文字、4 字以上) 出現 3 次以上：那些片段只留第一次，其他片段照舊。"""
+    parts = _ITEM_SEG_RE.split(s)
+    keys = [re.sub(r"[\s.。|]+$", "", p).strip().lower() for p in parts[0::2]]
+    looped = {k for k in keys if len(k) >= 4 and any(ch.isalpha() for ch in k) and keys.count(k) >= 3}
+    if not looped:
+        return s
+    out, seen = [parts[0]], {keys[0]}
+    for i, k in enumerate(keys[1:], 1):
+        if k in looped and k in seen:
+            continue
+        seen.add(k)
+        out += [parts[2 * i - 1], parts[2 * i]]
+    return "".join(out)
+
+
 def collapse_item_loops(s: str) -> str:
-    return _ITEM_LOOP_RE.sub(lambda m: m.group(1) if any(ch.isalpha() for ch in m.group(1)) else m.group(0), s)
+    s = _ITEM_LOOP_RE.sub(lambda m: m.group(1) if any(ch.isalpha() for ch in m.group(1)) else m.group(0), s)
+    return _dedupe_segments(s)
 
 
 def clean_summary_markdown(md: str, max_items: Optional[Dict[str, int]] = None) -> str:
