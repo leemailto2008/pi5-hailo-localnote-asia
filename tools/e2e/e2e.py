@@ -56,6 +56,16 @@ def api_retry(path, body=None, t=30, tries=4):
             time.sleep(3)
 
 
+def box_glossary():
+    """這場跑的時候盒子上的會議詞彙 (會改逐字稿的專名)；讀不到回 None (舊版 app 沒有這個 API 也能跑)。
+    11-27：重開機清掉盒上詞彙，同一份數位 30 的 fact_recall 0.9645 → 0.94，當時結果裡沒有任何紀錄可查。"""
+    try:
+        return [str(t) for t in api("/api/glossary").get("terms", [])]
+    except (OSError, ValueError, AttributeError) as e:
+        _log.warning("e2e: 讀不到 /api/glossary：%s", e)
+        return None
+
+
 def exit_on_sigterm():
     """pkill（SIGTERM）也走 try/finally 收尾：停播放器、刪強制收音設定、停監看。
     2026-11-14：砍掉 run_suite 後 ffmpeg 播放器還在放（預設 SIGTERM 直接結束、不跑 finally），下一場測試疊到兩路聲音。"""
@@ -154,6 +164,7 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", pla
         sh("pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=%s media.class=Audio/Sink "
            "audio.position=[MONO] audio.rate=16000 object.linger=true }'" % SINK)
         time.sleep(1)
+    glossary = box_glossary()
     mon_path = os.path.join(out_dir, f"mon_{label}.jsonl")
     sh("rm -f /tmp/mon.stop")
     mon = subprocess.Popen([sys.executable, os.path.join(HERE, "mon.py"), mon_path])
@@ -237,6 +248,7 @@ def run_case(wav, fixture_path, label, bypass_summary=False, out_dir="/tmp", pla
         "resources": _resources(rows, t0, rec_end, total, head, tail_),
         "transcript_eval": scoring.transcript_checks(transcript, fixture),
         "summary_eval": None if bypass_summary else scoring.summary_checks(summary, fixture, transcript),
+        "glossary_terms": glossary,
         "transcript": transcript, "summary": summary,
         "summary_raw": s.get("summary_raw"),   # LLM 原文（未後處理）；長會議走分段路徑時是逐段重點（11-16 起）
     }
