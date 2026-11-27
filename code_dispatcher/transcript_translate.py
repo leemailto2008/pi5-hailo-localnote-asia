@@ -788,7 +788,8 @@ def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
     # 姓名轉成拼音後才變成連續重複 (「Team Lead蔡 Team Lead Cai …」)：最後再收一次 (P11)
-    return drop_invented_time(src, collapse_repeats(fix_wrong_place(src, out, target)), target)
+    # 拿掉編出的年份後才變成連續重複 (「and March 21」×4)：收重複放在最後 (P30 慢速 fuzz)
+    return collapse_repeats(drop_invented_time(src, collapse_repeats(fix_wrong_place(src, out, target)), target))
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
