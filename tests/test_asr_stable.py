@@ -92,3 +92,16 @@ def test_quantities_keep_digit_sequence(q, ctx):
     import re
     s = ctx.format(q=q)
     assert re.findall(r"\d+", fix_meeting_terms(s)) == re.findall(r"\d+", s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s", ["最多1-2日", "至少3-5日", "平均2.5日", "延後1-2日", "延遲3-5日", "提前1-2日", "每1-2日", "共3-5日",
+                               "前後3-5日", "頂多2-3日", "只需2-3日", "延後1-2日為限", "3-5日一次"])
+def test_more_duration_contexts(s):
+    # P24：這些前後文一定是天數（最多、至少、平均、延後、提前、每、共、為限、一次…）
+    assert "月" not in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,want", [("需要 4 於 26 日上線", "4月26日"), ("大約 11 夜15日晚上", "11月15日"), ("延後到 1 於 24 日", "1月24日")])
+def test_misheard_month_words_not_treated_as_ranges(s, want):
+    # P24：「於／夜」是「月」聽錯，不會是天數範圍：前面有「需要／大約」也照樣修成日期（P21 的判斷只看「-」「.」）
+    assert want in fix_meeting_terms(s), fix_meeting_terms(s)

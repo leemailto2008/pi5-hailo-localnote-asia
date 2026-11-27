@@ -634,14 +634,18 @@ _DOUBLE_DAY_RE = re.compile(r"(?<=\d日)(?:\s*日)+(?=\s*(?:之前|以前|前|[�
 
 # 天數範圍／天數 (「預計3-5日內交貨」「需要2-3日」「約1.5日」) 不是聽錯的日期：前面是需要／延長／約…、或後面接內／左右…
 # 時不改 (P21：原本改成「3月5日內」「2月3日」「1月5日」，憑空生出月份)
-_DURATION_BEFORE_RE = re.compile(r"(?:需要|需|延長|延|約|大約|大概|為期|花了|花|耗時|歷時|天數|共計|保固期|保固)\s*$")
-_DURATION_AFTER_RE = re.compile(r"\s*(?:內|之內|以內|左右|工作天|的時間|多)")
+# P24：再補「最多／至少／平均／延後／延遲／提前／每／共／前後／頂多」與後面的「為限／一次」
+_DURATION_BEFORE_RE = re.compile(r"(?:需要|需|延長|延後|延遲|延|約|大約|大概|為期|花了|花|耗時|歷時|天數|共計|共|保固期|保固|"
+                                 r"最多|至少|平均|提前|每|前後|頂多)\s*$")
+_DURATION_AFTER_RE = re.compile(r"\s*(?:內|之內|以內|左右|工作天|的時間|多|為限|一次)")
 
 
 def _not_duration(repl):
     def sub(m: "re.Match") -> str:
         s = m.string
-        if _DURATION_BEFORE_RE.search(s[max(0, m.start() - 4):m.start()]) or _DURATION_AFTER_RE.match(s, m.end()):
+        # 只有「3-5日」「1.5日」這種寫法可能是天數；「4 於 26 日」「11 夜15日」是「月」聽錯，一定是日期 (P24)
+        ranged = re.search(r"\d\s*[-.]\s*\d", m.group(0))
+        if ranged and (_DURATION_BEFORE_RE.search(s[max(0, m.start() - 4):m.start()]) or _DURATION_AFTER_RE.match(s, m.end())):
             return m.group(0)
         return m.expand(repl) if isinstance(repl, str) else repl(m)
     return sub
