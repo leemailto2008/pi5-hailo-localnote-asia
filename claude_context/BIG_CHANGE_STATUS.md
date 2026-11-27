@@ -29,6 +29,9 @@
 - 11-27 法文回歸 → 紀要交替重複 08a761c。收 localnote@mac P1–P3（128d518…47b5ab2）：表格列被收成一格、**「Taipei 101」被換成「Hsinchu 101」**
   （0211cda 引進；譯文漏掉原文縣市時觸發，PC 重現後確認修好）、5 GHz 熱點 nmcli 逾時不退回 2.4 GHz、fix_meeting_terms 整理兩次不一致。
   Windows 全套 2385 passed／90 skipped、.228 2468 passed／7 skipped；replay_diff 08a761c 全部 0 改變。
+- 11-27 上一場尾端翻譯和新會議搶 Hailo（1574009）：法文接馬來文，馬來文 11/50、p50 205 s（單獨跑 27/47、83 s）；修後背靠背
+  24/48、p50 116 s（第 2–4 段 40／58／54 s，修前約 190 s；仍比單獨跑慢一些，上一版單獨跑 p50 95 s，一場差異在跳動範圍內與否未驗證）。
+  另收 P5（紀要交替重複第一段比不到）；KEY5 按鍵路徑補 5 GHz 逾時退回 2.4 GHz。
 
 ## 11-20 晚～週末（#60）：週末計畫 W1–W6（Andrew 11-23 回來 review；早報草稿 .cc_scratch/loop/monday_report_draft.md）
 **週末定稿摘要（11-23 07:20）**
