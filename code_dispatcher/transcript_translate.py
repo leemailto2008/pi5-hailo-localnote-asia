@@ -655,7 +655,8 @@ def fix_wrong_place(src: str, translation: Optional[str], target: str) -> Option
         pat = _place_word_re(en)
         wrong += [en] * len(pat.findall(masked))
         masked = pat.sub("#" * len(en), masked)
-    if len(wrong) != 1:
+    # 原文本身就寫了這個英文地名 (中英夾雜「新竹廠和 Taipei 101」)：譯文的是對的，不換 (P1)
+    if len(wrong) != 1 or re.search(r"(?<![A-Za-z])" + re.escape(wrong[0]) + r"(?![A-Za-z])", src or "", re.I):
         return translation
     return _place_word_re(wrong[0]).sub(want, translation, count=1)
 

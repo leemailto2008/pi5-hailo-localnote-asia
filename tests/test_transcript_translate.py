@@ -601,3 +601,10 @@ def test_fix_wrong_place():
     assert tt.fix_wrong_place("新北的工廠", "The factory in New Taipei", "en") == "The factory in New Taipei"
     assert tt.fix_wrong_place("新竹的展覽", "The exhibition in Taipei and Taichung", "en") == "The exhibition in Taipei and Taichung"
     assert tt.fix_wrong_place("今天開會", "Meeting in Taichung", "en") == "Meeting in Taichung"
+
+
+def test_fix_wrong_place_keeps_english_place_said_in_source():
+    # P1 審查 0211cda：原文本身就有英文地名（「Taipei 101」）時，譯文的 Taipei 是對的，不能換成原文另一個縣市
+    assert tt.postfix("新竹廠和 Taipei 101 那邊要對一下", "The plant and Taipei 101 need to check", "en") \
+        == "The plant and Taipei 101 need to check"
+    assert tt.postfix("新竹的聯華精密", "Lianghua Precision in Taichung", "en") == "Lianghua Precision in Hsinchu"   # 原本的修正照舊
