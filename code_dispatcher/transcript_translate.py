@@ -390,7 +390,12 @@ _CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2, "三": 
 _CN_UNIT = {"十": 10, "百": 100, "千": 1000}
 # 國字數字後面接量詞／日期才換 (「九月二日」「十輪」「二十二人」)；「一起」「一下」這種一般用詞不動
 # 「百分之」的「百」不是 100 (N5：「百分之30」原本換成「100分之30」，fix_numerals 會把它當成修好的譯文顯示)
-_CN_NUM_RE = re.compile(r"[零〇一二兩两三四五六七八九十百千]+(?!(?<=百)分之)(?=[月日號号輪轮人位名台臺個个天週周年次場场小分秒萬万億亿%％倍款件條条家點点組组項项輛辆張张支])")
+# 「季」：「Q1」常翻成「第一季」(P13)
+_CN_NUM_RE = re.compile(r"[零〇一二兩两三四五六七八九十百千]+(?!(?<=百)分之)(?=[月日號号輪轮人位名台臺個个天週周年次場场小分秒萬万億亿%％倍款件條条家點点組组項项輛辆張张支季])")
+# 逐字念的號碼 (「台北一零一」「三零二室」)：3 個字以上、中間有「零／〇」的一串國字數字，後面不接量詞也換 (P13)。
+# 「零件」「零星」「歸零」只有一個字，「一一」沒有零，都不算
+_CN_DIGIT_RUN_RE = re.compile(r"(?<![零〇一二三四五六七八九十百千萬万億亿])(?=[一二三四五六七八九零〇]*[零〇])"
+                              r"[一二三四五六七八九零〇]{3,}(?![零〇一二三四五六七八九十百千萬万億亿])")
 
 
 def _cn_to_int(s: str) -> Optional[int]:
@@ -414,13 +419,16 @@ _CN_PERCENT_RE = re.compile(r"百分之([零〇一二兩两三四五六七八九
 def cn_numerals_to_digits(text: str) -> str:
     """「九月二日」→「9月2日」、「十輪」→「10輪」、「二十二人」→「22人」、「百分之六」→「6%」。"""
     def repl(m: "re.Match") -> str:
+        if m.group(0) in ("零", "〇"):      # 單獨一個「零」是一般用詞 (「零件」「零售」)，不是數字 0 (P13：「十家零件」→「10家0件」)
+            return m.group(0)
         v = _cn_to_int(m.group(0))
         return m.group(0) if v is None else str(v)
 
     def repl_pct(m: "re.Match") -> str:
         v = _cn_to_int(m.group(1))
         return m.group(0) if v is None else f"{v}%"
-    return _CN_NUM_RE.sub(repl, _CN_PERCENT_RE.sub(repl_pct, text))
+    out = _CN_NUM_RE.sub(repl, _CN_PERCENT_RE.sub(repl_pct, text))
+    return _CN_DIGIT_RUN_RE.sub(lambda m: "".join(str(_CN_DIGIT[c]) for c in m.group(0)), out)
 
 
 def fix_numerals(src: str, translation: Optional[str], target: str) -> Optional[str]:

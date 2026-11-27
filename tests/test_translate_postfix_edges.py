@@ -199,3 +199,33 @@ def test_titled_name_needs_word_start(prefix):
     import transcript_translate as tt
     assert tt.romanize_titled_names("蔡組長", f"{prefix}Manager蔡", "en") == f"{prefix}Manager蔡"
     assert tt.fix_name_zh_titles("王經理", f"{prefix}Wang经理", "en") == f"{prefix}Wang经理"
+
+
+@pytest.mark.parametrize("src,tr,want", [
+    ("Q1 target", "第一季目標", "第1季目標"),
+    ("Q4 revenue up 10%", "第四季營收成長百分之十", "第4季營收成長10%"),
+    ("Taipei 101", "台北一零一", "台北101"),
+    ("room 302", "三零二室", "302室"),
+    ("10 rounds, together", "十輪，一起", "10輪，一起"),          # 一般用詞不動
+    ("Q1 target", "第一季目標，萬一", "第1季目標，萬一"),
+])
+def test_fix_numerals_quarter_and_digit_by_digit(src, tr, want):
+    # P13：「Q1」翻成「第一季」、「101」「302」逐字念成「一零一」「三零二」時數值對不上，整行被當成數值錯誤
+    import transcript_translate as tt
+    assert tt.fix_numerals(src, tr, "zh") == want
+
+
+@pytest.mark.parametrize("tr", ["零件一一確認", "零星的一些", "歸零一下"])
+def test_fix_numerals_digit_run_keeps_plain_words(tr):
+    import transcript_translate as tt
+    assert tt.cn_numerals_to_digits(tr) == tr
+
+
+@pytest.mark.parametrize("src,tr,want", [
+    ("10 suppliers of parts", "十家零件供應商", "10家零件供應商"),
+    ("10 rounds, zero defects in 3 days", "十輪，三天零件不良", "10輪，3天零件不良"),
+])
+def test_fix_numerals_lone_zero_is_a_word(src, tr, want):
+    # P13：「零件」的「零」後面接量詞「件」，原本被換成 0（「10家0件供應商」：生出原文沒有的數字 0）。單獨一個「零／〇」不換
+    import transcript_translate as tt
+    assert tt.fix_numerals(src, tr, "zh") == want
