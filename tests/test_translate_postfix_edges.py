@@ -191,3 +191,11 @@ def test_postfix_order_interactions_stable_in_one_pass(src, tr, want):
     out = tt.postfix(src, tr, "en")
     assert out.strip() == want.strip()
     assert tt.postfix(src, out, "en") == out
+
+
+@pytest.mark.parametrize("prefix", ["X", "x", "3", "_", "Z", "a", "0", "9"])
+def test_titled_name_needs_word_start(prefix):
+    # P12 突變補強：職稱／姓名前面緊接英文字母、數字、底線時不是開頭，不轉（「XManager蔡」「3Wang经理」不動）
+    import transcript_translate as tt
+    assert tt.romanize_titled_names("蔡組長", f"{prefix}Manager蔡", "en") == f"{prefix}Manager蔡"
+    assert tt.fix_name_zh_titles("王經理", f"{prefix}Wang经理", "en") == f"{prefix}Wang经理"
