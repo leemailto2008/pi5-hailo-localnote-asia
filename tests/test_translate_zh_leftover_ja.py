@@ -1,9 +1,17 @@
 """11-27 .229 Issue：日文→中文大半原樣留著日文卻算翻好；阿拉伯文→中文抄出提示詞、一長串「．」。"""
 import asyncio
+import os
+import sys
+import types
 
 import pytest
 
-import transcript_translate as tt
+# live_translate 要 import config（telegram_agent/config.py，不在 conftest 的路徑裡）：單獨跑這個檔時沒有別的測試先放進
+# sys.modules，4 項 ModuleNotFoundError（P14）。照 test_live_translate 的做法放一個替身
+sys.modules.setdefault("config", types.SimpleNamespace(WHISPER_MODEL_SIZE="small", WHISPER_DEVICE="cpu", WHISPER_COMPUTE_TYPE="int8",
+                                                       DEFAULT_TTS_VOICE="x", DATA_DIR=os.path.join(os.path.dirname(__file__), "_tmp_data")))
+
+import transcript_translate as tt  # noqa: E402
 
 JA_ECHO = "なんで？すねなんでロシアに金油金置いてんの？っていうことですけど、制約があって"
 
@@ -46,3 +54,22 @@ def test_kanji_heavy_japanese_not_treated_as_chinese():
 def test_chinese_with_single_hiragana_stays_chinese(s):
     import live_translate as lt
     assert not tt.source_is_japanese(s) and lt.target_for(s, "auto") == "en" and tt.in_target_language(s, "zh")
+
+
+# P14（localnote@mac）：dffce74 的門檻邊界（突變測試補強）
+@pytest.mark.parametrize("ch", list("．.·・。"))
+def test_dot_run_threshold_each_char(ch):
+    assert tt.collapse_repeats("好" + ch * 6) == "好……"         # 6 個起收
+    assert tt.collapse_repeats("好" + ch * 5) == "好" + ch * 5    # 5 個不動
+
+
+def test_japanese_left_boundaries():
+    assert tt.japanese_left("のはが" + "中" * 22)          # 3 個平假名、比例 3/25 = 0.12 剛好成立
+    assert not tt.japanese_left("のは" + "中" * 10)         # 只有 2 個平假名
+    assert not tt.japanese_left("のはが" + "中" * 23)      # 3/26 < 0.12
+
+
+def test_prompt_leak_each_phrase():
+    for p in ("數字照原樣保留", "翻成繁體中文：", "原文未提供正確的", "請提供正確的句子"):
+        assert tt.prompt_leaked("好的。" + p)
+    assert not tt.prompt_leaked("字照原樣")
