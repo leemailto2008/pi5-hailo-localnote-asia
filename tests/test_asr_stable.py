@@ -158,3 +158,15 @@ def test_en_number_word_before_measure_still_converted(s, want):
 def test_en_number_word_followed_by_noise_still_converted():
     # P26：實錄「業務部目前，two of 職已經面世了15位候選人」的 of 是「個」聽錯，照舊換成「二」
     assert "二職" in fix_meeting_terms("業務部目前，two of 職已經面世了15位候選人")
+
+
+@pytest.mark.parametrize("s", ["公司有十個部門", "總共十個部門參加", "請十個部門回覆", "十個部門的預算", "我們邀請了十個部門"])
+def test_ten_departments_kept_outside_todo_recap(s):
+    # P27：「十個部門」只在「待辦事項」後面才是「是各部門」聽錯（實錄 17 處）；其他地方是真的數量，不能拿掉 10
+    assert "十個部門" in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,want", [("3為工程師", "3位工程師"), ("三圍候選人", "三位候選人"), ("第100個議題", "第100個議題"),
+                                    ("第1個月", "第1個月"), ("第2個季度", "第2個季度"), ("3D為工程師", "3D為工程師")])
+def test_topic_and_headcount_keep_numbers(s, want):
+    assert fix_meeting_terms(s) == want
