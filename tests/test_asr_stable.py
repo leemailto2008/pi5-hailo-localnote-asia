@@ -67,3 +67,15 @@ def test_day_ranges_and_durations_not_dates(s):
                                     ("修正版預計 4 於 26 日上線", "4月26日上線"), ("切換定在 11 夜15日晚上", "11月15日晚上")])
 def test_misheard_dates_still_fixed(s, want):
     assert want in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s", ["3月1,000台", "12月2,500萬元", "3月1，000台", "預算3月5折", "3月5倍", "他3月5歲", "3月5成"])
+def test_missing_day_not_added_to_quantities(s):
+    # P22：「月」後面的數字其實是數量（千分位、折、倍、歲、成）時不補「日」（原本「3月1,000台」→「3月1日,000台」，數字被拆開）
+    assert "日" not in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,want", [("延到10月10，比原本", "10月10日"), ("6月21的周會", "6月21日的周會"), ("5月10上線", "5月10日上線"),
+                                    ("6月12，日前", "6月12日前")])
+def test_missing_day_still_added(s, want):
+    assert want in fix_meeting_terms(s), fix_meeting_terms(s)
