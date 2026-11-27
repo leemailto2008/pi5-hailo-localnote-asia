@@ -148,3 +148,46 @@ def test_postfix_weekday_glued_after_titled_name(src, tr, want):
     out = tt.postfix(src, tr, "en")
     assert out == want
     assert tt.postfix(src, out, "en") == out
+
+
+@pytest.mark.parametrize("src,tr,want", [
+    ("王經理新竹", "in 新竹Wang经理", "in Hsinchu Manager Wang"),
+    ("和林主任", "和Lin主任 meet", None),
+    ("王經理", "XWang经理", "XWang经理"),               # 前面是英文字母：不是姓名開頭，不動
+])
+def test_postfix_name_title_after_cjk(src, tr, want):
+    # P11 fuzz：姓名前面緊接中文字（「新竹Wang经理」）時 \b 不成立，第一次不換、fix_place_names 補空白後第二次才換
+    import transcript_translate as tt
+    out = tt.postfix(src, tr, "en")
+    if want is not None:
+        assert out == want
+    else:
+        assert "Director Lin" in out
+    assert tt.postfix(src, out, "en") == out
+
+
+def test_postfix_titled_cjk_name_after_cjk():
+    # P11 fuzz：「新竹Director林」職稱前面緊接中文字時 \b 不成立，第一次不轉拼音
+    import transcript_translate as tt
+    out = tt.postfix("林主任新竹", "in 新竹Director林", "en")
+    assert out == "in Hsinchu Director Lin" and tt.postfix("林主任新竹", out, "en") == out
+
+
+def test_collapse_repeats_reaches_fixpoint():
+    # P11 fuzz：收一次之後又形成新的 4 次重複（「OK OKOK OKOK OKOK OK」），要一次收到底
+    import transcript_translate as tt
+    s = "OK OK OK OK OK" * 4
+    out = tt.collapse_repeats(s)
+    assert tt.collapse_repeats(out) == out and out.count("OK") <= 2
+
+
+@pytest.mark.parametrize("src,tr,want", [
+    ("劉課長", "全员培训劉課長", "all staff training Section Chief Liu"),
+    ("蔡組長", "Team Lead蔡 Team Lead蔡 Team Lead蔡 Team Lead Cai Team Lead蔡", "Team Lead Cai Team Lead Cai"),  # 最後一份沒有空白，不算同一單位
+])
+def test_postfix_order_interactions_stable_in_one_pass(src, tr, want):
+    # P11 fuzz：常見商用詞緊接在姓名前面、姓名轉拼音後才變成重複迴圈——原本都要做兩次 postfix 才穩定
+    import transcript_translate as tt
+    out = tt.postfix(src, tr, "en")
+    assert out.strip() == want.strip()
+    assert tt.postfix(src, out, "en") == out

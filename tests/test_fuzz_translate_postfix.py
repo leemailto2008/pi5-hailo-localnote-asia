@@ -69,3 +69,27 @@ def test_postfix_zh_to_en_glued_stable(src, tr):
     out = out if out is not None else tr
     again = tt.postfix(src, out, "en")
     assert (again if again is not None else out) == out, (src, tr, out, again)
+
+
+# P11：姓名＋中文職稱、縣市、簡體字、常見商用詞也放進來
+ZH2 = st.sampled_from(["劉課長", "全員培訓", "王經理", "林主任", "許經理", "蔡組長", "陳副總", "張工程師", "李小姐", "新竹", "台中", "高雄", "桃園",
+                       "星期一", "週五", "預算", "3 台", "1,200 台", "30%", "12 月 10 日", "，", "。", "要", "在", "和"])
+EN2 = st.sampled_from(["Wang经理", "Wang經理", "Lin主任", "Xu经理", "Cai組長", "Chen副總", "Zhang工程師", "Ms. Li", "Manager王",
+                       "Director林", "Hsinchu", "Taichung", "Kaohsiung", "Taoyuan", "Hsinchu Science Park", "Taipei", "星期一",
+                       "週五", "budget", "3 units", "1,200 units", "30%", "December 10", ", ", ". ", "and", "the", "with",
+                       "in 新竹", "New竹", "new 竹", "台中市", "高雄縣", "全员培训", "预算", "交货", "Liu校长", "劉課長",
+                       "Wang經理Friday", "Team Lead蔡", "林主任星期一"])
+
+
+@CFG
+@given(st.lists(ZH2, max_size=12).map("".join), st.lists(EN2, max_size=12), st.sampled_from([" ", ""]))
+def test_postfix_names_titles_places(src, toks, sep):
+    tr = sep.join(toks)
+    out = tt.postfix(src, tr, "en")
+    out = out if out is not None else tr
+    again = tt.postfix(src, out, "en")
+    assert (again if again is not None else out) == out, (src, tr, out, again)
+    if sep:
+        assert _vals(out, True) <= _vals(tr, True) | _vals(src), (src, tr, out)
+        if tt.numbers_ok(src, tr):
+            assert tt.numbers_ok(src, out), (src, tr, out)

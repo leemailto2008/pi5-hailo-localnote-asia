@@ -448,7 +448,8 @@ def fix_titles(src: str, translation: Optional[str], target: str) -> Optional[st
 
 # 英文職稱後面直接接中文人名 (11-21 W17／W20：「Team Lead蔡」每場 1–3 次，模型重翻也一樣) → 姓名轉拼音「Team Lead Cai」。
 # 只轉職稱後面 1–3 個中文字、而且原文裡有這幾個字的；地名、職稱等其他夾雜的中文不轉 (「新竹」轉成 Xin Zhu 不對)。
-_TITLED_NAME_RE = re.compile(r"\b(Team Lead|Manager|Engineer|Director|Supervisor|Specialist|Assistant|Mr\.|Ms\.|Mrs\.)\s*"
+# 職稱前面不是英文字母／數字就算開頭 (「新竹Director林」：中文字緊接在前面時 \b 不成立，P11)
+_TITLED_NAME_RE = re.compile(r"(?<![A-Za-z0-9_])(Team Lead|Manager|Engineer|Director|Supervisor|Specialist|Assistant|Mr\.|Ms\.|Mrs\.)\s*"
                              r"([一-鿿]{1,3})(?![一-鿿])(?:\s*\(([A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)?)\))?")
 
 
@@ -507,7 +508,8 @@ _ZH_TITLE_EN = {"總經理": "General Manager", "总经理": "General Manager", 
                 "部长": "Department Head", "處長": "Division Director", "处长": "Division Director",
                 "工程師": "Engineer", "工程师": "Engineer", "專員": "Specialist", "专员": "Specialist",
                 "先生": "Mr.", "小姐": "Ms.", "女士": "Ms."}
-_NAME_ZH_TITLE_RE = re.compile(r"\b([A-Z][a-z]+)(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")")
+# 姓名前面不是英文字母／數字就算開頭：中文字緊接在前面 (「新竹Wang经理」「和Lin主任」) 時 \b 不成立，原本要做第二次才換 (P11)
+_NAME_ZH_TITLE_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Z][a-z]+)(" + "|".join(sorted(_ZH_TITLE_EN, key=len, reverse=True)) + r")")
 
 
 
@@ -709,18 +711,26 @@ def collapse_repeats(text: Optional[str]) -> Optional[str]:
     """連續重複 4 次以上的片段只留一次 (「這種情況，這種情況，這種情況，這種情況」→「這種情況，」)。"""
     if not text:
         return text
-    return _DOT_RUN_RE.sub("……", _REPEAT_LOOP_RE.sub(lambda m: m.group(1) if _loop_unit(m) else m.group(0), text))
+    # 收一次之後可能又形成新的連續重複 (「OK OK OK OK OK」連印 4 次 → 「OK OKOK OKOK OKOK OK」)：收到不再變為止 (P11)
+    for _ in range(8):
+        out = _REPEAT_LOOP_RE.sub(lambda m: m.group(1) if _loop_unit(m) else m.group(0), text)
+        if out == text:
+            break
+        text = out
+    return _DOT_RUN_RE.sub("……", text)
 
 
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：重複迴圈 (collapse_repeats)、數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
-    # 中文星期先換掉：「Team Lead蔡星期五」的姓名後面緊接星期時，romanize_titled_names 會比到 4 個中文字而不轉 (P10)
-    translation = fix_weekdays(collapse_repeats(translation), target)
+    # 中文星期、常見商用詞、縣市名先換掉：姓名前後緊接這些中文字時 (「Team Lead蔡星期五」「全员培训劉課長」「新竹劉課長」)
+    # 姓名的比對 (前後不能是中文字) 不成立，原本要做第二次才換 (P10、P11)。後面原本那幾次照舊 (都是做兩次一樣)
+    translation = fix_place_names(src, fix_common_zh_words(fix_weekdays(collapse_repeats(translation), target), target), target)
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
-    return fix_wrong_place(src, out, target)
+    # 姓名轉成拼音後才變成連續重複 (「Team Lead蔡 Team Lead Cai …」)：最後再收一次 (P11)
+    return collapse_repeats(fix_wrong_place(src, out, target))
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
