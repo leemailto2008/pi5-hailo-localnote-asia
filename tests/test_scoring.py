@@ -56,7 +56,7 @@ def _result(**over):
 TH = {"default": {"transcript_cer_max": 0.4, "transcript_fact_recall_min": 0.6, "summary_required": True, "summary_duplicate_lines_max": 0,
                   "summary_recap_recall_min": 0.5, "summary_topic_coverage_min": 0.5, "summary_latency_base_s": 120,
                   "summary_latency_per_min_s": 12, "stt_npu_ratio_min": 0.95, "hailo_busy_errors_max": 0, "stt_tail_wait_max_s": 10,
-                  "rec_cpu_avg_max": 15, "cpu_temp_max": 75, "ram_peak_mb_max": 3500, "swap_growth_mb_max": 64},
+                  "rec_cpu_avg_max": 15, "cpu_temp_max": 75, "ram_peak_mb_max": 3500, "swap_max_mb_max": 512},
       "per_minutes": {"30": {"stt_tail_wait_max_s": 15}}}
 
 
@@ -112,3 +112,14 @@ def test_post_record_budget_scales_to_4h():
     assert e2e.post_record_budget_s(75) == 1500                       # 短會議維持至少 25 分鐘
     b = e2e.post_record_budget_s(14390)                               # 4 小時
     assert b > 1.5 * (120 + 12 * 14390 / 60) and b < 6000
+
+
+def test_swap_gate_uses_total_not_growth():
+    """11-27：增量 124 MB 但總量 325 MB（RAM 仍有 4 GB 可用，zram 換出閒置頁）不算失敗；總量超過 512 MB 才失敗。"""
+    th = scoring.thresholds_for(TH, 3)
+    res = dict(_result()["resources"], swap_max_mb=325, swap_growth_mb=124)
+    checks = {c["check"]: c for c in scoring.evaluate(_result(resources=res), th)}
+    assert checks["swap_max_mb"]["passed"] and "swap_growth_mb" not in checks
+    res = dict(res, swap_max_mb=600)
+    checks = {c["check"]: c for c in scoring.evaluate(_result(resources=res), th)}
+    assert not checks["swap_max_mb"]["passed"]

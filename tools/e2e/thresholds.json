@@ -15,7 +15,7 @@
   "rec_cpu_avg_max": 15,
   "cpu_temp_max": 75,
   "ram_peak_mb_max": 4800,
-  "swap_growth_mb_max": 64,
+  "swap_max_mb_max": 512,
   "api_max_gap_s_max": 8
  },
  "per_minutes": {

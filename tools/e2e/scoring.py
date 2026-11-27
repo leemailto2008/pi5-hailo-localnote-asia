@@ -186,7 +186,9 @@ def evaluate(result: dict, th: dict) -> list:
     chk("rec_cpu_avg_pct", rec, f"<= {th['rec_cpu_avg_max']}", rec is not None and rec <= th["rec_cpu_avg_max"])
     chk("cpu_temp_max_c", r.get("cpu_temp_max"), f"<= {th['cpu_temp_max']}", (r.get("cpu_temp_max") or 0) <= th["cpu_temp_max"])
     chk("ram_peak_mb", r.get("ram_peak_mb"), f"<= {th['ram_peak_mb_max']}", (r.get("ram_peak_mb") or 0) <= th["ram_peak_mb_max"])
-    chk("swap_growth_mb", r.get("swap_growth_mb"), f"<= {th['swap_growth_mb_max']}", (r.get("swap_growth_mb") or 0) <= th["swap_growth_mb_max"])
+    # 看換頁區最高總量，不看增量 (11-27 Andrew)：增量會在錄音結束那 1 分鐘、RAM 仍有 4 GB 以上可用時，因 zram 換出閒置頁而跳 70–120 MB，
+    # 同環境 0211cda／430dae7 都是 93 MB → 不是記憶體不足。swap_growth_mb 仍記在 resources 供參考
+    chk("swap_max_mb", r.get("swap_max_mb"), f"<= {th['swap_max_mb_max']}", (r.get("swap_max_mb") or 0) <= th["swap_max_mb_max"])
     thr_ok = r.get("throttled_start") in (None, "throttled=0x0") and r.get("throttled_end") in (None, "throttled=0x0")
     chk("not_throttled", f"{r.get('throttled_start')}/{r.get('throttled_end')}", "throttled=0x0", thr_ok)
     chk("no_app_errors", len(result.get("errors") or []), "== 0", not result.get("errors"))
