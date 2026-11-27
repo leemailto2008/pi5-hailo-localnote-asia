@@ -207,3 +207,22 @@ def test_toggle_falls_back_to_24ghz_when_5ghz_hangs(hotspot, kld, monkeypatch, e
     hotspot["pair"]._execute_toggle_workflow()
     assert band == ["a", "bg"] and hotspot["pair"].led.is_lit
     assert ["sudo", "nft", "-f", "/etc/nftables.hotspot_guard.nft"] in hotspot["cmds"]
+
+
+@pytest.mark.parametrize("exc", [None, "timeout"])
+def test_toggle_reverts_to_home_wifi_when_both_bands_fail(hotspot, kld, monkeypatch, exc):
+    """P8：5 GHz 和 2.4 GHz 都開不起來時，馬上切回家用 Wi-Fi（同 hotspot_controller 的 Auto-reverting），
+    不要等 watchdog 的 180 s：這段時間既沒熱點也沒家用網路。"""
+    def run(cmd, **kw):
+        hotspot["cmds"].append(cmd)
+        if cmd[:4] == ["sudo", "nmcli", "connection", "up"]:
+            if exc:
+                raise kld.subprocess.TimeoutExpired(cmd, 25)
+            return types.SimpleNamespace(returncode=10, stdout="", stderr="no device")
+        return _R("ok")
+    monkeypatch.setattr(kld.subprocess, "run", run)
+    hotspot["pair"]._execute_toggle_workflow()
+    cmds = hotspot["cmds"]
+    assert any("--revert" in c for c in cmds)
+    assert ["sudo", "nft", "-f", "/etc/nftables.hotspot_guard.nft"] not in cmds
+    assert not hotspot["pair"].led.is_lit and not hotspot["pair"].is_transitioning

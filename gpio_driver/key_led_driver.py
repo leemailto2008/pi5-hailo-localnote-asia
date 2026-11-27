@@ -278,6 +278,14 @@ class HotspotKeyLedPair:
                 if res.returncode == 0:
                     subprocess.run(["sudo", "nft", "-f", "/etc/nftables.hotspot_guard.nft"], capture_output=True)
                     logger.info("🛡️ [HotspotGuard] Kernel firewall applied: Only 10.20.0.1 services allowed, background junk dropped.")
+                else:
+                    # 兩個頻段都開不起來：馬上切回家用 Wi-Fi (同 hotspot_controller 的 Auto-reverting)，
+                    # 不等 watchdog 的 180 s——這段時間既沒熱點也沒家用網路 (P8)
+                    logger.warning("📡 AP startup FAILED on all bands. Reverting back to home Wi-Fi...")
+                    target_mode = "sta"
+                    res = subprocess.run(["sudo", "python3", "/home/pi/code_dispatcher/hotspot_watchdog.py", "--revert"],
+                                         capture_output=True, text=True, timeout=30)
+                    logger.info(f"[revert to STA] code={res.returncode}, out={res.stdout.strip()}, err={res.stderr.strip()}")
             else:
                 logger.info("🌐 Reverting back to home Wi-Fi...")
                 subprocess.run(["sudo", "nft", "delete", "table", "inet", "hotspot_guard"], capture_output=True)
