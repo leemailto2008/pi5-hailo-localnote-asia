@@ -54,3 +54,16 @@ def test_latin_fragment_exact_output():
 def test_latin_fragment_single_spaces():
     from hailo_whisper.engine import _fix_latin_in_cjk
     assert _fix_latin_in_cjk("好的the budget so好的") == "好的 budget so 好的"
+
+
+@pytest.mark.parametrize("s", ["預計3-5日內交貨", "需要2-3日", "延長7-14日", "大約3-5日左右", "為期2-3日的訓練", "花了5-7日",
+                               "約1.5日", "需要2.5日", "工作天數3-10日", "保固期延長10-14日", "3-5日以內回覆", "3-5日之內", "3-5 日工作天"])
+def test_day_ranges_and_durations_not_dates(s):
+    # P21：「3-5日內」「需要2-3日」「1.5日」是天數，不是 3月5日、2月3日、1月5日（憑空生出月份）
+    assert "月" not in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,want", [("8-15日前完成", "8月15日前完成"), ("預計12.8日到貨", "預計12月8日到貨"), ("2.15日前提出", "2月15日前提出"),
+                                    ("修正版預計 4 於 26 日上線", "4月26日上線"), ("切換定在 11 夜15日晚上", "11月15日晚上")])
+def test_misheard_dates_still_fixed(s, want):
+    assert want in fix_meeting_terms(s), fix_meeting_terms(s)

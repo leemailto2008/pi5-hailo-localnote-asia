@@ -631,8 +631,23 @@ _DATE_LAUNCH_RE = re.compile(r"(?<=[\d一二三四五六七八九十]日)\s*上\
 _DOUBLE_DAY_RE = re.compile(r"(?<=\d日)(?:\s*日)+(?=\s*(?:之前|以前|前|[，,。]|完成|的|報|拿|到))")   # 「11月10日日前完成報到」(138 份 21 次)
 
 
+# 天數範圍／天數 (「預計3-5日內交貨」「需要2-3日」「約1.5日」) 不是聽錯的日期：前面是需要／延長／約…、或後面接內／左右…
+# 時不改 (P21：原本改成「3月5日內」「2月3日」「1月5日」，憑空生出月份)
+_DURATION_BEFORE_RE = re.compile(r"(?:需要|需|延長|延|約|大約|大概|為期|花了|花|耗時|歷時|天數|共計|保固期|保固)\s*$")
+_DURATION_AFTER_RE = re.compile(r"\s*(?:內|之內|以內|左右|工作天|的時間|多)")
+
+
+def _not_duration(repl):
+    def sub(m: "re.Match") -> str:
+        s = m.string
+        if _DURATION_BEFORE_RE.search(s[max(0, m.start() - 4):m.start()]) or _DURATION_AFTER_RE.match(s, m.end()):
+            return m.group(0)
+        return m.expand(repl) if isinstance(repl, str) else repl(m)
+    return sub
+
+
 def _fix_misheard_dates(text: str) -> str:
-    text = _MONTH_MISHEARD_DATE_RE.sub(r"\1月\2日", text)
+    text = _MONTH_MISHEARD_DATE_RE.sub(_not_duration(r"\1月\2日"), text)
     text = _REPEATED_DAY_RE.sub(r"\1月\2日", _DAY_AS_MONTH_RE.sub(r"\1月\2日", text))
     text = _DAY_BEFORE_RE.sub(r"\1月\2日前", text)
     return _MISSING_DAY_RE.sub(r"\1月\2日", text)
@@ -664,7 +679,7 @@ def fix_meeting_terms(text: str) -> str:
     text = _OWNER_GLUE_FIX_RE.sub(r"\1，", _HOSTED_STUB_FIX_RE.sub(r"\1主持", text))
     text = _PRONOUN_SURNAME_FIX_RE.sub(lambda m: "李" if m.group(0) == "你" else "林", text)
     text = _FUZE_STUB_RE.sub("負責", _FUZE_STUTTER_RE.sub("負責", text))
-    text = _DOT_DATE_RE.sub(lambda m: f"{int(m.group(1))}月{int(m.group(2))}日", text)
+    text = _DOT_DATE_RE.sub(_not_duration(lambda m: f"{int(m.group(1))}月{int(m.group(2))}日"), text)
     text = _SPACED_DATE_RE.sub(lambda m: f"{m.group(1)}月{m.group(2)}日", _fix_misheard_dates(text))
     text = _DATE_LAUNCH_RE.sub("上線", _DOUBLE_DAY_RE.sub("", text))        # 日期的空白先收掉 (「6 月 18 日 日 拿到」)
     # 結尾總結的「決議／待辦事項」與「預計」在英文碎片、日期整理完之後再看一次 (否則第二次修才會改到)
