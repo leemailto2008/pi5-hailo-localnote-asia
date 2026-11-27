@@ -41,3 +41,14 @@ def test_table_row_cells_not_merged():
     rows = [l for l in out.splitlines() if l.startswith("|") and "---" not in l]
     assert all(r.count("|") >= 4 for r in rows), rows
     assert "| 送樣品 | 吳副理 | 好好 |" in out                       # 格子裡的迴圈照舊收掉
+
+
+@pytest.mark.parametrize("line,want", [
+    ("- 22% norm, 22% gain, 22% norm, 22% norm, 22% norm", "- 22% norm, 22% gain"),
+    ("- 22% norm, 22% gain, 22% norm, 22% norm", "- 22% norm, 22% gain"),
+    ("* 預算審核，人力規劃，預算審核，預算審核", "* 預算審核，人力規劃"),
+])
+def test_dedupe_segments_counts_first_bullet_segment(line, want):
+    # P5 審查 08a761c：整行含條列符號「- 」，第一段的 key 帶著「- 」比不到後面的同一段：3 次只算 2 次、4 次留兩份
+    import summary_utils as su
+    assert su.collapse_item_loops(line) == want

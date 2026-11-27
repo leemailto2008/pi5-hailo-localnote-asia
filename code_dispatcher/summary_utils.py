@@ -249,7 +249,9 @@ _ITEM_SEG_RE = re.compile(r"(, |，|、)")
 def _dedupe_segments(s: str) -> str:
     """同一行裡某個片段 (含文字、4 字以上) 出現 3 次以上：那些片段只留第一次，其他片段照舊。"""
     parts = _ITEM_SEG_RE.split(s)
-    keys = [re.sub(r"[\s.。|]+$", "", p).strip().lower() for p in parts[0::2]]
+    # 開頭的條列符號 (「- 」「* 」「• 」) 不算進 key：整行傳進來時第一段帶著它，原本比不到後面同樣的片段 (P5)
+    keys = [re.sub(r"[\s.。|]+$", "", re.sub(r"^\s*[-*•]\s+", "", p) if i == 0 else p).strip().lower()
+            for i, p in enumerate(parts[0::2])]
     looped = {k for k in keys if len(k) >= 4 and any(ch.isalpha() for ch in k) and keys.count(k) >= 3}
     if not looped:
         return s
