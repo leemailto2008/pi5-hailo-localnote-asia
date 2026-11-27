@@ -33,3 +33,16 @@ def test_japanese_echo_not_accepted(monkeypatch):
     monkeypatch.setattr(tt, "_complete", echo)
     res = asyncio.run(tt._translate_flat([JA_ECHO], "zh", None, lambda: False, use_cpu=False, one_chunk=True))
     assert res["done"] == {} and res["fallback_units"] == 1
+
+
+def test_kanji_heavy_japanese_not_treated_as_chinese():
+    import live_translate as lt
+    s = "2024年の全國平均家賃は 5萬3135円。"
+    assert not tt.is_japanese(s) and tt.source_is_japanese(s)
+    assert lt.target_for(s, "auto") == "zh" and not tt.in_target_language(s, "zh")
+
+
+@pytest.mark.parametrize("s", ["這家「鮮の味」的合約下週簽。", "鮮の味の門市預算 300 萬元。", "請各部門在週四前把名單交給吳副理。"])
+def test_chinese_with_single_hiragana_stays_chinese(s):
+    import live_translate as lt
+    assert not tt.source_is_japanese(s) and lt.target_for(s, "auto") == "en" and tt.in_target_language(s, "zh")

@@ -49,6 +49,13 @@ def is_japanese(text: str) -> bool:
     這裡不 import engine (它會載入 numpy，也要另外處理 sys.path)。"""
     kana = len(_KANA_RE.findall(text or ""))
     return kana >= 3 and kana >= 0.15 * (kana + len(_CJK_RE.findall(text or "")))
+def source_is_japanese(text: str) -> bool:
+    """翻譯方向用：is_japanese，或出現兩種以上不同的平假名。漢字多的日文短句「2024年の全國平均家賃は 5萬3135円。」
+    只有「の」「は」，原本被當成中文 (自動模式翻成英文、固定翻中文時原樣照抄；11-27 .229「把日文誤認中文」)。
+    中文裡借用的「の」(鮮の味) 只有一種，不算。"""
+    return is_japanese(text) or len(set(re.findall(r"[ぁ-ゟ]", text or ""))) >= 2
+
+
 # 西、法、德、印尼文常見功能詞 (不收跟英文同形的 a、in、an、die、no…)
 _FOREIGN_FUNCTION_WORDS = frozenset(
     "de la el los las que y del por para con una se lo su al es "            # 西
@@ -91,7 +98,7 @@ def in_target_language(text: str, target: str) -> bool:
         foreign = sum(w in _FOREIGN_FUNCTION_WORDS for w in words)
         share = english_share(text)
         return (share >= 0.5 and foreign * 5 <= len(words)) or (foreign == 0 and len(words) >= 4)
-    return cjk > 0 and cjk * 2 >= latin and not is_japanese(text)
+    return cjk > 0 and cjk * 2 >= latin and not source_is_japanese(text)
 
 
 def untranslated_left(translation: str, target: str) -> bool:

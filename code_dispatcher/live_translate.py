@@ -97,7 +97,7 @@ def target_for(text: str, mode: str) -> str:
     日文 (tt.is_japanese) 翻中文 (S14：含漢字的日文原本被判成中文翻英文，日文會議一句英文一句中文交錯)。"""
     if mode in ("en", "zh"):
         return mode
-    if tt.is_japanese(text):
+    if tt.source_is_japanese(text):
         return "zh"
     return "en" if len(_CJK_RE.findall(text)) * 2 >= len(_LATIN_RE.findall(text)) and _CJK_RE.search(text) else "zh"
 
