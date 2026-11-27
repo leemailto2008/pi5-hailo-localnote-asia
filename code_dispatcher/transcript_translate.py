@@ -715,7 +715,8 @@ def collapse_repeats(text: Optional[str]) -> Optional[str]:
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：重複迴圈 (collapse_repeats)、數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
-    translation = collapse_repeats(translation)
+    # 中文星期先換掉：「Team Lead蔡星期五」的姓名後面緊接星期時，romanize_titled_names 會比到 4 個中文字而不轉 (P10)
+    translation = fix_weekdays(collapse_repeats(translation), target)
     out = romanize_titled_names(src, fix_titles(src, fix_numerals(src, translation, target), target), target)
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)

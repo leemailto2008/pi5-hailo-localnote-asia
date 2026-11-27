@@ -135,3 +135,16 @@ def test_without_pypinyin_names_are_left(monkeypatch):
 ])
 def test_romanize_parenthesised_two_words(tr, want):
     assert tt.romanize_titled_names("焦文軒經理", tr, "en") == want
+
+
+@pytest.mark.parametrize("src,tr,want", [
+    ("蔡組長星期五交", "Team Lead蔡星期五 delivers", "Team Lead Cai Friday delivers"),
+    ("蔡組長週三", "Team Lead蔡週三", "Team Lead Cai Wednesday"),
+])
+def test_postfix_weekday_glued_after_titled_name(src, tr, want):
+    # P10 fuzz：中文星期緊接在職稱後的中文姓名後面時，romanize_titled_names 比到 4 個中文字不轉，
+    # 之後 fix_weekdays 才把星期換掉——姓名留著中文，要再做一次 postfix 才轉拼音
+    import transcript_translate as tt
+    out = tt.postfix(src, tr, "en")
+    assert out == want
+    assert tt.postfix(src, out, "en") == out
