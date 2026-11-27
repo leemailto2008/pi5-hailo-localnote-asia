@@ -140,3 +140,21 @@ def test_missing_day_cheng_words(w):
 
 def test_duration_before_with_space():
     assert "月" not in fix_meeting_terms("保固期 3-5日"), fix_meeting_terms("保固期 3-5日")
+
+
+@pytest.mark.parametrize("s,bad", [("這是no one的問題", "一"), ("用 one drive 存", "一"), ("我們team one負責", "一"),
+                                   ("他說one more時", "一"), ("那個ten的問題", "十")])
+def test_en_number_word_needs_measure_word(s, bad):
+    # P26：英文數字字只在後面緊接量詞時才換成國字（「two個職缺」「six 月」）；「no one的」「one drive」不是數字（原本生出「一」）
+    assert bad not in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,want", [("有two個職缺", "二個職缺"), ("第three個議題", "第三個議題"), ("聯發科 six 月", "六月"),
+                                    ("目前er two 個職缺", "二個"), ("招募 five 人", "五人"), ("請 ten 位同仁", "十位")])
+def test_en_number_word_before_measure_still_converted(s, want):
+    assert want in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+def test_en_number_word_followed_by_noise_still_converted():
+    # P26：實錄「業務部目前，two of 職已經面世了15位候選人」的 of 是「個」聽錯，照舊換成「二」
+    assert "二職" in fix_meeting_terms("業務部目前，two of 職已經面世了15位候選人")

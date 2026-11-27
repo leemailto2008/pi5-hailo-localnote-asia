@@ -555,6 +555,7 @@ def _fix_product_terms(text: str) -> str:
 _LATIN_IN_CJK_RE = re.compile(r"(?<=[\u4e00-\u9fff，。、])(\s*)((?:'?[a-z][a-z']{0,7}\s*){1,3}?)(?=[\u4e00-\u9fff，。、])")
 # 數字前面的雜訊字尾 (「目前er3個職缺」)；只認多字母的雜訊，「v2」「e3」這類型號不動
 _LATIN_BEFORE_DIGIT_RE = re.compile(r"(?<=[\u4e00-\u9fff])\s*(?:er|est|ary|ers|ors|ing|um)\s*(?=\d)")
+_EN_NUM_MEASURE_RE = re.compile(r"[個个月日號号輪轮人位名台臺天週周年次場场分秒萬万億亿倍款件條条家點点組组項项輛辆張张支季成%％]")
 _EN_NUMBERS = {"one": "一", "two": "二", "three": "三", "four": "四", "five": "五", "six": "六", "seven": "七",
                "eight": "八", "nine": "九", "ten": "十"}
 _EN_NOISE = {"er", "est", "ed", "y", "v", "es", "e", "en", "ors", "'s", "r", "um", "ers", "ly", "ing", "ar", "al", "nd",
@@ -565,7 +566,12 @@ _EN_NOISE = {"er", "est", "ed", "y", "v", "es", "e", "en", "ors", "'s", "r", "um
 def _fix_latin_in_cjk(text: str) -> str:
     def sub(m):
         words = m.group(2).split()
-        out = [_EN_NUMBERS.get(w, w) for w in words if w not in _EN_NOISE]
+        kept = [w for w in words if w not in _EN_NOISE]
+        # 英文數字字只在最後一個、後面緊接量詞時才換 (「two個職缺」「six 月」)；「no one的問題」「one drive」不是數字 (P26：原本生出「一」)
+        # 數字字後面跟著的都是雜訊字 (「two of 職」：of 是「個」聽錯) 也算
+        trailing_noise = bool(kept) and words[-1] != kept[-1]
+        measure = trailing_noise or _EN_NUM_MEASURE_RE.match(m.string, m.end()) is not None
+        out = [_EN_NUMBERS.get(w, w) if (measure and k == len(kept) - 1) else w for k, w in enumerate(kept)]
         if out == words:
             return m.group(0)
         changed = [w for w in out if w not in _EN_NUMBERS.values()]
