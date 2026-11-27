@@ -286,7 +286,8 @@ def clean_summary_markdown(md: str, max_items: Optional[Dict[str, int]] = None) 
         is_item = s.startswith(("-", "*", "•")) or re.match(r"^\d+[\.、)]", s) is not None
         is_row = s.startswith("|") and not set(s) <= set("|-: ")
         if is_item or is_row:
-            collapsed = collapse_item_loops(s)
+            # 表格列一格一格收 (P1：整列收時「| 待確認 | 待確認 | 待確認 | 待確認 |」變成「| 待確認 |」，欄位消失)
+            collapsed = "|".join(collapse_item_loops(c) for c in s.split("|")) if is_row else collapse_item_loops(s)
             if collapsed != s:
                 s = line = collapsed
         if is_item and re.match(r"^[-*•]\s*no (?:additional|other|further|specific|more)\b", s, re.I):

@@ -30,3 +30,14 @@ def test_alternating_segments_deduped():
                                "- 同意，同意，下週再議", "| 事項 | 王經理 | 11月28日 |"])
 def test_segment_normal_lines_kept(s):
     assert su.collapse_item_loops(s) == s
+
+
+def test_table_row_cells_not_merged():
+    # P1 審查 b652886：表格列整列套 collapse_item_loops，4 格內容相同的列被收成一格（「| 待確認 |」），欄位消失
+    import summary_utils as su
+    md = ("## 待辦\n| 事項 | 負責人 | 期限 |\n|---|---|---|\n| 待確認 | 待確認 | 待確認 | 待確認 |\n"
+          "| 送樣品 | 吳副理 | 好好好好好好好好 |")
+    out = su.clean_summary_markdown(md)
+    rows = [l for l in out.splitlines() if l.startswith("|") and "---" not in l]
+    assert all(r.count("|") >= 4 for r in rows), rows
+    assert "| 送樣品 | 吳副理 | 好好 |" in out                       # 格子裡的迴圈照舊收掉
