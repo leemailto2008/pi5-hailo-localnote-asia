@@ -105,3 +105,38 @@ def test_more_duration_contexts(s):
 def test_misheard_month_words_not_treated_as_ranges(s, want):
     # P24：「於／夜」是「月」聽錯，不會是天數範圍：前面有「需要／大約」也照樣修成日期（P21 的判斷只看「-」「.」）
     assert want in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("c", list("日號号萬千百元%臺台個位人天點週周年次場支件批輪張份.:：月折倍歲") + ["3", "，3", ",3", "成"])
+def test_missing_day_exclusions_each_char(c):
+    # P25 突變補強：「月」後面的數字接這些字（量詞、單位、已經有日／號）時不補「日」
+    s = f"在3月5{c}"
+    out = fix_meeting_terms(s)
+    assert "5日" not in out or c in "日月", (s, out)
+
+
+@pytest.mark.parametrize("s,want", [("10月31的會", "10月31日"), ("12月30上線", "12月30日"), ("11月1的會", "11月1日"),
+                                    ("3月21st的會", "3月21日"), ("5月10，日前", "5月10日前"), ("5月10,日前", "5月10日前"),
+                                    ("5月10成立", "5月10日成立"), ("5月9上線", "5月9日上線")])
+def test_missing_day_boundaries(s, want):
+    assert want in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s", ["0.3月5的會"])
+def test_missing_day_not_after_decimal(s):
+    assert "5日" not in fix_meeting_terms(s), fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("s,ok", [("我們大約需要3-5日", True), ("需要我們3-5日", False)])
+def test_duration_before_window(s, ok):
+    # 「需要／大約」要緊接在數字前面（往前看 4 個字以內）
+    assert ("月" not in fix_meeting_terms(s)) == ok, fix_meeting_terms(s)
+
+
+@pytest.mark.parametrize("w", ["成立", "成交", "成果", "成功", "成員", "成為", "成長"])
+def test_missing_day_cheng_words(w):
+    assert "5月10日" + w in fix_meeting_terms(f"5月10{w}"), fix_meeting_terms(f"5月10{w}")
+
+
+def test_duration_before_with_space():
+    assert "月" not in fix_meeting_terms("保固期 3-5日"), fix_meeting_terms("保固期 3-5日")
