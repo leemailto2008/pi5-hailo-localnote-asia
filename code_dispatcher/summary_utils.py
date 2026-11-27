@@ -246,11 +246,15 @@ _ITEM_LOOP_RE = re.compile(r"(.{2,40}?)\1{3,}")
 _ITEM_SEG_RE = re.compile(r"(, |，|、)")
 
 
+_FIRST_SEG_PREFIX_RE = re.compile(r"^\s*(?:(?:[-*•]|\d{1,3}[.)])\s+)?(?:[^，,、：:]{0,24}(?:：|:\s)\s*)?")
+
+
 def _dedupe_segments(s: str) -> str:
     """同一行裡某個片段 (含文字、4 字以上) 出現 3 次以上：那些片段只留第一次，其他片段照舊。"""
     parts = _ITEM_SEG_RE.split(s)
-    # 開頭的條列符號 (「- 」「* 」「• 」) 不算進 key：整行傳進來時第一段帶著它，原本比不到後面同樣的片段 (P5)
-    keys = [re.sub(r"[\s.。|]+$", "", re.sub(r"^\s*[-*•]\s+", "", p) if i == 0 else p).strip().lower()
+    # 開頭的條列符號／編號 (「- 」「1. 」「2) 」) 與標籤 (「決議：」「Owner: 」) 不算進 key：整行傳進來時第一段帶著它，
+    # 原本比不到後面同樣的片段 (P5、P7)。半形冒號後面要有空白才算標籤 (「22:30」不算)
+    keys = [re.sub(r"[\s.。|]+$", "", _FIRST_SEG_PREFIX_RE.sub("", p) if i == 0 else p).strip().lower()
             for i, p in enumerate(parts[0::2])]
     looped = {k for k in keys if len(k) >= 4 and any(ch.isalpha() for ch in k) and keys.count(k) >= 3}
     if not looped:
@@ -261,7 +265,11 @@ def _dedupe_segments(s: str) -> str:
             continue
         seen.add(k)
         out += [parts[2 * i - 1], parts[2 * i]]
-    return "".join(out)
+    res = "".join(out)
+    end = re.search(r"[。.]\s*$", s)
+    if end and not re.search(r"[。.]\s*$", res):     # 被收掉的最後一段帶著整行的句號：留給整行 (P7)
+        res = res.rstrip() + end.group(0).strip()
+    return res
 
 
 def collapse_item_loops(s: str) -> str:

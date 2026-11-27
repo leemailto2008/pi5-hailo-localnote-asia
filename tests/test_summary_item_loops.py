@@ -52,3 +52,25 @@ def test_dedupe_segments_counts_first_bullet_segment(line, want):
     # P5 審查 08a761c：整行含條列符號「- 」，第一段的 key 帶著「- 」比不到後面的同一段：3 次只算 2 次、4 次留兩份
     import summary_utils as su
     assert su.collapse_item_loops(line) == want
+
+
+@pytest.mark.parametrize("line,want", [
+    ("1. 預算審核，人力規劃，預算審核，預算審核", "1. 預算審核，人力規劃"),
+    ("2) 22% norm, 22% gain, 22% norm, 22% norm", "2) 22% norm, 22% gain"),
+    ("**決議**：預算審核、人力規劃、預算審核、預算審核", "**決議**：預算審核、人力規劃"),
+    ("- 負責人：John Smith, Mary Lee, John Smith, John Smith", "- 負責人：John Smith, Mary Lee"),
+    ("- Owner: John Smith, Mary Lee, John Smith, John Smith", "- Owner: John Smith, Mary Lee"),
+    ("- 預算審核，人力規劃，預算審核，預算審核。", "- 預算審核，人力規劃。"),
+    ("- 22% norm, 22% gain, 22% norm, 22% norm.", "- 22% norm, 22% gain."),
+    ("- 會議 22:30 開始, 22% gain, 22% gain", "- 會議 22:30 開始, 22% gain, 22% gain"),   # 只出現 2 次不收；時間的冒號不算標籤
+])
+def test_dedupe_segments_first_segment_prefix_and_terminator(line, want):
+    # P7：第一段前面的編號（1. 2)）、標籤（決議：、Owner: ）不算進比對；被收掉的最後一段帶著的句號要留給整行
+    import summary_utils as su
+    assert su.collapse_item_loops(line) == want
+
+
+def test_dedupe_segments_bullet_dot_and_short_keys():
+    import summary_utils as su
+    assert su.collapse_item_loops("• 預算審核，人力規劃，預算審核，預算審核") == "• 預算審核，人力規劃"
+    assert su.collapse_item_loops("- tax, fee, tax, tax") == "- tax, fee, tax, tax"        # 不到 4 個字不收
