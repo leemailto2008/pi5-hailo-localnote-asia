@@ -37,7 +37,9 @@ Raspberry Pi 5 (Debian 13 Bookworm/Trixie) 原生採用 `NetworkManager`，無�
 ### 步驟 1：建立 Pi 5 專屬熱點設定檔 (AP Profile)
 ```bash
 sudo nmcli connection add type wifi ifname wlan0 con-name "Pi5-Hotspot" autoconnect no ssid "Pi5-Arena-AI"
-sudo nmcli connection modify "Pi5-Hotspot" 802-11-wireless.mode ap 802-11-wireless.band bg
+sudo nmcli connection modify "Pi5-Hotspot" 802-11-wireless.mode ap 802-11-wireless.band a 802-11-wireless.channel 36
+# 2026-11-27 起熱點用 5 GHz ch36：2.4 GHz 熱點會和藍牙耳麥搶頻道（.229 SCO 到達只剩 62–84%）。
+# 開熱點時 hotspot_controller.bring_up_ap()／GPIO 按鍵會先試 5 GHz ch36，失敗才退回 2.4 GHz ch6；手機要支援 5 GHz。
 sudo nmcli connection modify "Pi5-Hotspot" ipv4.method shared ipv4.addresses 10.42.0.1/24
 sudo nmcli connection modify "Pi5-Hotspot" wifi-sec.key-mgmt wpa-psk
 sudo nmcli connection modify "Pi5-Hotspot" wifi-sec.psk "raspberrypi5"

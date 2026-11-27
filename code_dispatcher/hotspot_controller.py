@@ -13,6 +13,10 @@ _log = logging.getLogger(__name__)
 
 STA_PROFILE = "netplan-wlan0-My_5G_Guest1"
 AP_PROFILE = "Pi5-Hotspot"
+# 熱點頻段：先 5 GHz ch36，開不起來 (國家碼、驅動) 再用 2.4 GHz ch6。11-27 Andrew：熱點改 5G。
+# 依據：.229 熱點 2.4 GHz ch6 時藍牙耳麥 SCO 到達只有 62–84%（Pi 5 的 CYW43455 Wi-Fi 與藍牙共用 2.4 GHz），
+# .228 家用 5 GHz 同音檔 100%。
+AP_BANDS = (("a", "36"), ("bg", "6"))
 WATCHDOG_SCRIPT = "/home/pi/code_dispatcher/hotspot_watchdog.py"
 
 NFT_GUARD_FILE = "/etc/nftables.hotspot_guard.nft"
@@ -46,6 +50,20 @@ def disable_hotspot_guard():
     except Exception as e:
         _log.debug("hotspot_controller.py:49 略過：%s", e)
 
+def bring_up_ap() -> subprocess.CompletedProcess:
+    """依 AP_BANDS 順序設定頻段並開熱點，第一個成功就停；全部失敗回傳最後一次的結果。"""
+    res = None
+    for band, channel in AP_BANDS:
+        print(f"[HotspotController] Bringing up AP on band {band} channel {channel}...")
+        subprocess.run(["sudo", "nmcli", "connection", "modify", AP_PROFILE,
+                        "802-11-wireless.band", band, "802-11-wireless.channel", channel], capture_output=True, timeout=10)
+        res = subprocess.run(["sudo", "nmcli", "connection", "up", AP_PROFILE], capture_output=True, text=True, timeout=25)
+        if res.returncode == 0:
+            return res
+        print(f"[HotspotController] AP on band {band} failed: {res.stderr.strip()}")
+    return res
+
+
 def switch_to_ap(timeout_sec: int = 180):
     """
     Safely switch to AP mode with Fail-Safe Watchdog protection and HotspotGuard.
@@ -53,19 +71,11 @@ def switch_to_ap(timeout_sec: int = 180):
     def _worker():
         time.sleep(1.0)
         target_sta = find_sta_profile()
-        print("[HotspotController] Preparing AP profile: locking to 2.4GHz Channel 6...")
-        subprocess.run([
-            "sudo", "nmcli", "connection", "modify", AP_PROFILE,
-            "802-11-wireless.band", "bg",
-            "802-11-wireless.channel", "6"
-        ], capture_output=True)
-
         print(f"[HotspotController] Spawning fail-safe watchdog (timeout={timeout_sec}s)...")
         subprocess.Popen(["sudo", "python3", WATCHDOG_SCRIPT, "--timeout", str(timeout_sec)])
         time.sleep(0.5)
 
-        print("[HotspotController] Atomically bringing up AP connection...")
-        res = subprocess.run(["sudo", "nmcli", "connection", "up", AP_PROFILE], capture_output=True, text=True, timeout=25)
+        res = bring_up_ap()
         if res.returncode != 0:
             print(f"[HotspotController] AP startup FAILED ({res.stderr.strip()}). Auto-reverting back to {target_sta}...")
             subprocess.run(["sudo", "nmcli", "connection", "up", target_sta], capture_output=True, timeout=25)

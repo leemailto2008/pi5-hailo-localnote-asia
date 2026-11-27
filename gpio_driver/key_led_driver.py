@@ -255,20 +255,22 @@ class HotspotKeyLedPair:
 
             if target_mode == "ap":
                 logger.info("📡 Starting AP mode (Pi5-Hotspot, raspi543_AI)...")
-                # 1. Ensure 2.4GHz Channel 6 for radio compatibility
-                subprocess.run([
-                    "sudo", "nmcli", "connection", "modify", "Pi5-Hotspot",
-                    "802-11-wireless.band", "bg",
-                    "802-11-wireless.channel", "6"
-                ], capture_output=True, timeout=5)
-                # 2. Spawn fail-safe watchdog (180s auto-revert if no client)
+                # 1. Spawn fail-safe watchdog (180s auto-revert if no client)
                 subprocess.Popen([
                     "sudo", "python3", "/home/pi/code_dispatcher/hotspot_watchdog.py", "--timeout", "180"
                 ])
                 time.sleep(0.5)
-                # 3. Bring up AP connection
-                res = subprocess.run(["sudo", "nmcli", "connection", "up", "Pi5-Hotspot"], capture_output=True, text=True, timeout=25)
-                logger.info(f"[nmcli up Pi5-Hotspot] code={res.returncode}, out={res.stdout.strip()}, err={res.stderr.strip()}")
+                # 2. Bring up AP：先 5 GHz ch36、失敗再 2.4 GHz ch6 (同 hotspot_controller.AP_BANDS；11-27 熱點改 5G，
+                #    2.4 GHz 熱點會和藍牙耳麥搶頻道，.229 SCO 到達只剩 62–84%)
+                for band, channel in (("a", "36"), ("bg", "6")):
+                    subprocess.run([
+                        "sudo", "nmcli", "connection", "modify", "Pi5-Hotspot",
+                        "802-11-wireless.band", band, "802-11-wireless.channel", channel
+                    ], capture_output=True, timeout=10)
+                    res = subprocess.run(["sudo", "nmcli", "connection", "up", "Pi5-Hotspot"], capture_output=True, text=True, timeout=25)
+                    logger.info(f"[nmcli up Pi5-Hotspot band={band} ch={channel}] code={res.returncode}, out={res.stdout.strip()}, err={res.stderr.strip()}")
+                    if res.returncode == 0:
+                        break
                 if res.returncode == 0:
                     subprocess.run(["sudo", "nft", "-f", "/etc/nftables.hotspot_guard.nft"], capture_output=True)
                     logger.info("🛡️ [HotspotGuard] Kernel firewall applied: Only 10.20.0.1 services allowed, background junk dropped.")

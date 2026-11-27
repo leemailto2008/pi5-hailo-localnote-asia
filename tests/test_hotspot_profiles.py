@@ -111,3 +111,32 @@ def test_controller_find_sta_profile_uses_same_rules(monkeypatch):
     assert hc.find_sta_profile() == "Happy_Home"
     monkeypatch.setattr(hc.subprocess, "run", lambda cmd, **kw: _R("Pi5-Hotspot:802-11-wireless"))
     assert hc.find_sta_profile() == "netplan-wlan0-My_5G_Guest1"
+
+
+def test_bring_up_ap_prefers_5ghz_then_falls_back(monkeypatch):
+    """11-27：熱點先 5 GHz ch36，開不起來再 2.4 GHz ch6。"""
+    import subprocess
+    import hotspot_controller as hc
+    calls = []
+
+    def fake_run(cmd, **_k):
+        calls.append(cmd)
+        if cmd[:4] == ["sudo", "nmcli", "connection", "up"]:
+            ok = any(c[-3:] == ["bg", "802-11-wireless.channel", "6"] for c in calls if "modify" in c) and \
+                [c for c in calls if "modify" in c][-1][-3] == "bg"
+            return subprocess.CompletedProcess(cmd, 0 if ok else 4, "", "" if ok else "no 5GHz")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    res = hc.bring_up_ap()
+    mods = [c for c in calls if "modify" in c]
+    assert res.returncode == 0 and mods[0][-3:] == ["a", "802-11-wireless.channel", "36"] and mods[1][-3] == "bg"
+
+
+def test_bring_up_ap_stops_at_first_success(monkeypatch):
+    import subprocess
+    import hotspot_controller as hc
+    calls = []
+    monkeypatch.setattr(hc.subprocess, "run", lambda cmd, **_k: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
+    assert hc.bring_up_ap().returncode == 0
+    assert [c for c in calls if "modify" in c][-1][-3] == "a" and sum("up" in c for c in calls) == 1
