@@ -55,9 +55,14 @@ def bring_up_ap() -> subprocess.CompletedProcess:
     res = None
     for band, channel in AP_BANDS:
         print(f"[HotspotController] Bringing up AP on band {band} channel {channel}...")
-        subprocess.run(["sudo", "nmcli", "connection", "modify", AP_PROFILE,
-                        "802-11-wireless.band", band, "802-11-wireless.channel", channel], capture_output=True, timeout=10)
-        res = subprocess.run(["sudo", "nmcli", "connection", "up", AP_PROFILE], capture_output=True, text=True, timeout=25)
+        # 逾時 (國家碼、驅動卡住) 當成這個頻段失敗、試下一個 (P1：原本 TimeoutExpired 往外拋，不試 2.4 GHz，
+        # switch_to_ap 的執行緒也結束、不退回家用 Wi-Fi)
+        try:
+            subprocess.run(["sudo", "nmcli", "connection", "modify", AP_PROFILE,
+                            "802-11-wireless.band", band, "802-11-wireless.channel", channel], capture_output=True, timeout=10)
+            res = subprocess.run(["sudo", "nmcli", "connection", "up", AP_PROFILE], capture_output=True, text=True, timeout=25)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            res = subprocess.CompletedProcess(["nmcli", "connection", "up", AP_PROFILE], 124, "", f"timeout/error: {e}")
         if res.returncode == 0:
             return res
         print(f"[HotspotController] AP on band {band} failed: {res.stderr.strip()}")

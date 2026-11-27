@@ -192,3 +192,34 @@ def test_watchdog_single_glitch_does_not_exit(monkeypatch):
 def test_hotspot_active_parsing(monkeypatch, rc, out, want):
     monkeypatch.setattr(hw.subprocess, "run", lambda cmd, **kw: _R(out, rc))
     assert hw.hotspot_active() is want
+
+
+def test_bring_up_ap_timeout_on_5ghz_still_falls_back(monkeypatch):
+    """P1 審查 6f9ad9a：5 GHz 的 nmcli up 逾時 (國家碼、驅動卡住) 會丟 TimeoutExpired，原本整個 bring_up_ap 拋出、
+    不試 2.4 GHz，switch_to_ap 的執行緒也就結束 (不退回家用 Wi-Fi，只能等 watchdog)。逾時要當成這個頻段失敗。"""
+    import subprocess
+    import hotspot_controller as hc
+    calls = []
+
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+        if cmd[:4] == ["sudo", "nmcli", "connection", "up"]:
+            band = [c for c in calls if "modify" in c][-1][-3]
+            if band == "a":
+                raise subprocess.TimeoutExpired(cmd, k.get("timeout", 25))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    res = hc.bring_up_ap()
+    assert res.returncode == 0 and [c for c in calls if "modify" in c][-1][-3] == "bg"
+
+
+def test_bring_up_ap_all_timeout_returns_failure(monkeypatch):
+    import subprocess
+    import hotspot_controller as hc
+
+    def fake_run(cmd, **k):
+        raise subprocess.TimeoutExpired(cmd, k.get("timeout", 25))
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    res = hc.bring_up_ap()
+    assert res.returncode != 0 and "timeout" in res.stderr
