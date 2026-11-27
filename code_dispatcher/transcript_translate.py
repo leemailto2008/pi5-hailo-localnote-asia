@@ -728,6 +728,32 @@ def collapse_repeats(text: Optional[str]) -> Optional[str]:
     return _DOT_RUN_RE.sub("……", text)
 
 
+# 中翻英憑空編出的鐘點與年份 (11-27 已存的 10,512 段採用譯文裡有 56 段多出原文沒有的數字，多數是這兩種)：
+# 「6月15日晚上」→「15th June at 22:00」(20:00／21:00／23:00／12:13 PM)；「3月21日」→「March 21, 2023」。
+# numbers_ok 只查原文的數值有沒有掉，多出來的擋不到。只在原文完全沒有鐘點／年份時改。
+# 「停機2小時」的「時」不算鐘點：要數字緊接點／時，或「8:00」「8 pm」
+_SRC_CLOCK_RE = re.compile(r"[0-9零一二兩两三四五六七八九十]\s*[點点時时](?![間间段])|\d[:：]\d|\d\s*[AaPp]\.?[Mm]|o'clock")
+_SRC_YEAR_RE = re.compile(r"年|(?<!\d)(?:19|20)\d\d(?!\d)|[零〇一二三四五六七八九]{4}")
+_ADDED_CLOCK_RE = re.compile(r"\bat (?:\d{1,2}:\d{2})(?:\s*[AaPp]\.?[Mm]\.?(?![A-Za-z]))?")
+# 同樣是編造、寫成「for HH:MM AM／PM」(要有 AM／PM，才不會動到比數或時長)
+_ADDED_CLOCK_FOR_RE = re.compile(r"\bfor \d{1,2}:\d{2}\s*[AaPp]\.?[Mm]\.?(?![A-Za-z])")
+_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+_ADDED_YEAR_RE = re.compile(rf"\b((?:{_MONTHS}) \d{{1,2}}(?:st|nd|rd|th)?|\d{{1,2}}(?:st|nd|rd|th)? (?:{_MONTHS}))"
+                            r",? (?:19|20)\d\d(?![\d,]*\d)")
+
+
+def drop_invented_time(src: str, translation: Optional[str], target: str) -> Optional[str]:
+    if target != "en" or not translation or not src:
+        return translation
+    out = translation
+    if "晚上" in src and not _SRC_CLOCK_RE.search(src):
+        out = _ADDED_CLOCK_RE.sub("in the evening", out)
+        out = _ADDED_CLOCK_FOR_RE.sub("for the evening", out)   # 「scheduled for 12:13 PM on December 13th」
+    if re.search(r"月[^，。,]{0,4}[日號号]", src) and not _SRC_YEAR_RE.search(src):
+        out = _ADDED_YEAR_RE.sub(r"\1", out)
+    return out
+
+
 def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     """模型輸出的固定修正：重複迴圈 (collapse_repeats)、數字 (fix_numerals)、職稱 (fix_titles)、職稱後的中文人名轉拼音 (romanize_titled_names)、
     姓名後的中文職稱 (fix_name_zh_titles)、常見商用詞 (fix_common_zh_words)、中文星期 (fix_weekdays)、臺灣縣市名 (fix_place_names)。"""
@@ -738,7 +764,7 @@ def postfix(src: str, translation: Optional[str], target: str) -> Optional[str]:
     out = fix_cjk_name_titles(src, fix_name_zh_titles(src, out, target), target)
     out = fix_place_names(src, fix_weekdays(fix_common_zh_words(out, target), target), target)
     # 姓名轉成拼音後才變成連續重複 (「Team Lead蔡 Team Lead Cai …」)：最後再收一次 (P11)
-    return collapse_repeats(fix_wrong_place(src, out, target))
+    return drop_invented_time(src, collapse_repeats(fix_wrong_place(src, out, target)), target)
 
 
 def unit_ok(src: str, translation: Optional[str], target: str) -> bool:
